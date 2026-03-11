@@ -10,7 +10,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
-import java.io.File
+import java.nio.file.Path
 
 /**
  * Android device session backed by Dadb (ADB over TCP) and Maestro SDK (gRPC).
@@ -46,8 +46,8 @@ class AndroidDeviceSession(
     }
 
     @Suppress("DEPRECATION")
-    override suspend fun captureScreenshot(outputFile: File) {
-        maestro.takeScreenshot(outputFile, false)
+    override suspend fun captureScreenshot(output: Path) {
+        maestro.takeScreenshot(output.toFile(), false)
     }
 
     override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
@@ -73,7 +73,7 @@ class AndroidDeviceSession(
         maestro.waitForAnimationToEnd(null)
     }
 
-    override suspend fun saveAnimationState(): DeviceSession.AnimationState {
+    override suspend fun getAnimationState(): DeviceSession.AnimationState {
         return DeviceSession.AnimationState(
             windowScale = dadb.shell("settings get global window_animation_scale").output.trim(),
             transitionScale = dadb.shell("settings get global transition_animation_scale").output.trim(),

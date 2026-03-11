@@ -4,7 +4,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
-import java.io.File
+import java.nio.file.Path
 
 interface DeviceSession : AutoCloseable {
     val platform: Platform
@@ -31,8 +31,8 @@ interface DeviceSession : AutoCloseable {
         filter: HierarchyFilter = HierarchyFilter.CONTENT,
     ): String
 
-    /** Save a screenshot to the specified file. */
-    suspend fun captureScreenshot(outputFile: File)
+    /** Save a screenshot to the specified path. */
+    suspend fun captureScreenshot(output: Path)
 
     /** Check if text appears anywhere in the accessibility tree. */
     suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean
@@ -52,7 +52,7 @@ interface DeviceSession : AutoCloseable {
      * Default implementations are no-op for platforms that don't expose
      * Android global animation scale settings.
      */
-    suspend fun saveAnimationState(): AnimationState? = null
+    suspend fun getAnimationState(): AnimationState? = null
 
     suspend fun disableAnimations() = Unit
 
