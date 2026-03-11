@@ -4,13 +4,13 @@ import java.io.File
 
 object ContextLoader {
 
-    fun load(directory: File): String {
-        if (!directory.isDirectory) return ""
+  fun load(directory: File): String {
+    if (!directory.isDirectory) return ""
 
-        return directory.listFiles()
-            ?.filter { it.isFile && it.extension == "md" }
-            ?.sortedBy { it.name }
-            ?.joinToString("\n\n") { it.readText().trim() }
-            ?: ""
-    }
+    return directory.listFiles()
+      ?.filter { it.isFile && it.extension == "md" }
+      ?.sortedBy { it.name }
+      ?.joinToString("\n\n") { it.readText().trim() }
+      ?: ""
+  }
 }

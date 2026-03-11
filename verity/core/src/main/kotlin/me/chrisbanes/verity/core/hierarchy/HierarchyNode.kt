@@ -5,7 +5,7 @@ package me.chrisbanes.verity.core.hierarchy
  * The device layer converts platform-specific trees into this format.
  */
 data class HierarchyNode(
-    val attributes: Map<String, String> = emptyMap(),
-    val states: Set<String> = emptySet(),
-    val children: List<HierarchyNode> = emptyList(),
+  val attributes: Map<String, String> = emptyMap(),
+  val states: Set<String> = emptySet(),
+  val children: List<HierarchyNode> = emptyList(),
 )

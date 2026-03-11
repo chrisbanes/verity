@@ -4,6 +4,6 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class InspectionVerdict(
-    val passed: Boolean,
-    val reasoning: String,
+  val passed: Boolean,
+  val reasoning: String,
 )
