@@ -17,12 +17,19 @@ dependencies {
     implementation(libs.grpc.protobuf)
 }
 
+val grpcVersion: String = rootProject.extensions
+    .getByType<VersionCatalogsExtension>()
+    .named("libs")
+    .findVersion("grpc")
+    .get()
+    .requiredVersion
+
 configurations.all {
     resolutionStrategy {
-        force("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
-        force("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
-        force("io.grpc:grpc-core:${libs.versions.grpc.get()}")
-        force("io.grpc:grpc-api:${libs.versions.grpc.get()}")
-        force("io.grpc:grpc-context:${libs.versions.grpc.get()}")
+        force("io.grpc:grpc-stub:$grpcVersion")
+        force("io.grpc:grpc-protobuf:$grpcVersion")
+        force("io.grpc:grpc-core:$grpcVersion")
+        force("io.grpc:grpc-api:$grpcVersion")
+        force("io.grpc:grpc-context:$grpcVersion")
     }
 }
