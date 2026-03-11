@@ -19,71 +19,70 @@ import me.chrisbanes.verity.device.ios.IosDeviceSession
  * - Restores original values when session is closed
  */
 object DeviceSessionFactory {
-    suspend fun connect(
-        platform: Platform,
-        deviceId: String? = null,
-        disableAnimations: Boolean = false,
-    ): DeviceSession {
-        return when (platform) {
-            Platform.ANDROID_TV,
-            Platform.ANDROID_MOBILE,
-            -> connectAndroid(platform, deviceId, disableAnimations)
-            Platform.IOS -> connectIos(deviceId)
-        }
+  suspend fun connect(
+    platform: Platform,
+    deviceId: String? = null,
+    disableAnimations: Boolean = false,
+  ): DeviceSession = when (platform) {
+    Platform.ANDROID_TV,
+    Platform.ANDROID_MOBILE,
+    -> connectAndroid(platform, deviceId, disableAnimations)
+
+    Platform.IOS -> connectIos(deviceId)
+  }
+
+  private suspend fun connectAndroid(
+    platform: Platform,
+    deviceId: String?,
+    disableAnimations: Boolean,
+  ): DeviceSession {
+    val dadb: Dadb = if (deviceId != null) {
+      Dadb.create(deviceId, 5555)
+    } else {
+      Dadb.discover()
+        ?: error("No Android device found. Is ADB available?")
     }
 
-    private suspend fun connectAndroid(
-        platform: Platform,
-        deviceId: String?,
-        disableAnimations: Boolean,
-    ): DeviceSession {
-        val dadb: Dadb = if (deviceId != null) {
-            Dadb.create(deviceId, 5555)
-        } else {
-            Dadb.discover()
-                ?: error("No Android device found. Is ADB available?")
-        }
+    val driver = AndroidDriver(dadb)
+    val maestro = Maestro(driver)
+    val session = AndroidDeviceSession(dadb, maestro, platform)
 
-        val driver = AndroidDriver(dadb)
-        val maestro = Maestro(driver)
-        val session = AndroidDeviceSession(dadb, maestro, platform)
-
-        if (disableAnimations) {
-            val state = session.getAnimationState()
-            session.disableAnimations()
-            return AnimationRestoringSession(session, state)
-        }
-
-        return session
+    if (disableAnimations) {
+      val state = session.getAnimationState()
+      session.disableAnimations()
+      return AnimationRestoringSession(session, state)
     }
 
-    private fun connectIos(deviceId: String?): DeviceSession {
-        val iosDevice = SimctlIOSDevice(
-            deviceId ?: error("iOS device ID is required"),
-        )
-        val driver = IOSDriver(iosDevice)
-        val maestro = Maestro(driver)
-        return IosDeviceSession(maestro, iosDevice)
-    }
+    return session
+  }
+
+  private fun connectIos(deviceId: String?): DeviceSession {
+    val iosDevice = SimctlIOSDevice(
+      deviceId ?: error("iOS device ID is required"),
+    )
+    val driver = IOSDriver(iosDevice)
+    val maestro = Maestro(driver)
+    return IosDeviceSession(maestro, iosDevice)
+  }
 }
 
 /**
  * Wrapper that restores Android animation state when the session is closed.
  */
 private class AnimationRestoringSession(
-    private val delegate: AndroidDeviceSession,
-    private val savedState: DeviceSession.AnimationState?,
+  private val delegate: AndroidDeviceSession,
+  private val savedState: DeviceSession.AnimationState?,
 ) : DeviceSession by delegate {
-    override fun close() {
-        try {
-            if (savedState != null) {
-                // Use runBlocking since close() is not suspending
-                kotlinx.coroutines.runBlocking {
-                    delegate.restoreAnimationState(savedState)
-                }
-            }
-        } finally {
-            delegate.close()
+  override fun close() {
+    try {
+      if (savedState != null) {
+        // Use runBlocking since close() is not suspending
+        kotlinx.coroutines.runBlocking {
+          delegate.restoreAnimationState(savedState)
         }
+      }
+    } finally {
+      delegate.close()
     }
+  }
 }
