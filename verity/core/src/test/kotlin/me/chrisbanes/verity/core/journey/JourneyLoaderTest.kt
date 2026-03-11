@@ -19,9 +19,9 @@ class JourneyLoaderTest {
     val yaml = input.bufferedReader().readText()
     val journey = JourneyLoader.fromYaml(yaml)
 
-    assertThat(journey.name).isEqualTo("Browse home and open detail")
-    assertThat(journey.app).isEqualTo("com.example.launcher")
-    assertThat(journey.platform).isEqualTo(Platform.ANDROID_TV)
+    assertThat(journey.name).isEqualTo("Browse feed and open detail")
+    assertThat(journey.app).isEqualTo("com.example.social")
+    assertThat(journey.platform).isEqualTo(Platform.ANDROID_MOBILE)
     assertThat(journey.steps).hasSize(6)
   }
 
