@@ -28,17 +28,18 @@
 3. Write a short compatibility note (in this file) listing any naming or API differences from assumptions in Tasks 2–4.
 4. Update the code snippets in this plan before implementation if mismatches are found.
 
-**Compatibility notes (validated against maestro-client 2.3.0, maestro-ios-driver 2.3.0, dadb 1.2.10):**
+**Compatibility notes (validated against source jars: maestro-client 2.3.0, maestro-ios-driver 2.3.0, dadb 1.2.10):**
 
-- `TreeNode`: API matches plan — `attributes: Map<String, String>`, `children: List<TreeNode>`, `focused/selected/checked/enabled/clickable: Boolean?`
-- `Maestro(driver: Driver)`: constructor takes `maestro.Driver`. Key methods: `pressKey(KeyCode)` (enum, not String), `viewHierarchy(boolean): TreeNode` (value class return), `takeScreenshot(File, boolean)`, `waitForAnimationToEnd(Long?)`, `close()`
-- `AndroidDriver(dadb: Dadb, hostPort: Int?, emulatorName: String?, reinstallDriver: Boolean, metricsProvider: Metrics)`: wraps Dadb + gRPC
-- `IOSDriver(iosDevice: device.IOSDevice, insights: Insights, metricsProvider: Metrics)`: wraps `device.IOSDevice` interface (in `maestro-ios-driver` jar)
-- iOS hierarchy uses `hierarchy.AXElement` with fields: `label`, `elementType`, `identifier`, `selected`, `hasFocus`, `value`, `frame`, `enabled`, `title`, `children`
-- `Dadb.discover()` / `Dadb.create(host, port)`: static companion methods. `shell(): AdbShellResponse` with `.output` property
+- `TreeNode` (maestro/TreeNode.kt): data class with `attributes: MutableMap<String, String>`, `children: List<TreeNode>`, `focused/selected/checked/enabled/clickable: Boolean?`
+- `Maestro` (maestro/Maestro.kt): constructor takes `Driver`. Use `Maestro.android(driver)` / `Maestro.ios(driver)` factory methods (they call `driver.open()`). Key methods: `pressKey(KeyCode)`, `viewHierarchy(Boolean): ViewHierarchy`, `takeScreenshot(File, Boolean)` (deprecated, use Sink overload), `waitForAnimationToEnd(Long?)`, `close()`
+- `ViewHierarchy` (maestro/ViewHierarchy.kt): `@JvmInline value class ViewHierarchy(val root: TreeNode)` — access root via `.root`
+- `AndroidDriver(dadb: Dadb)`: wraps Dadb + gRPC, all other constructor params have defaults
+- `IOSDriver(iosDevice: device.IOSDevice)`: wraps `device.IOSDevice`, other params have defaults
+- `AXElement` (hierarchy/AXElement.kt): `label: String`, `identifier: String`, `value: String?`, `title: String?`, `hasFocus: Boolean`, `selected: Boolean`, `enabled: Boolean`, `children: ArrayList<AXElement>`
+- iOS `ViewHierarchy` (hierarchy/AXElement.kt): `data class ViewHierarchy(val axElement: AXElement, val depth: Int)` — access root via `.axElement`
+- `IOSDevice` (device/IOSDevice.kt): interface with `viewHierarchy(Boolean): hierarchy.ViewHierarchy`, `pressKey(String)`. `SimctlIOSDevice` is the simulator impl.
+- `Dadb.discover(): Dadb?` / `Dadb.create(host, port): Dadb`: companion methods. `shell(cmd): AdbShellResponse` with `.output` property
 - **Orchestra/YamlCommandReader NOT in maestro-client** — flow execution must be stubbed for scaffold milestone
-- `device.IOSDevice` interface (in ios-driver jar): `viewHierarchy(boolean): hierarchy.ViewHierarchy`
-- `device.SimctlIOSDevice` is the concrete simulator implementation
 
 ---
 

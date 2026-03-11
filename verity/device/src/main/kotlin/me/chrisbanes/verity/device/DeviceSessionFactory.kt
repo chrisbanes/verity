@@ -44,7 +44,7 @@ object DeviceSessionFactory {
     }
 
     val driver = AndroidDriver(dadb)
-    val maestro = Maestro(driver)
+    val maestro = Maestro.android(driver)
     val session = AndroidDeviceSession(dadb, maestro, platform)
 
     if (disableAnimations) {
@@ -61,7 +61,7 @@ object DeviceSessionFactory {
       deviceId ?: error("iOS device ID is required"),
     )
     val driver = IOSDriver(iosDevice)
-    val maestro = Maestro(driver)
+    val maestro = Maestro.ios(driver)
     return IosDeviceSession(maestro, iosDevice)
   }
 }
