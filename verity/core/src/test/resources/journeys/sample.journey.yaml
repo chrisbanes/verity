@@ -1,0 +1,11 @@
+name: Browse feed and open detail
+app: com.example.social
+platform: android
+
+steps:
+  - Launch the app
+  - "[?] Home"
+  - Scroll down until Trending section
+  - Press back
+  - "[?] Detail page shows title"
+  - "[?visual] Backdrop image loads"
