@@ -14,6 +14,8 @@ grpc = "1.79.0"
 grpc-kotlin = "1.5.0"
 grpc-netty-shaded = "1.79.0"
 assertk = "0.28.1"
+ktlint = "1.8.0"
+spotless = "8.2.1"
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
@@ -38,3 +40,4 @@ assertk = { module = "com.willowtreeapps.assertk:assertk", version.ref = "assert
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }

@@ -1,9 +1,9 @@
 rootProject.name = "verity"
 
 dependencyResolutionManagement {
-    repositories {
-        mavenCentral()
-    }
+  repositories {
+    mavenCentral()
+  }
 }
 
 include(":verity:core")
