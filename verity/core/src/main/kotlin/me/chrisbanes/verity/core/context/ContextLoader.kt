@@ -8,7 +8,7 @@ object ContextLoader {
     if (!directory.isDirectory) return ""
 
     return directory.listFiles()
-      ?.filter { it.isFile && it.extension == "md" }
+      ?.filter { it.isFile && it.extension in setOf("md", "markdown") }
       ?.sortedBy { it.name }
       ?.joinToString("\n\n") { it.readText().trim() }
       ?: ""

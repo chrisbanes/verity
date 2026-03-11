@@ -55,6 +55,21 @@ class ContextLoaderTest {
   }
 
   @Test
+  fun `loads dot-markdown extension files`() {
+    val dir = createTempContextDir(
+      "app.md" to "# App context",
+      "extra.markdown" to "# Extra context",
+    )
+    try {
+      val context = ContextLoader.load(dir)
+      assertThat(context).contains("# App context")
+      assertThat(context).contains("# Extra context")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `files are separated by double newline`() {
     val dir = createTempContextDir(
       "a.md" to "Section A",
