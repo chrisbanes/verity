@@ -1,0 +1,40 @@
+[versions]
+kotlin = "2.3.10"
+kotlinx-serialization = "1.10.0"
+kotlinx-coroutines = "1.10.2"
+kaml = "0.104.0"
+koog = "0.6.4"
+clikt = "5.1.0"
+ktor = "3.4.0"
+maestro-client = "2.3.0"
+maestro-ios = "2.3.0"
+dadb = "1.2.10"
+mcp-kotlin = "0.9.0"
+grpc = "1.79.0"
+grpc-kotlin = "1.5.0"
+grpc-netty-shaded = "1.79.0"
+assertk = "0.28.1"
+
+[libraries]
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
+kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
+koog-agents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+koog-anthropic = { module = "ai.koog:prompt-executor-anthropic-client", version.ref = "koog" }
+clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+maestro-client = { module = "dev.mobile:maestro-client", version.ref = "maestro-client" }
+maestro-ios-driver = { module = "dev.mobile:maestro-ios-driver", version.ref = "maestro-ios" }
+dadb = { module = "dev.mobile:dadb", version.ref = "dadb" }
+mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = "mcp-kotlin" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc-netty-shaded" }
+grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
+grpc-kotlin-stub = { module = "io.grpc:grpc-kotlin-stub", version.ref = "grpc-kotlin" }
+assertk = { module = "com.willowtreeapps.assertk:assertk", version.ref = "assertk" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
