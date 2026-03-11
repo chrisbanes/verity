@@ -28,6 +28,18 @@
 3. Write a short compatibility note (in this file) listing any naming or API differences from assumptions in Tasks 2–4.
 4. Update the code snippets in this plan before implementation if mismatches are found.
 
+**Compatibility notes (validated against maestro-client 2.3.0, maestro-ios-driver 2.3.0, dadb 1.2.10):**
+
+- `TreeNode`: API matches plan — `attributes: Map<String, String>`, `children: List<TreeNode>`, `focused/selected/checked/enabled/clickable: Boolean?`
+- `Maestro(driver: Driver)`: constructor takes `maestro.Driver`. Key methods: `pressKey(KeyCode)` (enum, not String), `viewHierarchy(boolean): TreeNode` (value class return), `takeScreenshot(File, boolean)`, `waitForAnimationToEnd(Long?)`, `close()`
+- `AndroidDriver(dadb: Dadb, hostPort: Int?, emulatorName: String?, reinstallDriver: Boolean, metricsProvider: Metrics)`: wraps Dadb + gRPC
+- `IOSDriver(iosDevice: device.IOSDevice, insights: Insights, metricsProvider: Metrics)`: wraps `device.IOSDevice` interface (in `maestro-ios-driver` jar)
+- iOS hierarchy uses `hierarchy.AXElement` with fields: `label`, `elementType`, `identifier`, `selected`, `hasFocus`, `value`, `frame`, `enabled`, `title`, `children`
+- `Dadb.discover()` / `Dadb.create(host, port)`: static companion methods. `shell(): AdbShellResponse` with `.output` property
+- **Orchestra/YamlCommandReader NOT in maestro-client** — flow execution must be stubbed for scaffold milestone
+- `device.IOSDevice` interface (in ios-driver jar): `viewHierarchy(boolean): hierarchy.ViewHierarchy`
+- `device.SimctlIOSDevice` is the concrete simulator implementation
+
 ---
 
 ### Task 1: DeviceSession interface
