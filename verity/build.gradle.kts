@@ -4,10 +4,6 @@ subprojects {
     group = "me.chrisbanes.verity"
     version = "0.1.0"
 
-    repositories {
-        mavenCentral()
-    }
-
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

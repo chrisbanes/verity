@@ -1,5 +1,11 @@
 rootProject.name = "verity"
 
+dependencyResolutionManagement {
+    repositories {
+        mavenCentral()
+    }
+}
+
 include(":verity:core")
 include(":verity:device")
 include(":verity:agent")
