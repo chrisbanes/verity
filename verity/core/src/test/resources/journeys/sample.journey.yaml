@@ -1,0 +1,11 @@
+name: Browse home and open detail
+app: com.example.launcher
+platform: android-tv
+
+steps:
+  - Launch the app
+  - "[?] Home"
+  - Navigate down until TV Shows row
+  - Press select
+  - "[?] Detail page shows title"
+  - "[?visual] Backdrop image loads"
