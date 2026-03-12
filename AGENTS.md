@@ -35,7 +35,7 @@ Tasks are only complete once `./gradlew check` is green.
   - `:verity:cli` - CLI entry point
 - JVM 21 via toolchain, configured in `verity/build.gradle.kts`
 - Kotlin serialization for data models; Kaml for YAML parsing
-- DI and framework patterns will be established as modules are implemented
+- **Dependency Injection / Inversion of Control**: Prefer Constructor Injection. For factories or static dependencies, use "Function Injection" by passing functions as constructor parameters with default values pointing to the real implementation (e.g., `private val sessionFactory: (...) -> DeviceSession = DeviceSessionFactory::connect`). This keeps production call sites clean while making it trivial to inject mock implementations during testing.
 
 ### Serialization DTOs
 
