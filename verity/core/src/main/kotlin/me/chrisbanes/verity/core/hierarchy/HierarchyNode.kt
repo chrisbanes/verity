@@ -9,3 +9,9 @@ data class HierarchyNode(
   val states: Set<String> = emptySet(),
   val children: List<HierarchyNode> = emptyList(),
 )
+
+/** Recursively checks whether any node in this tree has an attribute value containing [text]. */
+fun HierarchyNode.containsText(text: String, ignoreCase: Boolean = true): Boolean {
+  val match = attributes.values.any { it.contains(text, ignoreCase) }
+  return match || children.any { it.containsText(text, ignoreCase) }
+}
