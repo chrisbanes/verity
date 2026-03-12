@@ -5,7 +5,7 @@ import assertk.assertions.isGreaterThan
 import assertk.assertions.isLessThan
 import assertk.assertions.isTrue
 import java.awt.image.BufferedImage
-import java.io.File
+import java.nio.file.Files
 import java.util.Random
 import javax.imageio.ImageIO
 import kotlin.test.Test
@@ -17,13 +17,13 @@ class ScreenshotCompressorTest {
     try {
       val jpeg = ScreenshotCompressor.compress(tempPng)
       try {
-        assertThat(jpeg.exists()).isTrue()
-        assertThat(jpeg.length()).isGreaterThan(0)
+        assertThat(Files.exists(jpeg)).isTrue()
+        assertThat(Files.size(jpeg)).isGreaterThan(0)
       } finally {
-        jpeg.delete()
+        Files.deleteIfExists(jpeg)
       }
     } finally {
-      tempPng.delete()
+      Files.deleteIfExists(tempPng)
     }
   }
 
@@ -33,12 +33,12 @@ class ScreenshotCompressorTest {
     try {
       val jpeg = ScreenshotCompressor.compress(tempPng, maxWidth = 1280)
       try {
-        assertThat(jpeg.length()).isLessThan(tempPng.length())
+        assertThat(Files.size(jpeg)).isLessThan(Files.size(tempPng))
       } finally {
-        jpeg.delete()
+        Files.deleteIfExists(jpeg)
       }
     } finally {
-      tempPng.delete()
+      Files.deleteIfExists(tempPng)
     }
   }
 
@@ -48,27 +48,27 @@ class ScreenshotCompressorTest {
     try {
       val jpeg = ScreenshotCompressor.compress(tempPng, maxWidth = 1280)
       try {
-        val img = ImageIO.read(jpeg)
+        val img = ImageIO.read(jpeg.toFile())
         assertThat(img.width).isLessThan(1280)
       } finally {
-        jpeg.delete()
+        Files.deleteIfExists(jpeg)
       }
     } finally {
-      tempPng.delete()
+      Files.deleteIfExists(tempPng)
     }
   }
 
-  private fun createTestPng(width: Int, height: Int): File {
+  private fun createTestPng(width: Int, height: Int): java.nio.file.Path {
     val img = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
     val g = img.createGraphics()
     g.fillRect(0, 0, width, height)
     g.dispose()
-    val file = File.createTempFile("test-screenshot-", ".png")
-    ImageIO.write(img, "PNG", file)
+    val file = Files.createTempFile("test-screenshot-", ".png")
+    ImageIO.write(img, "PNG", file.toFile())
     return file
   }
 
-  private fun createNoisyTestPng(width: Int, height: Int): File {
+  private fun createNoisyTestPng(width: Int, height: Int): java.nio.file.Path {
     val img = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
     val rng = Random(42)
     for (y in 0 until height) {
@@ -76,8 +76,8 @@ class ScreenshotCompressorTest {
         img.setRGB(x, y, rng.nextInt())
       }
     }
-    val file = File.createTempFile("test-screenshot-noisy-", ".png")
-    ImageIO.write(img, "PNG", file)
+    val file = Files.createTempFile("test-screenshot-noisy-", ".png")
+    ImageIO.write(img, "PNG", file.toFile())
     return file
   }
 }

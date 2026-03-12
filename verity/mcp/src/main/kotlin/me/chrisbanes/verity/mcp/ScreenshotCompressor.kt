@@ -2,7 +2,8 @@ package me.chrisbanes.verity.mcp
 
 import java.awt.Image
 import java.awt.image.BufferedImage
-import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import javax.imageio.IIOImage
 import javax.imageio.ImageIO
 import javax.imageio.ImageWriteParam
@@ -10,11 +11,11 @@ import javax.imageio.ImageWriteParam
 object ScreenshotCompressor {
 
   fun compress(
-    pngFile: File,
+    pngFile: Path,
     maxWidth: Int = 1280,
     jpegQuality: Float = 0.75f,
-  ): File {
-    var image = ImageIO.read(pngFile)
+  ): Path {
+    var image = ImageIO.read(pngFile.toFile())
 
     if (image.width > maxWidth) {
       val scale = maxWidth.toDouble() / image.width
@@ -26,7 +27,7 @@ object ScreenshotCompressor {
       image = scaled
     }
 
-    val output = File.createTempFile("verity-screenshot-", ".jpg")
+    val output = Files.createTempFile("verity-screenshot-", ".jpg")
     val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
     try {
       val param =
@@ -34,7 +35,7 @@ object ScreenshotCompressor {
           compressionMode = ImageWriteParam.MODE_EXPLICIT
           compressionQuality = jpegQuality
         }
-      ImageIO.createImageOutputStream(output).use { ios ->
+      ImageIO.createImageOutputStream(output.toFile()).use { ios ->
         writer.output = ios
         writer.write(null, IIOImage(image, null, null), param)
       }
