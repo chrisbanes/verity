@@ -6,6 +6,7 @@ import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import java.util.UUID
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 
 class McpHierarchySnapshotStoreTest {
@@ -15,7 +16,7 @@ class McpHierarchySnapshotStoreTest {
   private fun createNode(text: String) = HierarchyNode(attributes = mapOf("text" to text))
 
   @Test
-  fun `add and retrieve snapshot`() {
+  fun `add and retrieve snapshot`() = runTest {
     val node = createNode("Home")
     val id = store.add(sessionId, node)
     val snapshot = store.get(sessionId, id)
@@ -24,26 +25,26 @@ class McpHierarchySnapshotStoreTest {
   }
 
   @Test
-  fun `get nonexistent snapshot returns null`() {
+  fun `get nonexistent snapshot returns null`() = runTest {
     assertThat(store.get(sessionId, UUID.randomUUID())).isNull()
   }
 
   @Test
-  fun `latest returns most recent snapshot`() {
+  fun `latest returns most recent snapshot`() = runTest {
     store.add(sessionId, createNode("first"))
     store.add(sessionId, createNode("second"))
     assertThat(store.latest(sessionId)?.attributes?.get("text")).isEqualTo("second")
   }
 
   @Test
-  fun `previous returns second-to-last snapshot`() {
+  fun `previous returns second-to-last snapshot`() = runTest {
     store.add(sessionId, createNode("first"))
     store.add(sessionId, createNode("second"))
     assertThat(store.previous(sessionId)?.attributes?.get("text")).isEqualTo("first")
   }
 
   @Test
-  fun `evicts oldest when over capacity`() {
+  fun `evicts oldest when over capacity`() = runTest {
     val smallStore = McpHierarchySnapshotStore(maxPerSession = 3)
     val id1 = smallStore.add(sessionId, createNode("a"))
     smallStore.add(sessionId, createNode("b"))
@@ -53,7 +54,7 @@ class McpHierarchySnapshotStoreTest {
   }
 
   @Test
-  fun `sessions are isolated`() {
+  fun `sessions are isolated`() = runTest {
     val session1 = UUID.randomUUID()
     val session2 = UUID.randomUUID()
     store.add(session1, createNode("session1 data"))
@@ -63,7 +64,7 @@ class McpHierarchySnapshotStoreTest {
   }
 
   @Test
-  fun `clear removes all snapshots for session`() {
+  fun `clear removes all snapshots for session`() = runTest {
     store.add(sessionId, createNode("data"))
     store.clear(sessionId)
     assertThat(store.latest(sessionId)).isNull()

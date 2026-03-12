@@ -2,20 +2,18 @@ package me.chrisbanes.verity.mcp
 
 import java.awt.Image
 import java.awt.image.BufferedImage
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.util.Base64
 import javax.imageio.IIOImage
 import javax.imageio.ImageIO
 import javax.imageio.ImageWriteParam
 
 object ScreenshotCompressor {
 
-  fun compressToBase64(
+  fun compress(
     pngFile: File,
     maxWidth: Int = 1280,
     jpegQuality: Float = 0.75f,
-  ): String {
+  ): File {
     var image = ImageIO.read(pngFile)
 
     if (image.width > maxWidth) {
@@ -28,7 +26,7 @@ object ScreenshotCompressor {
       image = scaled
     }
 
-    val baos = ByteArrayOutputStream()
+    val output = File.createTempFile("verity-screenshot-", ".jpg")
     val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
     try {
       val param =
@@ -36,7 +34,7 @@ object ScreenshotCompressor {
           compressionMode = ImageWriteParam.MODE_EXPLICIT
           compressionQuality = jpegQuality
         }
-      ImageIO.createImageOutputStream(baos).use { ios ->
+      ImageIO.createImageOutputStream(output).use { ios ->
         writer.output = ios
         writer.write(null, IIOImage(image, null, null), param)
       }
@@ -44,6 +42,6 @@ object ScreenshotCompressor {
       writer.dispose()
     }
 
-    return Base64.getEncoder().encodeToString(baos.toByteArray())
+    return output
   }
 }

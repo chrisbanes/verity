@@ -3,23 +3,25 @@ package me.chrisbanes.verity.mcp
 import assertk.assertThat
 import assertk.assertions.isGreaterThan
 import assertk.assertions.isLessThan
-import assertk.assertions.isNotEmpty
+import assertk.assertions.isTrue
 import java.awt.image.BufferedImage
 import java.io.File
-import java.util.Base64
 import java.util.Random
 import javax.imageio.ImageIO
 import kotlin.test.Test
 
 class ScreenshotCompressorTest {
   @Test
-  fun `compresses and base64 encodes a PNG`() {
+  fun `compresses PNG to JPEG file`() {
     val tempPng = createTestPng(800, 600)
     try {
-      val base64 = ScreenshotCompressor.compressToBase64(tempPng)
-      assertThat(base64).isNotEmpty()
-      val decoded = Base64.getDecoder().decode(base64)
-      assertThat(decoded.size).isGreaterThan(0)
+      val jpeg = ScreenshotCompressor.compress(tempPng)
+      try {
+        assertThat(jpeg.exists()).isTrue()
+        assertThat(jpeg.length()).isGreaterThan(0)
+      } finally {
+        jpeg.delete()
+      }
     } finally {
       tempPng.delete()
     }
@@ -29,9 +31,12 @@ class ScreenshotCompressorTest {
   fun `scales down wide images`() {
     val tempPng = createNoisyTestPng(2560, 1440)
     try {
-      val base64 = ScreenshotCompressor.compressToBase64(tempPng, maxWidth = 1280)
-      val decoded = Base64.getDecoder().decode(base64)
-      assertThat(decoded.size).isLessThan(tempPng.length().toInt())
+      val jpeg = ScreenshotCompressor.compress(tempPng, maxWidth = 1280)
+      try {
+        assertThat(jpeg.length()).isLessThan(tempPng.length())
+      } finally {
+        jpeg.delete()
+      }
     } finally {
       tempPng.delete()
     }
@@ -41,8 +46,13 @@ class ScreenshotCompressorTest {
   fun `does not upscale small images`() {
     val tempPng = createTestPng(640, 480)
     try {
-      val base64 = ScreenshotCompressor.compressToBase64(tempPng, maxWidth = 1280)
-      assertThat(base64).isNotEmpty()
+      val jpeg = ScreenshotCompressor.compress(tempPng, maxWidth = 1280)
+      try {
+        val img = ImageIO.read(jpeg)
+        assertThat(img.width).isLessThan(1280)
+      } finally {
+        jpeg.delete()
+      }
     } finally {
       tempPng.delete()
     }

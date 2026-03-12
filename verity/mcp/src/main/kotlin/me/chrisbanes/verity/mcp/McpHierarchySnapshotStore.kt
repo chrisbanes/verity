@@ -2,34 +2,46 @@ package me.chrisbanes.verity.mcp
 
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 
 class McpHierarchySnapshotStore(
   private val maxPerSession: Int = 10,
 ) {
-  private val sessions = ConcurrentHashMap<UUID, LinkedHashMap<UUID, HierarchyNode>>()
-
-  fun add(sessionId: UUID, hierarchy: HierarchyNode): UUID {
-    val snapshots =
-      sessions.computeIfAbsent(sessionId) {
-        object : LinkedHashMap<UUID, HierarchyNode>(maxPerSession, 0.75f, true) {
-          override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, HierarchyNode>?): Boolean = size > maxPerSession
-        }
+  private class SessionSnapshots(maxSize: Int) {
+    val mutex = Mutex()
+    val entries: LinkedHashMap<UUID, HierarchyNode> =
+      object : LinkedHashMap<UUID, HierarchyNode>(maxSize, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, HierarchyNode>?): Boolean = size > maxSize
       }
+  }
+
+  private val sessions = ConcurrentHashMap<UUID, SessionSnapshots>()
+
+  suspend fun add(sessionId: UUID, hierarchy: HierarchyNode): UUID {
+    val session = sessions.computeIfAbsent(sessionId) { SessionSnapshots(maxPerSession) }
     val snapshotId = UUID.randomUUID()
-    synchronized(snapshots) {
-      snapshots[snapshotId] = hierarchy
+    session.mutex.withLock {
+      session.entries[snapshotId] = hierarchy
     }
     return snapshotId
   }
 
-  fun get(sessionId: UUID, snapshotId: UUID): HierarchyNode? = sessions[sessionId]?.let { synchronized(it) { it[snapshotId] } }
+  suspend fun get(sessionId: UUID, snapshotId: UUID): HierarchyNode? {
+    val session = sessions[sessionId] ?: return null
+    return session.mutex.withLock { session.entries[snapshotId] }
+  }
 
-  fun latest(sessionId: UUID): HierarchyNode? = sessions[sessionId]?.let { synchronized(it) { it.values.lastOrNull() } }
+  suspend fun latest(sessionId: UUID): HierarchyNode? {
+    val session = sessions[sessionId] ?: return null
+    return session.mutex.withLock { session.entries.values.lastOrNull() }
+  }
 
-  fun previous(sessionId: UUID): HierarchyNode? = sessions[sessionId]?.let {
-    synchronized(it) {
-      val values = it.values.toList()
+  suspend fun previous(sessionId: UUID): HierarchyNode? {
+    val session = sessions[sessionId] ?: return null
+    return session.mutex.withLock {
+      val values = session.entries.values.toList()
       if (values.size >= 2) values[values.size - 2] else null
     }
   }
