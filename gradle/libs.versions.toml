@@ -28,6 +28,7 @@ clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
 ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
 maestro-client = { module = "dev.mobile:maestro-client", version.ref = "maestro-client" }
+maestro-orchestra = { module = "dev.mobile:maestro-orchestra", version.ref = "maestro-client" }
 maestro-ios-driver = { module = "dev.mobile:maestro-ios-driver", version.ref = "maestro-ios" }
 dadb = { module = "dev.mobile:dadb", version.ref = "dadb" }
 mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = "mcp-kotlin" }

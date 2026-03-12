@@ -65,7 +65,7 @@ class Orchestrator(
 
     // Execute loop
     segment.loop?.let { loop ->
-      val loopResult = executeLoop(loop.action, loop.until, loop.max, platform)
+      val loopResult = executeLoop(loop.action, loop.until, loop.max, appId, platform, navigator)
       return SegmentResult(
         index = segment.index,
         passed = loopResult.satisfied,
@@ -78,9 +78,9 @@ class Orchestrator(
       val verdict = evaluateAssertion(assert.description, assert.mode, inspector)
       return SegmentResult(
         index = segment.index,
-        passed = verdict,
+        passed = verdict.passed,
         assertionMode = assert.mode,
-        reasoning = "",
+        reasoning = verdict.reasoning,
       )
     }
 
@@ -113,7 +113,9 @@ class Orchestrator(
     action: String,
     until: String,
     max: Int,
+    appId: String,
     platform: Platform,
+    navigator: NavigatorAgent,
   ): LoopResult {
     val mapper = PlatformKeyMapper.forPlatform(platform)
     val keyName = mapper.map(action)
@@ -129,11 +131,14 @@ class Orchestrator(
         session.pressKey(keyName)
         session.waitForAnimationToEnd()
       } else {
-        return LoopResult(
-          satisfied = false,
-          iterations = i,
-          reasoning = "LLM fallback for non-key-mapped loop action '$action' is not yet implemented",
-        )
+        val flowResult = executeSlowPath(listOf(action), appId, platform, navigator)
+        if (!flowResult.success) {
+          return LoopResult(
+            satisfied = false,
+            iterations = i,
+            reasoning = "Loop flow execution failed: ${flowResult.output}",
+          )
+        }
       }
     }
 
@@ -157,21 +162,33 @@ class Orchestrator(
     description: String,
     mode: AssertMode,
     inspector: InspectorAgent,
-  ): Boolean = when (mode) {
-    AssertMode.VISIBLE -> session.containsText(description)
+  ): me.chrisbanes.verity.core.model.InspectionVerdict = when (mode) {
+    AssertMode.VISIBLE -> {
+      val passed = session.containsText(description)
+      me.chrisbanes.verity.core.model.InspectionVerdict(
+        passed = passed,
+        reasoning = if (passed) "Text '$description' is visible" else "Text '$description' is not visible",
+      )
+    }
 
-    AssertMode.FOCUSED -> session.checkFocused(description)
+    AssertMode.FOCUSED -> {
+      val passed = session.checkFocused(description)
+      me.chrisbanes.verity.core.model.InspectionVerdict(
+        passed = passed,
+        reasoning = if (passed) "Text '$description' is focused" else "Text '$description' is not focused",
+      )
+    }
 
     AssertMode.TREE -> {
       val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
-      inspector.evaluateTree(hierarchy, description).passed
+      inspector.evaluateTree(hierarchy, description)
     }
 
     AssertMode.VISUAL -> {
       val tempFile = Files.createTempFile("verity-screenshot-", ".png")
       try {
         session.captureScreenshot(tempFile)
-        inspector.evaluateVisual(tempFile, description).passed
+        inspector.evaluateVisual(tempFile, description)
       } finally {
         Files.deleteIfExists(tempFile)
       }

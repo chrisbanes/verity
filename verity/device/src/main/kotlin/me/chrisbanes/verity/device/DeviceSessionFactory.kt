@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.device
 
 import dadb.Dadb
+import dadb.adbserver.AdbServer
 import device.SimctlIOSDevice
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.runBlocking
@@ -44,12 +45,7 @@ object DeviceSessionFactory {
     deviceId: String?,
     disableAnimations: Boolean,
   ): DeviceSession {
-    val dadb: Dadb = if (deviceId != null) {
-      Dadb.create(deviceId, 5555)
-    } else {
-      Dadb.discover()
-        ?: error("No Android device found. Is ADB available?")
-    }
+    val dadb = resolveAndroidConnection(deviceId)
 
     val driver = AndroidDriver(dadb)
     val maestro = Maestro.android(driver)
@@ -64,13 +60,38 @@ object DeviceSessionFactory {
     return session
   }
 
+  internal fun resolveAndroidConnection(
+    deviceId: String?,
+    createWithQuery: (String) -> Dadb = { query -> AdbServer.createDadb(deviceQuery = query) },
+    discover: () -> Dadb? = { Dadb.discover() },
+  ): Dadb = deviceId?.let { createWithQuery("host:transport:$it") }
+    ?: discover()
+    ?: error("No Android device found. Is ADB available?")
+
+  internal fun resolveIosDeviceId(
+    deviceId: String?,
+    discover: () -> String? = ::discoverBootedIosSimulatorId,
+  ): String = deviceId ?: discover()
+    ?: error("No iOS simulator found. Provide a device ID or boot a simulator.")
+
   private fun connectIos(deviceId: String?): DeviceSession {
     val iosDevice = SimctlIOSDevice(
-      deviceId ?: error("iOS device ID is required"),
+      resolveIosDeviceId(deviceId),
     )
     val driver = IOSDriver(iosDevice)
     val maestro = Maestro.ios(driver)
     return IosDeviceSession(maestro, iosDevice)
+  }
+
+  private fun discoverBootedIosSimulatorId(): String? {
+    val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "booted", "-j")
+      .redirectErrorStream(true)
+      .start()
+    val output = process.inputStream.bufferedReader().readText()
+    check(process.waitFor() == 0) { "xcrun simctl list failed: $output" }
+
+    val idRegex = Regex("\"udid\"\\s*:\\s*\"([^\"]+)\"")
+    return idRegex.find(output)?.groupValues?.get(1)
   }
 }
 

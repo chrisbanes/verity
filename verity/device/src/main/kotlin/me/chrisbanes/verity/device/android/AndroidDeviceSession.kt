@@ -1,9 +1,13 @@
 package me.chrisbanes.verity.device.android
 
 import dadb.Dadb
+import java.nio.file.Files
 import java.nio.file.Path
 import maestro.KeyCode
 import maestro.Maestro
+import maestro.orchestra.Orchestra
+import maestro.orchestra.error.SyntaxError
+import maestro.orchestra.yaml.YamlCommandReader
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
@@ -22,9 +26,19 @@ class AndroidDeviceSession(
 ) : DeviceSession {
 
   override suspend fun executeFlow(yaml: String): FlowResult {
-    // Orchestra and YamlCommandReader are in a separate maestro-orchestra module
-    // not included in maestro-client. Flow execution requires that dependency.
-    TODO("Wire Maestro SDK flow execution — requires maestro-orchestra dependency")
+    val flowPath = Files.createTempFile("verity-flow-", ".yaml")
+    return try {
+      Files.writeString(flowPath, yaml)
+      val commands = YamlCommandReader.readCommands(flowPath)
+      val success = Orchestra(maestro = maestro).runFlow(commands)
+      FlowResult(success = success)
+    } catch (error: SyntaxError) {
+      FlowResult(success = false, output = error.message)
+    } catch (error: Exception) {
+      FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
+    } finally {
+      Files.deleteIfExists(flowPath)
+    }
   }
 
   override suspend fun pressKey(keyName: String) {

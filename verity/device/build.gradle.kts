@@ -1,12 +1,14 @@
 dependencies {
   implementation(project(":verity:core"))
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.kotlinx.serialization.json)
 
   // Android device
   implementation(libs.dadb)
   implementation(libs.maestro.client) {
     exclude(group = "io.grpc", module = "grpc-netty")
   }
+  implementation(libs.maestro.orchestra)
 
   // iOS device
   implementation(libs.maestro.ios.driver)

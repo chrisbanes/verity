@@ -1,6 +1,13 @@
 package me.chrisbanes.verity.agent
 
+import ai.koog.agents.core.agent.AIAgent
+import ai.koog.prompt.dsl.prompt
+import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
+import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
+import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
+import ai.koog.prompt.message.ContentPart
 import java.nio.file.Path
+import kotlinx.io.files.Path as KoogPath
 import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.core.model.InspectionVerdict
 
@@ -13,22 +20,18 @@ import me.chrisbanes.verity.core.model.InspectionVerdict
  * Visual evaluation uses Koog's prompt DSL with image attachments via
  * `PromptExecutor.execute()` since `AIAgent.run` does not support multimodal input.
  */
-class InspectorAgent {
+class InspectorAgent(
+  private val evaluateText: suspend (systemPrompt: String, userMessage: String) -> String = ::evaluateTextWithKoog,
+  private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path) -> String = ::evaluateVisualWithKoog,
+) {
 
   /**
    * Evaluate an assertion against the accessibility tree text.
    */
   suspend fun evaluateTree(hierarchy: String, assertion: String): InspectionVerdict {
     val message = buildTreeMessage(hierarchy, assertion)
-    // Koog wiring (production-ready milestone):
-    //   val agent = AIAgent(
-    //     promptExecutor = simpleAnthropicExecutor(apiKey),
-    //     systemPrompt = SYSTEM_PROMPT,
-    //     llmModel = AnthropicModels.Sonnet_4_5,
-    //   )
-    //   val response = agent.run(message)
-    //   return parseVerdict(response)
-    TODO("Wire Koog AIAgent call for tree evaluation — see Models.INSPECTOR")
+    val response = evaluateText(SYSTEM_PROMPT, message)
+    return parseVerdict(response)
   }
 
   /**
@@ -36,17 +39,8 @@ class InspectorAgent {
    */
   suspend fun evaluateVisual(screenshotPath: Path, assertion: String): InspectionVerdict {
     val message = buildVisualMessage(assertion)
-    // Koog wiring (production-ready milestone) — uses prompt DSL for image attachment:
-    //   val prompt = prompt("visual-eval") {
-    //     system(SYSTEM_PROMPT)
-    //     user {
-    //       text(message)
-    //       attachments { image(kotlinx.io.files.Path(screenshotPath.toString())) }
-    //     }
-    //   }
-    //   val response = executor.execute(prompt, model, emptyList()).first().content
-    //   return parseVerdict(response)
-    TODO("Wire Koog prompt DSL with vision for visual evaluation — see Models.INSPECTOR")
+    val response = evaluateVisualContent(SYSTEM_PROMPT, message, screenshotPath)
+    return parseVerdict(response)
   }
 
   companion object {
@@ -79,6 +73,42 @@ class InspectorAgent {
           reasoning = "Inspector parse error: ${e.message}. Raw response: $cleaned",
         )
       }
+    }
+
+    private suspend fun evaluateTextWithKoog(systemPrompt: String, userMessage: String): String {
+      val apiKey = requireNotNull(System.getenv("ANTHROPIC_API_KEY")) {
+        "ANTHROPIC_API_KEY is required for InspectorAgent"
+      }
+      val executor = SingleLLMPromptExecutor(AnthropicLLMClient(apiKey))
+      val agent = AIAgent(
+        promptExecutor = executor,
+        llmModel = AnthropicModels.Sonnet_4_5,
+        systemPrompt = systemPrompt,
+      )
+      return agent.run(userMessage)
+    }
+
+    private suspend fun evaluateVisualWithKoog(
+      systemPrompt: String,
+      userMessage: String,
+      screenshotPath: Path,
+    ): String {
+      val apiKey = requireNotNull(System.getenv("ANTHROPIC_API_KEY")) {
+        "ANTHROPIC_API_KEY is required for InspectorAgent"
+      }
+      val executor = SingleLLMPromptExecutor(AnthropicLLMClient(apiKey))
+      val prompt = prompt("visual-eval") {
+        system(systemPrompt)
+        user {
+          text(ContentPart.Text(userMessage))
+          image(KoogPath(screenshotPath.toString()))
+        }
+      }
+      return executor.execute(
+        prompt = prompt,
+        model = AnthropicModels.Sonnet_4_5,
+        tools = emptyList(),
+      ).first().content
     }
   }
 }

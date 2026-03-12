@@ -2,9 +2,12 @@ package me.chrisbanes.verity.agent
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
+import java.nio.file.Path
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
 
 class InspectorAgentTest {
   @Test
@@ -47,5 +50,44 @@ class InspectorAgentTest {
     val verdict = InspectorAgent.parseVerdict("garbage response")
     assertThat(verdict.passed).isFalse()
     assertThat(verdict.reasoning).contains("parse error")
+  }
+
+  @Test
+  fun `evaluateTree invokes text executor and parses verdict`() = runTest {
+    var capturedSystemPrompt = ""
+    var capturedMessage = ""
+    val agent = InspectorAgent(
+      evaluateText = { systemPrompt, userMessage ->
+        capturedSystemPrompt = systemPrompt
+        capturedMessage = userMessage
+        """{"passed": true, "reasoning": "Tree matched"}"""
+      },
+    )
+
+    val verdict = agent.evaluateTree("hierarchy text", "Home is visible")
+
+    assertThat(capturedSystemPrompt).contains("testing inspector")
+    assertThat(capturedMessage).contains("hierarchy text")
+    assertThat(capturedMessage).contains("Home is visible")
+    assertThat(verdict.passed).isTrue()
+    assertThat(verdict.reasoning).contains("Tree matched")
+  }
+
+  @Test
+  fun `evaluateVisual invokes vision executor with screenshot path and parses verdict`() = runTest {
+    var capturedPath: Path? = null
+    val agent = InspectorAgent(
+      evaluateVisualContent = { _, userMessage, screenshotPath ->
+        capturedPath = screenshotPath
+        assertThat(userMessage).contains("Hero image renders")
+        """{"passed": false, "reasoning": "Image mismatch"}"""
+      },
+    )
+
+    val verdict = agent.evaluateVisual(Path.of("/tmp/sample.png"), "Hero image renders")
+
+    assertThat(capturedPath).isEqualTo(Path.of("/tmp/sample.png"))
+    assertThat(verdict.passed).isFalse()
+    assertThat(verdict.reasoning).contains("Image mismatch")
   }
 }

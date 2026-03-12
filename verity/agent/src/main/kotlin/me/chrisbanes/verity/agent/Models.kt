@@ -9,7 +9,7 @@ package me.chrisbanes.verity.agent
  * - OpenAI: "gpt-5-mini"
  *
  * INSPECTOR models (capable/vision — used for assertion evaluation):
- * - Anthropic: "claude-sonnet-4-6" (recommended)
+ * - Anthropic: "claude-sonnet-4-5" (recommended for Koog 0.6.4)
  * - Google: "gemini-3.1-pro"
  * - OpenAI: "gpt-5.4"
  *
@@ -18,5 +18,5 @@ package me.chrisbanes.verity.agent
  */
 object Models {
   const val NAVIGATOR = "claude-haiku-4-5"
-  const val INSPECTOR = "claude-sonnet-4-6"
+  const val INSPECTOR = "claude-sonnet-4-5"
 }
