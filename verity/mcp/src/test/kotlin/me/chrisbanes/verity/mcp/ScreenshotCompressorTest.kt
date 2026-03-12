@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.mcp
 
 import assertk.assertThat
+import assertk.assertions.isEqualTo
 import assertk.assertions.isGreaterThan
 import assertk.assertions.isLessThan
 import assertk.assertions.isTrue
@@ -28,12 +29,15 @@ class ScreenshotCompressorTest {
   }
 
   @Test
-  fun `scales down wide images`() {
+  fun `scales down images with scale factor`() {
     val tempPng = createNoisyTestPng(2560, 1440)
     try {
-      val jpeg = ScreenshotCompressor.compress(tempPng, maxWidth = 1280)
+      val jpeg = ScreenshotCompressor.compress(tempPng, scale = 0.5f)
       try {
         assertThat(Files.size(jpeg)).isLessThan(Files.size(tempPng))
+        val img = ImageIO.read(jpeg.toFile())
+        assertThat(img.width).isEqualTo(1280)
+        assertThat(img.height).isEqualTo(720)
       } finally {
         Files.deleteIfExists(jpeg)
       }
@@ -43,13 +47,14 @@ class ScreenshotCompressorTest {
   }
 
   @Test
-  fun `does not upscale small images`() {
+  fun `scale of 1 preserves original dimensions`() {
     val tempPng = createTestPng(640, 480)
     try {
-      val jpeg = ScreenshotCompressor.compress(tempPng, maxWidth = 1280)
+      val jpeg = ScreenshotCompressor.compress(tempPng, scale = 1f)
       try {
         val img = ImageIO.read(jpeg.toFile())
-        assertThat(img.width).isLessThan(1280)
+        assertThat(img.width).isEqualTo(640)
+        assertThat(img.height).isEqualTo(480)
       } finally {
         Files.deleteIfExists(jpeg)
       }

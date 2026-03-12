@@ -12,17 +12,17 @@ object ScreenshotCompressor {
 
   fun compress(
     pngFile: Path,
-    maxWidth: Int = 1280,
+    scale: Float = 1f,
     jpegQuality: Float = 0.75f,
   ): Path {
     var image = ImageIO.read(pngFile.toFile())
 
-    if (image.width > maxWidth) {
-      val scale = maxWidth.toDouble() / image.width
+    if (scale < 1f) {
+      val newWidth = (image.width * scale).toInt()
       val newHeight = (image.height * scale).toInt()
-      val scaled = BufferedImage(maxWidth, newHeight, BufferedImage.TYPE_INT_RGB)
+      val scaled = BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB)
       val g = scaled.createGraphics()
-      g.drawImage(image.getScaledInstance(maxWidth, newHeight, Image.SCALE_SMOOTH), 0, 0, null)
+      g.drawImage(image.getScaledInstance(newWidth, newHeight, Image.SCALE_SMOOTH), 0, 0, null)
       g.dispose()
       image = scaled
     }
