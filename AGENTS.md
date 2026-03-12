@@ -48,6 +48,10 @@ Tasks are only complete once `./gradlew check` is green.
   ```
 - Never use snake_case for Kotlin property names, even when the JSON wire format is snake_case.
 
+## Git
+
+- Do not add `Co-Authored-By` or other agent/bot trailers to commit messages. The human author is the sole commit author.
+
 ## Harness
 
 - Prefer fd to grep
