@@ -30,14 +30,19 @@ object ScreenshotCompressor {
 
     val baos = ByteArrayOutputStream()
     val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
-    val param =
-      writer.defaultWriteParam.apply {
-        compressionMode = ImageWriteParam.MODE_EXPLICIT
-        compressionQuality = jpegQuality
+    try {
+      val param =
+        writer.defaultWriteParam.apply {
+          compressionMode = ImageWriteParam.MODE_EXPLICIT
+          compressionQuality = jpegQuality
+        }
+      ImageIO.createImageOutputStream(baos).use { ios ->
+        writer.output = ios
+        writer.write(null, IIOImage(image, null, null), param)
       }
-    writer.output = ImageIO.createImageOutputStream(baos)
-    writer.write(null, IIOImage(image, null, null), param)
-    writer.dispose()
+    } finally {
+      writer.dispose()
+    }
 
     return Base64.getEncoder().encodeToString(baos.toByteArray())
   }
