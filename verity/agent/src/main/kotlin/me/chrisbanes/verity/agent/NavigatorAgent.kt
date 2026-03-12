@@ -44,8 +44,6 @@ class NavigatorAgent(
   }
 
   companion object {
-    private val CODE_FENCE = Regex("```\\w*\\n?|```")
-
     fun buildSystemPrompt(
       platform: Platform,
       bundledContext: String,
@@ -98,6 +96,6 @@ class NavigatorAgent(
       }
     }.trim()
 
-    fun cleanResponse(response: String): String = response.replace(CODE_FENCE, "").trim()
+    fun cleanResponse(response: String): String = response.stripCodeFences()
   }
 }

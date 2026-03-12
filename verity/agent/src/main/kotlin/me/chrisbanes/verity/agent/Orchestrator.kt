@@ -5,6 +5,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.keymap.PlatformKeyMapper
 import me.chrisbanes.verity.core.model.AssertMode
+import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
@@ -51,7 +52,14 @@ class Orchestrator(
       if (isFastPath(instructions, platform)) {
         executeFastPath(instructions, platform)
       } else {
-        executeSlowPath(instructions, appId, platform, navigator)
+        val flowResult = executeSlowPath(instructions, appId, platform, navigator)
+        if (!flowResult.success) {
+          return SegmentResult(
+            index = segment.index,
+            passed = false,
+            reasoning = "Flow execution failed: ${flowResult.output}",
+          )
+        }
       }
     }
 
@@ -83,7 +91,9 @@ class Orchestrator(
   private suspend fun executeFastPath(instructions: List<String>, platform: Platform) {
     val mapper = PlatformKeyMapper.forPlatform(platform)
     for (instruction in instructions) {
-      val keyName = mapper.map(instruction)!!
+      val keyName = checkNotNull(mapper.map(instruction)) {
+        "Fast-path instruction '$instruction' did not map to a key for $platform"
+      }
       session.pressKey(keyName)
       session.waitForAnimationToEnd()
     }
@@ -94,9 +104,9 @@ class Orchestrator(
     appId: String,
     platform: Platform,
     navigator: NavigatorAgent,
-  ) {
+  ): FlowResult {
     val yaml = navigator.generate(instructions, appId, platform, context)
-    session.executeFlow(yaml)
+    return session.executeFlow(yaml)
   }
 
   private suspend fun executeLoop(
@@ -119,7 +129,11 @@ class Orchestrator(
         session.pressKey(keyName)
         session.waitForAnimationToEnd()
       } else {
-        TODO("LLM fallback for non-key-mapped loop actions")
+        return LoopResult(
+          satisfied = false,
+          iterations = i,
+          reasoning = "LLM fallback for non-key-mapped loop action '$action' is not yet implemented",
+        )
       }
     }
 

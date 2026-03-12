@@ -54,8 +54,6 @@ class InspectorAgent {
       ignoreUnknownKeys = true
       isLenient = true
     }
-    private val CODE_FENCE = Regex("```\\w*\\n?|```")
-
     const val SYSTEM_PROMPT =
       "You are a visual testing inspector for a mobile/TV app.\n" +
         "Evaluate whether a screenshot or accessibility tree matches an assertion.\n" +
@@ -72,7 +70,7 @@ class InspectorAgent {
     fun buildVisualMessage(assertion: String): String = "Evaluate the attached screenshot against this assertion: $assertion"
 
     fun parseVerdict(response: String): InspectionVerdict {
-      val cleaned = response.replace(CODE_FENCE, "").trim()
+      val cleaned = response.stripCodeFences()
       return try {
         lenientJson.decodeFromString(InspectionVerdict.serializer(), cleaned)
       } catch (e: Exception) {
