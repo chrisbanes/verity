@@ -2,6 +2,9 @@ package me.chrisbanes.verity.device
 
 import dadb.Dadb
 import device.SimctlIOSDevice
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import maestro.Maestro
 import maestro.drivers.AndroidDriver
 import maestro.drivers.IOSDriver
@@ -28,7 +31,12 @@ object DeviceSessionFactory {
     Platform.ANDROID_MOBILE,
     -> connectAndroid(platform, deviceId, disableAnimations)
 
-    Platform.IOS -> connectIos(deviceId)
+    Platform.IOS -> {
+      if (disableAnimations) {
+        System.err.println("Warning: disableAnimations is not supported on iOS, ignoring")
+      }
+      connectIos(deviceId)
+    }
   }
 
   private suspend fun connectAndroid(
@@ -76,9 +84,10 @@ private class AnimationRestoringSession(
   override fun close() {
     try {
       if (savedState != null) {
-        // Use runBlocking since close() is not suspending
-        kotlinx.coroutines.runBlocking {
-          delegate.restoreAnimationState(savedState)
+        runBlocking {
+          withTimeout(5.seconds) {
+            delegate.restoreAnimationState(savedState)
+          }
         }
       }
     } finally {

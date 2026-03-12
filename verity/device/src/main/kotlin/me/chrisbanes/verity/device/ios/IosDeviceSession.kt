@@ -2,10 +2,7 @@ package me.chrisbanes.verity.device.ios
 
 import java.nio.file.Path
 import maestro.Maestro
-import me.chrisbanes.verity.core.hierarchy.FocusDetector
-import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
-import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
@@ -31,14 +28,9 @@ class IosDeviceSession(
     iosDevice.pressKey(keyName)
   }
 
-  override suspend fun captureHierarchyTree(filter: HierarchyFilter): HierarchyNode {
+  override suspend fun captureHierarchyTree(): HierarchyNode {
     val hierarchy = iosDevice.viewHierarchy(false)
     return XcTestTreeConverter.convert(hierarchy.axElement)
-  }
-
-  override suspend fun captureHierarchy(filter: HierarchyFilter): String {
-    val tree = captureHierarchyTree(filter)
-    return HierarchyRenderer.render(tree, filter)
   }
 
   @Suppress("DEPRECATION")
@@ -46,22 +38,14 @@ class IosDeviceSession(
     maestro.takeScreenshot(output.toFile(), false)
   }
 
-  override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
-    val hierarchy = captureHierarchy(HierarchyFilter.CONTENT)
-    return if (ignoreCase) {
-      hierarchy.lowercase().contains(text.lowercase())
-    } else {
-      hierarchy.contains(text)
-    }
-  }
-
-  override suspend fun checkFocused(text: String): Boolean {
-    val hierarchy = captureHierarchy(HierarchyFilter.FOCUS)
-    return FocusDetector.containsFocused(hierarchy, text)
-  }
-
   override suspend fun shell(command: String): String {
-    TODO("Wire iOS shell command (xcrun simctl or devicectl)")
+    val process = ProcessBuilder("xcrun", "simctl", *command.split(" ").toTypedArray())
+      .redirectErrorStream(true)
+      .start()
+    val output = process.inputStream.bufferedReader().readText()
+    val exitCode = process.waitFor()
+    check(exitCode == 0) { "xcrun simctl command failed (exit $exitCode): $output" }
+    return output
   }
 
   override suspend fun waitForAnimationToEnd() {

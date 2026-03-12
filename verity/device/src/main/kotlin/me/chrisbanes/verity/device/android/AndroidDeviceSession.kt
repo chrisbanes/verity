@@ -4,10 +4,7 @@ import dadb.Dadb
 import java.nio.file.Path
 import maestro.KeyCode
 import maestro.Maestro
-import me.chrisbanes.verity.core.hierarchy.FocusDetector
-import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
-import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
@@ -35,33 +32,14 @@ class AndroidDeviceSession(
     maestro.pressKey(keyCode)
   }
 
-  override suspend fun captureHierarchyTree(filter: HierarchyFilter): HierarchyNode {
+  override suspend fun captureHierarchyTree(): HierarchyNode {
     val hierarchy = maestro.viewHierarchy(false)
     return MaestroTreeConverter.convert(hierarchy.root)
-  }
-
-  override suspend fun captureHierarchy(filter: HierarchyFilter): String {
-    val tree = captureHierarchyTree(filter)
-    return HierarchyRenderer.render(tree, filter)
   }
 
   @Suppress("DEPRECATION")
   override suspend fun captureScreenshot(output: Path) {
     maestro.takeScreenshot(output.toFile(), false)
-  }
-
-  override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
-    val hierarchy = captureHierarchy(HierarchyFilter.CONTENT)
-    return if (ignoreCase) {
-      hierarchy.lowercase().contains(text.lowercase())
-    } else {
-      hierarchy.contains(text)
-    }
-  }
-
-  override suspend fun checkFocused(text: String): Boolean {
-    val hierarchy = captureHierarchy(HierarchyFilter.FOCUS)
-    return FocusDetector.containsFocused(hierarchy, text)
   }
 
   override suspend fun shell(command: String): String {
