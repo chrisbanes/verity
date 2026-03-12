@@ -1,8 +1,8 @@
 package me.chrisbanes.verity.agent
 
-import me.chrisbanes.verity.core.model.InspectionVerdict
 import java.nio.file.Path
 import kotlinx.serialization.json.Json
+import me.chrisbanes.verity.core.model.InspectionVerdict
 
 /**
  * Evaluates assertions against screen state.
@@ -50,7 +50,10 @@ class InspectorAgent {
   }
 
   companion object {
-    private val lenientJson = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val lenientJson = Json {
+      ignoreUnknownKeys = true
+      isLenient = true
+    }
     private val CODE_FENCE = Regex("```\\w*\\n?|```")
 
     const val SYSTEM_PROMPT =
@@ -66,8 +69,7 @@ class InspectorAgent {
       appendLine("Assertion to evaluate: $assertion")
     }.trim()
 
-    fun buildVisualMessage(assertion: String): String =
-      "Evaluate the attached screenshot against this assertion: $assertion"
+    fun buildVisualMessage(assertion: String): String = "Evaluate the attached screenshot against this assertion: $assertion"
 
     fun parseVerdict(response: String): InspectionVerdict {
       val cleaned = response.replace(CODE_FENCE, "").trim()

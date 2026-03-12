@@ -98,7 +98,6 @@ class NavigatorAgent(
       }
     }.trim()
 
-    fun cleanResponse(response: String): String =
-      response.replace(CODE_FENCE, "").trim()
+    fun cleanResponse(response: String): String = response.replace(CODE_FENCE, "").trim()
   }
 }

@@ -3,8 +3,8 @@ package me.chrisbanes.verity.agent
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
-import me.chrisbanes.verity.core.model.Platform
 import kotlin.test.Test
+import me.chrisbanes.verity.core.model.Platform
 
 class NavigatorAgentTest {
   @Test
