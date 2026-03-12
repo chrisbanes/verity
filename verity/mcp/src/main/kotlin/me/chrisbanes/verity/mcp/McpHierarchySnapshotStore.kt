@@ -11,8 +11,8 @@ class McpHierarchySnapshotStore(
 
   fun add(sessionId: UUID, hierarchy: HierarchyNode): UUID {
     val snapshots =
-      sessions.getOrPut(sessionId) {
-        object : LinkedHashMap<UUID, HierarchyNode>(maxPerSession, 0.75f, false) {
+      sessions.computeIfAbsent(sessionId) {
+        object : LinkedHashMap<UUID, HierarchyNode>(maxPerSession, 0.75f, true) {
           override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, HierarchyNode>?): Boolean = size > maxPerSession
         }
       }
