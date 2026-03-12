@@ -20,7 +20,9 @@ data class SessionEntry(
   var lastUsedAt: Long = System.currentTimeMillis(),
 )
 
-class McpDeviceSessionManager {
+class McpDeviceSessionManager(
+  private val sessionFactory: suspend (Platform, String?, Boolean) -> DeviceSession = DeviceSessionFactory::connect,
+) {
 
   private val sessions = ConcurrentHashMap<UUID, SessionEntry>()
 
@@ -29,7 +31,7 @@ class McpDeviceSessionManager {
     deviceId: String? = null,
     disableAnimations: Boolean = false,
   ): SessionHandle {
-    val session = DeviceSessionFactory.connect(platform, deviceId, disableAnimations)
+    val session = sessionFactory(platform, deviceId, disableAnimations)
     val id = UUID.randomUUID()
     val resolvedDeviceId = deviceId ?: "auto-discovered"
     sessions[id] = SessionEntry(
