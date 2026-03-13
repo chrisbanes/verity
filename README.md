@@ -1,5 +1,7 @@
 # Verity
 
+[![Nice](https://api.nice.sbs/badge/n_rNVAX1s22Wrk.svg?theme=rich)](https://nice.sbs/button?id=n_rNVAX1s22Wrk)
+
 > **Preview** — Verity is under active development and not yet ready for general use.
 
 Verity is an end-to-end testing tool that combines device automation with LLM reasoning. Write human-readable journey files, and Verity executes them against real devices — navigating UIs, pressing buttons, and verifying what's on screen.
