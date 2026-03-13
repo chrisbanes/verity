@@ -16,6 +16,9 @@ class VerityTest {
     assertThat(result.output).contains("run")
     assertThat(result.output).contains("list")
     assertThat(result.output).contains("mcp")
+    assertThat(result.output).contains("--provider")
+    assertThat(result.output).contains("--navigator-model")
+    assertThat(result.output).contains("--inspector-model")
   }
 
   @Test
