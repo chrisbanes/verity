@@ -1,6 +1,8 @@
 package me.chrisbanes.verity.device
 
 import java.nio.file.Files
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import maestro.Maestro
 import maestro.orchestra.Orchestra
 import maestro.orchestra.error.SyntaxError
@@ -14,10 +16,14 @@ import me.chrisbanes.verity.core.model.FlowResult
  * [me.chrisbanes.verity.device.ios.IosDeviceSession].
  */
 internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowResult {
-  val flowPath = Files.createTempFile("verity-flow-", ".yaml")
+  val flowPath = withContext(Dispatchers.IO) {
+    Files.createTempFile("verity-flow-", ".yaml")
+  }
   return try {
-    Files.writeString(flowPath, yaml)
-    val commands = YamlCommandReader.readCommands(flowPath)
+    val commands = withContext(Dispatchers.IO) {
+      Files.writeString(flowPath, yaml)
+      YamlCommandReader.readCommands(flowPath)
+    }
     val success = Orchestra(maestro = maestro).runFlow(commands)
     FlowResult(success = success)
   } catch (error: SyntaxError) {
@@ -25,6 +31,8 @@ internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowRes
   } catch (error: Exception) {
     FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
   } finally {
-    Files.deleteIfExists(flowPath)
+    withContext(Dispatchers.IO) {
+      Files.deleteIfExists(flowPath)
+    }
   }
 }

@@ -94,26 +94,26 @@ class DeviceSessionProductionReadyTest {
   }
 
   @Test
-  fun `resolveIosDeviceId returns explicit id when provided`() {
+  fun `resolveIosDeviceId returns explicit id when provided`() = runTest {
     assertThat(DeviceSessionFactory.resolveIosDeviceId("sim-123") { error("unused") })
       .isEqualTo("sim-123")
   }
 
   @Test
-  fun `resolveIosDeviceId falls back to discovered simulator id`() {
+  fun `resolveIosDeviceId falls back to discovered simulator id`() = runTest {
     assertThat(DeviceSessionFactory.resolveIosDeviceId(null) { listOf("booted-sim") })
       .isEqualTo("booted-sim")
   }
 
   @Test
-  fun `resolveIosDeviceId fails when discovery yields nothing`() {
+  fun `resolveIosDeviceId fails when discovery yields nothing`() = runTest {
     assertFailure {
       DeviceSessionFactory.resolveIosDeviceId(null) { emptyList() }
     }.messageContains("No iOS simulator found")
   }
 
   @Test
-  fun `resolveIosDeviceId fails when multiple simulators are booted`() {
+  fun `resolveIosDeviceId fails when multiple simulators are booted`() = runTest {
     assertFailure {
       DeviceSessionFactory.resolveIosDeviceId(null) { listOf("sim-1", "sim-2") }
     }.messageContains("Multiple booted iOS simulators found")

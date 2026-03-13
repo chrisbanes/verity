@@ -16,9 +16,22 @@ Tasks are only complete once `./gradlew check` is green.
 
 ## Testing
 
-- Use assertk for Kotlin assertions.
+- Use assertk for Kotlin assertions. Never use `kotlin.assert()` or `kotlin.require()` as test assertions — JVM assertions are no-ops without `-ea`.
 - Run tests with `./gradlew test`, full checks with `./gradlew check`.
 - Use `kotlinx-coroutines-test` and `runTest {}` for coroutine tests.
+
+## Coroutines
+
+- **CancellationException**: When catching `Exception` in a suspend context, always rethrow `CancellationException` first to preserve structured concurrency:
+  ```kotlin
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: Exception) {
+    // handle error
+  }
+  ```
+- **Blocking I/O**: Wrap `Files.*`, `ProcessBuilder`, and other blocking JVM APIs in `withContext(Dispatchers.IO)`.
+- **Cleanup in finally**: Wrap suspend cleanup calls (e.g., `close()`) in `withContext(NonCancellable)` when inside a `finally` block to ensure they complete even on cancellation.
 
 ### Test Structure
 

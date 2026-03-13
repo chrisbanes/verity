@@ -17,6 +17,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -134,6 +135,8 @@ class VerityMcpServer(
         success(
           "Session opened.\nsession_id: ${handle.sessionId}\ndevice: ${handle.deviceId}\nplatform: $platform",
         )
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -160,6 +163,8 @@ class VerityMcpServer(
         sessionManager.close(sessionId)
         snapshotStore.clear(sessionId)
         success("Session $sessionId closed.")
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -190,6 +195,8 @@ class VerityMcpServer(
         } else {
           success(files.joinToString("\n") { it.absolutePath })
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -231,6 +238,8 @@ class VerityMcpServer(
           }
         }
         success(output.trim())
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -274,6 +283,8 @@ class VerityMcpServer(
         } else {
           success("FAILED: ${result.output}")
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -307,6 +318,8 @@ class VerityMcpServer(
           session.waitForAnimationToEnd()
         }
         success("Pressed key: $key")
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -369,6 +382,8 @@ class VerityMcpServer(
             }
           }
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -412,6 +427,8 @@ class VerityMcpServer(
           val rendered = HierarchyRenderer.render(tree, filter)
           success("snapshot_id: $snapshotId\n\n$rendered")
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -444,6 +461,8 @@ class VerityMcpServer(
           session.containsText(text)
         }
         success(if (visible) "true" else "false")
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -476,6 +495,8 @@ class VerityMcpServer(
           session.checkFocused(text)
         }
         success(if (focused) "true" else "false")
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -537,6 +558,8 @@ class VerityMcpServer(
           }
         }
         success(result)
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
@@ -576,6 +599,8 @@ class VerityMcpServer(
         } else {
           success(context)
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         error("${e::class.simpleName}: ${e.message}")
       }
