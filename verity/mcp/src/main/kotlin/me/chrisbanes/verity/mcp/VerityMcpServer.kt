@@ -17,8 +17,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Base64
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
@@ -180,7 +182,9 @@ class VerityMcpServer(
       val args = request.params.arguments
       try {
         val dir = File(args.string("path") ?: ".")
-        val files = JourneyLoader.listJourneyFiles(dir)
+        val files = withContext(Dispatchers.IO) {
+          JourneyLoader.listJourneyFiles(dir)
+        }
         if (files.isEmpty()) {
           success("No journey files found in: ${dir.absolutePath}")
         } else {
@@ -209,7 +213,9 @@ class VerityMcpServer(
       val args = request.params.arguments
       try {
         val path = args.requireString("path")
-        val journey = JourneyLoader.fromFile(File(path))
+        val journey = withContext(Dispatchers.IO) {
+          JourneyLoader.fromFile(File(path))
+        }
         val output = buildString {
           appendLine("Journey: ${journey.name}")
           appendLine("App: ${journey.app}")
@@ -335,21 +341,31 @@ class VerityMcpServer(
             session.captureScreenshot(target)
             success("Screenshot saved to: $saveToFile")
           } else {
-            val tempPng = Files.createTempFile("verity-screenshot-", ".png")
+            val tempPng = withContext(Dispatchers.IO) {
+              Files.createTempFile("verity-screenshot-", ".png")
+            }
             try {
               session.captureScreenshot(tempPng)
-              val jpegPath = ScreenshotCompressor.compress(tempPng)
+              val jpegPath = withContext(Dispatchers.IO) {
+                ScreenshotCompressor.compress(tempPng)
+              }
               try {
-                val bytes = Files.readAllBytes(jpegPath)
+                val bytes = withContext(Dispatchers.IO) {
+                  Files.readAllBytes(jpegPath)
+                }
                 val base64 = Base64.getEncoder().encodeToString(bytes)
                 CallToolResult(
                   content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
                 )
               } finally {
-                Files.deleteIfExists(jpegPath)
+                withContext(Dispatchers.IO) {
+                  Files.deleteIfExists(jpegPath)
+                }
               }
             } finally {
-              Files.deleteIfExists(tempPng)
+              withContext(Dispatchers.IO) {
+                Files.deleteIfExists(tempPng)
+              }
             }
           }
         }
@@ -546,11 +562,13 @@ class VerityMcpServer(
 
           contextPath != null -> contextPath
 
-          else -> return@addTool success(
+          else -> return@addTool error(
             "No context path configured. Use the 'path' parameter or start the server with --context-path.",
           )
         }
-        val context = ContextLoader.load(contextDir)
+        val context = withContext(Dispatchers.IO) {
+          ContextLoader.load(contextDir)
+        }
         if (context.isBlank()) {
           success("No context files found in: ${contextDir.absolutePath}")
         } else {
