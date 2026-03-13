@@ -23,13 +23,13 @@ sealed class VerityProvider(
 
 | Provider | Name | Navigator (cheap) | Inspector (capable) | Env Var | Vision |
 |----------|------|-------------------|---------------------|---------|--------|
-| Anthropic | `anthropic` | `Haiku_4_5` | `Sonnet_4_5` | `ANTHROPIC_API_KEY` | Yes |
+| Anthropic | `anthropic` | `Haiku_4_5` | `Opus_4_5` | `ANTHROPIC_API_KEY` | Yes |
 | OpenAI | `openai` | `GPT4oMini` | `GPT4o` | `OPENAI_API_KEY` | Yes |
 | Google | `google` | `Gemini2_0FlashLite` | `Gemini2_5Pro` | `GOOGLE_API_KEY` | Yes |
-| OpenRouter | `openrouter` | `Phi4Reasoning` | `Claude4_5Haiku` | `OPENROUTER_API_KEY` | Yes |
+| OpenRouter | `openrouter` | `Phi4Reasoning` | `Claude4_5Opus` | `OPENROUTER_API_KEY` | Yes |
 | Bedrock | `bedrock` | `Claude3Haiku` | `Claude3Opus` | `AWS_ACCESS_KEY_ID` | Yes |
 | DeepSeek | `deepseek` | `DeepSeekChat` | `DeepSeekReasoner` | `DEEPSEEK_API_KEY` | No |
-| Mistral AI | `mistral` | `MistralSmall2` | `MagistralMedium12` | `MISTRAL_API_KEY` | Yes |
+| Mistral AI | `mistralai` | `MistralSmall2` | `MagistralMedium12` | `MISTRAL_API_KEY` | Yes |
 | Ollama | `ollama` | `LLAMA_3_2_3B` | `LLAMA_4_SCOUT` | None | Limited |
 | DashScope | `dashscope` | `QWEN_FLASH` | `QWEN3_OMNI_FLASH` | `DASHSCOPE_API_KEY` | Yes |
 
