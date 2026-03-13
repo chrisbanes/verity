@@ -1,21 +1,41 @@
 package me.chrisbanes.verity.mcp
 
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.netty.Netty
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.StdioServerTransport
+import io.modelcontextprotocol.kotlin.sdk.server.mcpStreamableHttp
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
+import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.Base64
+import java.util.UUID
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import me.chrisbanes.verity.core.context.ContextLoader
+import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
+import me.chrisbanes.verity.core.journey.JourneyLoader
+import me.chrisbanes.verity.core.model.JourneyStep
+import me.chrisbanes.verity.core.model.Platform
 
 class VerityMcpServer(
   private val sessionManager: McpDeviceSessionManager = McpDeviceSessionManager(),
@@ -49,6 +69,32 @@ class VerityMcpServer(
     return server
   }
 
+  // --- Arg helpers ---
+
+  private fun JsonObject?.string(key: String): String? = (this?.get(key) as? JsonPrimitive)?.content
+
+  private fun JsonObject?.int(key: String): Int? = (this?.get(key) as? JsonPrimitive)?.intOrNull
+
+  private fun JsonObject?.bool(key: String): Boolean? = (this?.get(key) as? JsonPrimitive)?.booleanOrNull
+
+  private fun JsonObject?.requireString(key: String): String = string(key) ?: throw IllegalArgumentException("Missing required parameter: $key")
+
+  private fun success(text: String) = CallToolResult(
+    content = listOf(TextContent(text = text)),
+  )
+
+  private fun error(text: String) = CallToolResult(
+    content = listOf(TextContent(text = text)),
+    isError = true,
+  )
+
+  private fun parsePlatform(value: String): Platform = when (value) {
+    "android-tv" -> Platform.ANDROID_TV
+    "android" -> Platform.ANDROID_MOBILE
+    "ios" -> Platform.IOS
+    else -> throw IllegalArgumentException("Unknown platform: $value. Expected: android-tv, android, or ios")
+  }
+
   // --- Tool Registrations ---
 
   private fun registerOpenSession(server: Server) {
@@ -76,8 +122,19 @@ class VerityMcpServer(
           }
         },
       ),
-    ) {
-      TODO("Implement open_session tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val platform = parsePlatform(args.requireString("platform"))
+        val device = args.string("device")
+        val disableAnimations = args.bool("disable_animations") ?: false
+        val handle = sessionManager.open(platform, device, disableAnimations)
+        success(
+          "Session opened.\nsession_id: ${handle.sessionId}\ndevice: ${handle.deviceId}\nplatform: $platform",
+        )
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -94,8 +151,16 @@ class VerityMcpServer(
         },
         required = listOf("session_id"),
       ),
-    ) {
-      TODO("Implement close_session tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        sessionManager.close(sessionId)
+        snapshotStore.clear(sessionId)
+        success("Session $sessionId closed.")
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -111,8 +176,19 @@ class VerityMcpServer(
           }
         },
       ),
-    ) {
-      TODO("Implement list_journeys tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val dir = File(args.string("path") ?: ".")
+        val files = JourneyLoader.listJourneyFiles(dir)
+        if (files.isEmpty()) {
+          success("No journey files found in: ${dir.absolutePath}")
+        } else {
+          success(files.joinToString("\n") { it.absolutePath })
+        }
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -129,8 +205,29 @@ class VerityMcpServer(
         },
         required = listOf("path"),
       ),
-    ) {
-      TODO("Implement load_journey tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val path = args.requireString("path")
+        val journey = JourneyLoader.fromFile(File(path))
+        val output = buildString {
+          appendLine("Journey: ${journey.name}")
+          appendLine("App: ${journey.app}")
+          appendLine("Platform: ${journey.platform}")
+          appendLine()
+          appendLine("Steps:")
+          journey.steps.forEachIndexed { i, step ->
+            when (step) {
+              is JourneyStep.Action -> appendLine("  ${i + 1}. [Action] ${step.instruction}")
+              is JourneyStep.Assert -> appendLine("  ${i + 1}. [Assert:${step.mode}] ${step.description}")
+              is JourneyStep.Loop -> appendLine("  ${i + 1}. [Loop] ${step.action} until '${step.until}' (max: ${step.max})")
+            }
+          }
+        }
+        success(output.trim())
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -155,8 +252,25 @@ class VerityMcpServer(
         },
         required = listOf("session_id", "yaml"),
       ),
-    ) {
-      TODO("Implement run_flow tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val yaml = args.requireString("yaml")
+        val awaitFocusChange = args.bool("await_focus_change") ?: false
+        val result = sessionManager.withSession(sessionId) { session ->
+          val flowResult = session.executeFlow(yaml)
+          if (awaitFocusChange) session.waitForAnimationToEnd()
+          flowResult
+        }
+        if (result.success) {
+          success("SUCCESS")
+        } else {
+          success("FAILED: ${result.output}")
+        }
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -177,8 +291,19 @@ class VerityMcpServer(
         },
         required = listOf("session_id", "key"),
       ),
-    ) {
-      TODO("Implement press_key tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val key = args.requireString("key")
+        sessionManager.withSession(sessionId) { session ->
+          session.pressKey(key)
+          session.waitForAnimationToEnd()
+        }
+        success("Pressed key: $key")
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -199,8 +324,38 @@ class VerityMcpServer(
         },
         required = listOf("session_id"),
       ),
-    ) {
-      TODO("Implement capture_screenshot tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val saveToFile = args.string("save_to_file")
+        sessionManager.withSession(sessionId) { session ->
+          if (saveToFile != null) {
+            val target = Path.of(saveToFile)
+            session.captureScreenshot(target)
+            success("Screenshot saved to: $saveToFile")
+          } else {
+            val tempPng = Files.createTempFile("verity-screenshot-", ".png")
+            try {
+              session.captureScreenshot(tempPng)
+              val jpegPath = ScreenshotCompressor.compress(tempPng)
+              try {
+                val bytes = Files.readAllBytes(jpegPath)
+                val base64 = Base64.getEncoder().encodeToString(bytes)
+                CallToolResult(
+                  content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
+                )
+              } finally {
+                Files.deleteIfExists(jpegPath)
+              }
+            } finally {
+              Files.deleteIfExists(tempPng)
+            }
+          }
+        }
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -226,8 +381,24 @@ class VerityMcpServer(
         },
         required = listOf("session_id"),
       ),
-    ) {
-      TODO("Implement capture_hierarchy tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val filter = when (args.string("filter")) {
+          "focus" -> HierarchyFilter.FOCUS
+          "all" -> HierarchyFilter.ALL
+          else -> HierarchyFilter.CONTENT
+        }
+        sessionManager.withSession(sessionId) { session ->
+          val tree = session.captureHierarchyTree()
+          val snapshotId = snapshotStore.add(sessionId, tree)
+          val rendered = HierarchyRenderer.render(tree, filter)
+          success("snapshot_id: $snapshotId\n\n$rendered")
+        }
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -248,8 +419,18 @@ class VerityMcpServer(
         },
         required = listOf("session_id", "text"),
       ),
-    ) {
-      TODO("Implement check_visible tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val text = args.requireString("text")
+        val visible = sessionManager.withSession(sessionId) { session ->
+          session.containsText(text)
+        }
+        success(if (visible) "true" else "false")
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -270,8 +451,18 @@ class VerityMcpServer(
         },
         required = listOf("session_id", "text"),
       ),
-    ) {
-      TODO("Implement check_focused tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val text = args.requireString("text")
+        val focused = sessionManager.withSession(sessionId) { session ->
+          session.checkFocused(text)
+        }
+        success(if (focused) "true" else "false")
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -287,7 +478,7 @@ class VerityMcpServer(
           }
           putJsonObject("action") {
             put("type", "string")
-            put("description", "Maestro YAML action to repeat each iteration")
+            put("description", "Key name to press each iteration (e.g., DPAD_DOWN)")
           }
           putJsonObject("until") {
             put("type", "string")
@@ -304,8 +495,33 @@ class VerityMcpServer(
         },
         required = listOf("session_id", "action", "until"),
       ),
-    ) {
-      TODO("Implement run_loop tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val sessionId = UUID.fromString(args.requireString("session_id"))
+        val action = args.requireString("action")
+        val until = args.requireString("until")
+        val max = args.int("max") ?: 10
+        val waitMs = args.int("wait_ms") ?: 500
+        val result = sessionManager.withSession(sessionId) { session ->
+          for (i in 1..max) {
+            if (session.containsText(until)) {
+              return@withSession "SATISFIED after $i iterations: text '$until' found"
+            }
+            session.pressKey(action)
+            session.waitForAnimationToEnd()
+            if (waitMs > 0) delay(waitMs.toLong())
+          }
+          if (session.containsText(until)) {
+            "SATISFIED after $max iterations: text '$until' found"
+          } else {
+            "NOT SATISFIED after $max iterations: text '$until' not found"
+          }
+        }
+        success(result)
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -321,8 +537,28 @@ class VerityMcpServer(
           }
         },
       ),
-    ) {
-      TODO("Implement get_context tool handler")
+    ) { request ->
+      val args = request.params.arguments
+      try {
+        val pathArg = args.string("path")
+        val contextDir = when {
+          pathArg != null -> File(pathArg)
+
+          contextPath != null -> contextPath
+
+          else -> return@addTool success(
+            "No context path configured. Use the 'path' parameter or start the server with --context-path.",
+          )
+        }
+        val context = ContextLoader.load(contextDir)
+        if (context.isBlank()) {
+          success("No context files found in: ${contextDir.absolutePath}")
+        } else {
+          success(context)
+        }
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
     }
   }
 
@@ -341,6 +577,10 @@ class VerityMcpServer(
   }
 
   suspend fun startHttp(host: String = "0.0.0.0", port: Int = 8080) {
-    TODO("Wire MCP SDK HTTP transport via Ktor — requires ktor-server-content-negotiation dependency")
+    embeddedServer(Netty, host = host, port = port) {
+      mcpStreamableHttp(path = "/mcp") {
+        this@VerityMcpServer.create()
+      }
+    }.start(wait = true)
   }
 }
