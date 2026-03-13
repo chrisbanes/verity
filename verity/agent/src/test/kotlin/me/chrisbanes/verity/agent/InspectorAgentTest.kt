@@ -1,5 +1,10 @@
 package me.chrisbanes.verity.agent
 
+import ai.koog.agents.core.agent.AIAgent
+import ai.koog.agents.core.agent.config.AIAgentConfigBase
+import ai.koog.prompt.dsl.Prompt
+import ai.koog.prompt.llm.LLMProvider
+import ai.koog.prompt.llm.LLModel
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
@@ -54,19 +59,19 @@ class InspectorAgentTest {
 
   @Test
   fun `evaluateTree invokes text executor and parses verdict`() = runTest {
-    var capturedSystemPrompt = ""
     var capturedMessage = ""
     val agent = InspectorAgent(
-      evaluateText = { systemPrompt, userMessage ->
-        capturedSystemPrompt = systemPrompt
-        capturedMessage = userMessage
-        """{"passed": true, "reasoning": "Tree matched"}"""
+      treeAgentFactory = {
+        FakeTextAgent { userMessage ->
+          capturedMessage = userMessage
+          """{"passed": true, "reasoning": "Tree matched"}"""
+        }
       },
+      evaluateVisualContent = { _, _, _ -> error("unused") },
     )
 
     val verdict = agent.evaluateTree("hierarchy text", "Home is visible")
 
-    assertThat(capturedSystemPrompt).contains("testing inspector")
     assertThat(capturedMessage).contains("hierarchy text")
     assertThat(capturedMessage).contains("Home is visible")
     assertThat(verdict.passed).isTrue()
@@ -77,6 +82,7 @@ class InspectorAgentTest {
   fun `evaluateVisual invokes vision executor with screenshot path and parses verdict`() = runTest {
     var capturedPath: Path? = null
     val agent = InspectorAgent(
+      treeAgentFactory = { FakeTextAgent { error("unused") } },
       evaluateVisualContent = { _, userMessage, screenshotPath ->
         capturedPath = screenshotPath
         assertThat(userMessage).contains("Hero image renders")
@@ -89,5 +95,19 @@ class InspectorAgentTest {
     assertThat(capturedPath).isEqualTo(Path.of("/tmp/sample.png"))
     assertThat(verdict.passed).isFalse()
     assertThat(verdict.reasoning).contains("Image mismatch")
+  }
+
+  private class FakeTextAgent(
+    private val responder: suspend (String) -> String,
+  ) : AIAgent<String, String> {
+    override val id: String = "fake-inspector-agent"
+    override val agentConfig: AIAgentConfigBase = object : AIAgentConfigBase {
+      override val prompt: Prompt = Prompt.Empty
+      override val model: LLModel = LLModel(provider = LLMProvider.OpenAI, id = "fake")
+    }
+
+    override suspend fun getState(): AIAgent.Companion.State<String> = AIAgent.Companion.State.NotStarted()
+    override suspend fun run(agentInput: String): String = responder(agentInput)
+    override suspend fun close() = Unit
   }
 }

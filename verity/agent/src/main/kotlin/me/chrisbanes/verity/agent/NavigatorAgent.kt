@@ -1,9 +1,6 @@
 package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
-import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
-import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
-import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import me.chrisbanes.verity.core.model.Platform
 
 /**
@@ -16,7 +13,7 @@ import me.chrisbanes.verity.core.model.Platform
  */
 class NavigatorAgent(
   private val bundledContext: String,
-  private val generateText: suspend (systemPrompt: String, userMessage: String) -> String = ::generateWithKoog,
+  private val agentFactory: (systemPrompt: String) -> AIAgent<String, String>,
 ) {
 
   /**
@@ -36,7 +33,7 @@ class NavigatorAgent(
   ): String {
     val systemPrompt = buildSystemPrompt(platform, bundledContext, injectedContext)
     val userMessage = buildUserMessage(actions, appId)
-    val response = generateText(systemPrompt, userMessage)
+    val response = agentFactory(systemPrompt).run(userMessage)
     return cleanResponse(response)
   }
 
@@ -94,18 +91,5 @@ class NavigatorAgent(
     }.trim()
 
     fun cleanResponse(response: String): String = response.stripCodeFences()
-
-    private suspend fun generateWithKoog(systemPrompt: String, userMessage: String): String {
-      val apiKey = requireNotNull(System.getenv("ANTHROPIC_API_KEY")) {
-        "ANTHROPIC_API_KEY is required for NavigatorAgent"
-      }
-      val executor = SingleLLMPromptExecutor(AnthropicLLMClient(apiKey))
-      val agent = AIAgent(
-        promptExecutor = executor,
-        llmModel = AnthropicModels.Haiku_4_5,
-        systemPrompt = systemPrompt,
-      )
-      return agent.run(userMessage)
-    }
   }
 }

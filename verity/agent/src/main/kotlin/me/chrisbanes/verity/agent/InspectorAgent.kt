@@ -1,13 +1,7 @@
 package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
-import ai.koog.prompt.dsl.prompt
-import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
-import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
-import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
-import ai.koog.prompt.message.ContentPart
 import java.nio.file.Path
-import kotlinx.io.files.Path as KoogPath
 import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.core.model.InspectionVerdict
 
@@ -21,8 +15,8 @@ import me.chrisbanes.verity.core.model.InspectionVerdict
  * `PromptExecutor.execute()` since `AIAgent.run` does not support multimodal input.
  */
 class InspectorAgent(
-  private val evaluateText: suspend (systemPrompt: String, userMessage: String) -> String = ::evaluateTextWithKoog,
-  private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path) -> String = ::evaluateVisualWithKoog,
+  private val treeAgentFactory: () -> AIAgent<String, String>,
+  private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path) -> String,
 ) {
 
   /**
@@ -30,7 +24,7 @@ class InspectorAgent(
    */
   suspend fun evaluateTree(hierarchy: String, assertion: String): InspectionVerdict {
     val message = buildTreeMessage(hierarchy, assertion)
-    val response = evaluateText(SYSTEM_PROMPT, message)
+    val response = treeAgentFactory().run(message)
     return parseVerdict(response)
   }
 
@@ -73,42 +67,6 @@ class InspectorAgent(
           reasoning = "Inspector parse error: ${e.message}. Raw response: $cleaned",
         )
       }
-    }
-
-    private suspend fun evaluateTextWithKoog(systemPrompt: String, userMessage: String): String {
-      val apiKey = requireNotNull(System.getenv("ANTHROPIC_API_KEY")) {
-        "ANTHROPIC_API_KEY is required for InspectorAgent"
-      }
-      val executor = SingleLLMPromptExecutor(AnthropicLLMClient(apiKey))
-      val agent = AIAgent(
-        promptExecutor = executor,
-        llmModel = AnthropicModels.Sonnet_4_5,
-        systemPrompt = systemPrompt,
-      )
-      return agent.run(userMessage)
-    }
-
-    private suspend fun evaluateVisualWithKoog(
-      systemPrompt: String,
-      userMessage: String,
-      screenshotPath: Path,
-    ): String {
-      val apiKey = requireNotNull(System.getenv("ANTHROPIC_API_KEY")) {
-        "ANTHROPIC_API_KEY is required for InspectorAgent"
-      }
-      val executor = SingleLLMPromptExecutor(AnthropicLLMClient(apiKey))
-      val prompt = prompt("visual-eval") {
-        system(systemPrompt)
-        user {
-          text(ContentPart.Text(userMessage))
-          image(KoogPath(screenshotPath.toString()))
-        }
-      }
-      return executor.execute(
-        prompt = prompt,
-        model = AnthropicModels.Sonnet_4_5,
-        tools = emptyList(),
-      ).first().content
     }
   }
 }

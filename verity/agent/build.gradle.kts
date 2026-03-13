@@ -3,5 +3,4 @@ dependencies {
   implementation(project(":verity:device"))
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.koog.agents)
-  implementation(libs.koog.anthropic)
 }
