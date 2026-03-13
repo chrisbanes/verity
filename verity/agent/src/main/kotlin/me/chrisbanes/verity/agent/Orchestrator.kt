@@ -6,6 +6,7 @@ import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.keymap.PlatformKeyMapper
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.InspectionVerdict
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
@@ -162,10 +163,10 @@ class Orchestrator(
     description: String,
     mode: AssertMode,
     inspector: InspectorAgent,
-  ): me.chrisbanes.verity.core.model.InspectionVerdict = when (mode) {
+  ): InspectionVerdict = when (mode) {
     AssertMode.VISIBLE -> {
       val passed = session.containsText(description)
-      me.chrisbanes.verity.core.model.InspectionVerdict(
+      InspectionVerdict(
         passed = passed,
         reasoning = if (passed) "Text '$description' is visible" else "Text '$description' is not visible",
       )
@@ -173,7 +174,7 @@ class Orchestrator(
 
     AssertMode.FOCUSED -> {
       val passed = session.checkFocused(description)
-      me.chrisbanes.verity.core.model.InspectionVerdict(
+      InspectionVerdict(
         passed = passed,
         reasoning = if (passed) "Text '$description' is focused" else "Text '$description' is not focused",
       )

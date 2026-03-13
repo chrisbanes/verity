@@ -1,10 +1,5 @@
 package me.chrisbanes.verity.agent
 
-import ai.koog.agents.core.agent.AIAgent
-import ai.koog.agents.core.agent.config.AIAgentConfigBase
-import ai.koog.prompt.dsl.Prompt
-import ai.koog.prompt.llm.LLMProvider
-import ai.koog.prompt.llm.LLModel
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
@@ -15,6 +10,7 @@ import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.AssertMode
+import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
@@ -171,9 +167,9 @@ class OrchestratorTest {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val executedFlows = mutableListOf<String>()
 
-    override suspend fun executeFlow(yaml: String): me.chrisbanes.verity.core.model.FlowResult {
+    override suspend fun executeFlow(yaml: String): FlowResult {
       executedFlows += yaml
-      return me.chrisbanes.verity.core.model.FlowResult(success = true)
+      return FlowResult(success = true)
     }
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
@@ -183,19 +179,5 @@ class OrchestratorTest {
     override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean = containsTextResults.removeFirstOrNull() ?: false
 
     override fun close() = Unit
-  }
-
-  private class FakeTextAgent(
-    private val responder: suspend (String) -> String,
-  ) : AIAgent<String, String> {
-    override val id: String = "fake-orchestrator-agent"
-    override val agentConfig: AIAgentConfigBase = object : AIAgentConfigBase {
-      override val prompt: Prompt = Prompt.Empty
-      override val model: LLModel = LLModel(provider = LLMProvider.OpenAI, id = "fake")
-    }
-
-    override suspend fun getState(): AIAgent.Companion.State<String> = AIAgent.Companion.State.NotStarted()
-    override suspend fun run(agentInput: String): String = responder(agentInput)
-    override suspend fun close() = Unit
   }
 }

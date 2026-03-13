@@ -7,9 +7,9 @@ import me.chrisbanes.verity.core.model.Platform
  * Generates Maestro YAML flows from natural language action steps.
  * Uses a cheap model (Haiku-class) since the task is structured generation.
  *
- * The [generate] method requires a Koog AIAgent. For the scaffold milestone,
- * prompt construction and response cleaning are fully implemented and tested;
- * the LLM call site is a TODO.
+ * The [generate] method delegates to a caller-provided [AIAgent] factory,
+ * keeping the module provider-agnostic. Prompt construction, agent invocation,
+ * and response cleaning are fully implemented and tested.
  */
 class NavigatorAgent(
   private val bundledContext: String,
@@ -33,8 +33,13 @@ class NavigatorAgent(
   ): String {
     val systemPrompt = buildSystemPrompt(platform, bundledContext, injectedContext)
     val userMessage = buildUserMessage(actions, appId)
-    val response = agentFactory(systemPrompt).run(userMessage)
-    return cleanResponse(response)
+    val agent = agentFactory(systemPrompt)
+    return try {
+      val response = agent.run(userMessage)
+      cleanResponse(response)
+    } finally {
+      agent.close()
+    }
   }
 
   companion object {

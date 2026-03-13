@@ -1,17 +1,14 @@
 package me.chrisbanes.verity.device.android
 
 import dadb.Dadb
-import java.nio.file.Files
 import java.nio.file.Path
 import maestro.KeyCode
 import maestro.Maestro
-import maestro.orchestra.Orchestra
-import maestro.orchestra.error.SyntaxError
-import maestro.orchestra.yaml.YamlCommandReader
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.executeMaestroFlow
 
 /**
  * Android device session backed by Dadb (ADB over TCP) and Maestro SDK (gRPC).
@@ -25,21 +22,7 @@ class AndroidDeviceSession(
   override val platform: Platform,
 ) : DeviceSession {
 
-  override suspend fun executeFlow(yaml: String): FlowResult {
-    val flowPath = Files.createTempFile("verity-flow-", ".yaml")
-    return try {
-      Files.writeString(flowPath, yaml)
-      val commands = YamlCommandReader.readCommands(flowPath)
-      val success = Orchestra(maestro = maestro).runFlow(commands)
-      FlowResult(success = success)
-    } catch (error: SyntaxError) {
-      FlowResult(success = false, output = error.message)
-    } catch (error: Exception) {
-      FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
-    } finally {
-      Files.deleteIfExists(flowPath)
-    }
-  }
+  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
 
   override suspend fun pressKey(keyName: String) {
     val keyCode = KeyCode.valueOf(keyName)

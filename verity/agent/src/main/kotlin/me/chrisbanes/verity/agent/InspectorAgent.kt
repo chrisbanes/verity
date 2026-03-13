@@ -24,8 +24,13 @@ class InspectorAgent(
    */
   suspend fun evaluateTree(hierarchy: String, assertion: String): InspectionVerdict {
     val message = buildTreeMessage(hierarchy, assertion)
-    val response = treeAgentFactory().run(message)
-    return parseVerdict(response)
+    val agent = treeAgentFactory()
+    return try {
+      val response = agent.run(message)
+      parseVerdict(response)
+    } finally {
+      agent.close()
+    }
   }
 
   /**
