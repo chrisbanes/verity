@@ -36,7 +36,7 @@ sealed class VerityProvider(
 ### Special Cases
 
 - **Bedrock**: Uses AWS credentials (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`) instead of a single API key.
-- **Ollama**: No API key. Uses `--host` flag or `OLLAMA_HOST` env var, defaulting to `http://localhost:11434`.
+- **Ollama**: No API key required. Reads `OLLAMA_HOST` env var (or `--api-key` as host URL), defaulting to `http://localhost:11434`.
 - **DeepSeek**: No vision support. Visual assertions fall back to tree-only evaluation.
 
 ## Config File

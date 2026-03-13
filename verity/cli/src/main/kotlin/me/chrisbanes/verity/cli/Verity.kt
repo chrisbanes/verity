@@ -4,7 +4,6 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.core.subcommands
-import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.enum
@@ -14,9 +13,8 @@ class Verity : CliktCommand(name = "verity") {
   override fun help(context: Context): String = "LLM-powered E2E testing for mobile and TV"
 
   val device: String? by option("--device", help = "Device ID or IP:port (auto-discover if omitted)")
-  val platform: Platform by option("--platform", help = "Target platform")
+  val platform: Platform? by option("--platform", help = "Override target platform (defaults to journey platform)")
     .enum<Platform>()
-    .default(Platform.ANDROID_TV)
   val provider: String? by option("--provider", help = "LLM provider (e.g., anthropic, openai, google, ollama)")
   val navigatorModel: String? by option("--navigator-model", help = "Override navigator model ID")
   val inspectorModel: String? by option("--inspector-model", help = "Override inspector model ID")

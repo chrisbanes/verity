@@ -4,7 +4,9 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
 import java.io.File
@@ -29,15 +31,15 @@ class RunCommand : CliktCommand(name = "run") {
 
     val apiKey = parent.apiKey ?: System.getenv(provider.envVar)
     if (provider.requiresAuth && apiKey == null) {
-      error("API key required. Set ${provider.envVar} or use --api-key")
+      throw UsageError("API key required. Set ${provider.envVar} or use --api-key")
     }
 
     val navigatorModel = resolveModel(parent.navigatorModel, config.navigatorModel, provider.defaultNavigatorModel, provider)
     val inspectorModel = resolveModel(parent.inspectorModel, config.inspectorModel, provider.defaultInspectorModel, provider)
 
     val file = journeyPath?.let { File(it) }
-      ?: error("Journey path required. Use: verity run <path.journey.yaml>")
-    require(file.exists()) { "Journey file not found: $file" }
+      ?: throw UsageError("Journey path required. Use: verity run <path.journey.yaml>")
+    if (!file.exists()) throw CliktError("Journey file not found: $file")
 
     val journey = JourneyLoader.fromFile(file)
     echo("Provider: ${provider.name}")
@@ -47,8 +49,9 @@ class RunCommand : CliktCommand(name = "run") {
     echo("App: ${journey.app}")
     echo("Platform: ${journey.platform}")
 
+    val platform = parent.platform ?: journey.platform
     val session = DeviceSessionFactory.connect(
-      platform = parent.platform,
+      platform = platform,
       deviceId = parent.device,
       disableAnimations = parent.noAnimations,
     )
