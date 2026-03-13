@@ -133,6 +133,34 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows).isEqualTo(listOf("appId: com.example.app\n---\n- swipe"))
     assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate a Maestro YAML flow for these actions:\n1. scroll down")
+    assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
+  }
+
+  @Test
+  fun `run loop reports zero iterations when target already visible`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = { InspectorAgent(treeAgentFactory = { FakeTextAgent { error("unused") } }, evaluateVisualContent = { _, _, _ -> error("unused") }) },
+    )
+
+    val journey = Journey(
+      name = "loop-already-visible",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(
+        JourneyStep.Loop(action = "scroll down", until = "Settings", max = 2),
+      ),
+    )
+
+    val result = orchestrator.run(journey)
+
+    assertThat(result.passed).isTrue()
+    assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 0 iterations")
+    assertThat(session.executedFlows).isEqualTo(emptyList())
   }
 
   @Test

@@ -6,6 +6,11 @@ import device.SimctlIOSDevice
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import maestro.Maestro
 import maestro.drivers.AndroidDriver
 import maestro.drivers.IOSDriver
@@ -64,15 +69,31 @@ object DeviceSessionFactory {
     deviceId: String?,
     createWithQuery: (String) -> Dadb = { query -> AdbServer.createDadb(deviceQuery = query) },
     discover: () -> Dadb? = { Dadb.discover() },
-  ): Dadb = deviceId?.let { createWithQuery("host:transport:$it") }
+  ): Dadb = deviceId?.let { id ->
+    validateAndroidDeviceId(id)
+    createWithQuery("host:transport:$id")
+  }
     ?: discover()
     ?: error("No Android device found. Is ADB available?")
 
   internal fun resolveIosDeviceId(
     deviceId: String?,
-    discover: () -> String? = ::discoverBootedIosSimulatorId,
-  ): String = deviceId ?: discover()
-    ?: error("No iOS simulator found. Provide a device ID or boot a simulator.")
+    discover: () -> List<String> = ::discoverBootedIosSimulatorIds,
+  ): String {
+    if (deviceId != null) return deviceId
+
+    val simulatorIds = discover()
+    return when (simulatorIds.size) {
+      0 -> error("No iOS simulator found. Provide a device ID or boot a simulator.")
+
+      1 -> simulatorIds.single()
+
+      else -> error(
+        "Multiple booted iOS simulators found: ${simulatorIds.joinToString(", ")}. " +
+          "Provide a device ID.",
+      )
+    }
+  }
 
   private fun connectIos(deviceId: String?): DeviceSession {
     val iosDevice = SimctlIOSDevice(
@@ -83,15 +104,30 @@ object DeviceSessionFactory {
     return IosDeviceSession(maestro, iosDevice)
   }
 
-  private fun discoverBootedIosSimulatorId(): String? {
+  private fun discoverBootedIosSimulatorIds(): List<String> {
     val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "booted", "-j")
       .redirectErrorStream(true)
       .start()
     val output = process.inputStream.bufferedReader().readText()
     check(process.waitFor() == 0) { "xcrun simctl list failed: $output" }
 
-    val idRegex = Regex("\"udid\"\\s*:\\s*\"([^\"]+)\"")
-    return idRegex.find(output)?.groupValues?.get(1)
+    val root = Json.parseToJsonElement(output).jsonObject
+    val devices = root["devices"]?.jsonObject ?: return emptyList()
+    return devices.values
+      .flatMap { runtimeDevices ->
+        runtimeDevices.jsonArray.mapNotNull { device ->
+          device.jsonObject["udid"]?.jsonPrimitive?.contentOrNull
+        }
+      }
+      .distinct()
+  }
+
+  private fun validateAndroidDeviceId(deviceId: String) {
+    val ipv4WithOptionalPort = Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""")
+    require(!ipv4WithOptionalPort.matches(deviceId)) {
+      "Invalid Android device ID '$deviceId'. Expected an ADB serial (for example, " +
+        "emulator-5554), not an IP address."
+    }
   }
 }
 

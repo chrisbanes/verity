@@ -101,15 +101,22 @@ class DeviceSessionProductionReadyTest {
 
   @Test
   fun `resolveIosDeviceId falls back to discovered simulator id`() {
-    assertThat(DeviceSessionFactory.resolveIosDeviceId(null) { "booted-sim" })
+    assertThat(DeviceSessionFactory.resolveIosDeviceId(null) { listOf("booted-sim") })
       .isEqualTo("booted-sim")
   }
 
   @Test
   fun `resolveIosDeviceId fails when discovery yields nothing`() {
     assertFailure {
-      DeviceSessionFactory.resolveIosDeviceId(null) { null }
+      DeviceSessionFactory.resolveIosDeviceId(null) { emptyList() }
     }.messageContains("No iOS simulator found")
+  }
+
+  @Test
+  fun `resolveIosDeviceId fails when multiple simulators are booted`() {
+    assertFailure {
+      DeviceSessionFactory.resolveIosDeviceId(null) { listOf("sim-1", "sim-2") }
+    }.messageContains("Multiple booted iOS simulators found")
   }
 
   @Test
@@ -138,6 +145,17 @@ class DeviceSessionProductionReadyTest {
     )
 
     assertThat(dadb).isEqualTo(discovered)
+  }
+
+  @Test
+  fun `resolveAndroidConnection rejects ip address device id`() {
+    assertFailure {
+      DeviceSessionFactory.resolveAndroidConnection(
+        deviceId = "192.168.1.20",
+        createWithQuery = { error("unused") },
+        discover = { error("unused") },
+      )
+    }.messageContains("Expected an ADB serial")
   }
 
   private class FakeDadb : dadb.Dadb {

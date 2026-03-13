@@ -520,18 +520,20 @@ class VerityMcpServer(
         val max = args.int("max") ?: 10
         val waitMs = args.int("wait_ms") ?: 500
         val result = sessionManager.withSession(sessionId) { session ->
-          for (i in 1..max) {
+          var actionsExecuted = 0
+          repeat(max) {
             if (session.containsText(until)) {
-              return@withSession "SATISFIED after $i iterations: text '$until' found"
+              return@withSession "SATISFIED after $actionsExecuted iterations: text '$until' found"
             }
             session.pressKey(action)
             session.waitForAnimationToEnd()
             if (waitMs > 0) delay(waitMs.toLong())
+            actionsExecuted += 1
           }
           if (session.containsText(until)) {
-            "SATISFIED after $max iterations: text '$until' found"
+            "SATISFIED after $actionsExecuted iterations: text '$until' found"
           } else {
-            "NOT SATISFIED after $max iterations: text '$until' not found"
+            "NOT SATISFIED after $actionsExecuted iterations: text '$until' not found"
           }
         }
         success(result)

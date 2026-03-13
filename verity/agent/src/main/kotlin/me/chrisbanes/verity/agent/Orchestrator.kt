@@ -120,26 +120,33 @@ class Orchestrator(
   ): LoopResult {
     val mapper = PlatformKeyMapper.forPlatform(platform)
     val keyName = mapper.map(action)
+    var actionsExecuted = 0
 
-    for (i in 1..max) {
+    repeat(max) {
       // Check exit condition (deterministic first)
       if (session.containsText(until)) {
-        return LoopResult(satisfied = true, iterations = i, reasoning = "Text '$until' found")
+        return LoopResult(
+          satisfied = true,
+          iterations = actionsExecuted,
+          reasoning = "Text '$until' found after $actionsExecuted iterations",
+        )
       }
 
       // Execute action
       if (keyName != null) {
         session.pressKey(keyName)
         session.waitForAnimationToEnd()
+        actionsExecuted += 1
       } else {
         val flowResult = executeSlowPath(listOf(action), appId, platform, navigator)
         if (!flowResult.success) {
           return LoopResult(
             satisfied = false,
-            iterations = i,
+            iterations = actionsExecuted,
             reasoning = "Loop flow execution failed: ${flowResult.output}",
           )
         }
+        actionsExecuted += 1
       }
     }
 
@@ -147,15 +154,15 @@ class Orchestrator(
     if (session.containsText(until)) {
       return LoopResult(
         satisfied = true,
-        iterations = max,
-        reasoning = "Text '$until' found after max iterations",
+        iterations = actionsExecuted,
+        reasoning = "Text '$until' found after $actionsExecuted iterations",
       )
     }
 
     return LoopResult(
       satisfied = false,
-      iterations = max,
-      reasoning = "Text '$until' not found after $max iterations",
+      iterations = actionsExecuted,
+      reasoning = "Text '$until' not found after $actionsExecuted iterations",
     )
   }
 
