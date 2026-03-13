@@ -2,6 +2,8 @@ package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
 import java.nio.file.Path
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.core.model.InspectionVerdict
 
@@ -29,7 +31,7 @@ class InspectorAgent(
       val response = agent.run(message)
       parseVerdict(response)
     } finally {
-      agent.close()
+      withContext(NonCancellable) { agent.close() }
     }
   }
 

@@ -4,7 +4,9 @@ import dadb.Dadb
 import dadb.adbserver.AdbServer
 import device.SimctlIOSDevice
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -76,9 +78,9 @@ object DeviceSessionFactory {
     ?: discover()
     ?: error("No Android device found. Is ADB available?")
 
-  internal fun resolveIosDeviceId(
+  internal suspend fun resolveIosDeviceId(
     deviceId: String?,
-    discover: () -> List<String> = ::discoverBootedIosSimulatorIds,
+    discover: suspend () -> List<String> = ::discoverBootedIosSimulatorIds,
   ): String {
     if (deviceId != null) return deviceId
 
@@ -95,7 +97,7 @@ object DeviceSessionFactory {
     }
   }
 
-  private fun connectIos(deviceId: String?): DeviceSession {
+  private suspend fun connectIos(deviceId: String?): DeviceSession {
     val iosDevice = SimctlIOSDevice(
       resolveIosDeviceId(deviceId),
     )
@@ -104,7 +106,7 @@ object DeviceSessionFactory {
     return IosDeviceSession(maestro, iosDevice)
   }
 
-  private fun discoverBootedIosSimulatorIds(): List<String> {
+  private suspend fun discoverBootedIosSimulatorIds(): List<String> = withContext(Dispatchers.IO) {
     val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "booted", "-j")
       .redirectErrorStream(true)
       .start()
@@ -112,8 +114,8 @@ object DeviceSessionFactory {
     check(process.waitFor() == 0) { "xcrun simctl list failed: $output" }
 
     val root = Json.parseToJsonElement(output).jsonObject
-    val devices = root["devices"]?.jsonObject ?: return emptyList()
-    return devices.values
+    val devices = root["devices"]?.jsonObject ?: return@withContext emptyList()
+    devices.values
       .flatMap { runtimeDevices ->
         runtimeDevices.jsonArray.mapNotNull { device ->
           device.jsonObject["udid"]?.jsonPrimitive?.contentOrNull

@@ -38,7 +38,7 @@ class VerityMcpServerTest {
     val server = VerityMcpServer().create()
     for ((name, tool) in server.tools) {
       assertThat(tool.tool.description).isNotNull()
-        .given { desc -> assert(desc.isNotBlank()) { "Tool '$name' has a blank description" } }
+        .transform { it.isNotBlank() }.isEqualTo(true)
     }
   }
 

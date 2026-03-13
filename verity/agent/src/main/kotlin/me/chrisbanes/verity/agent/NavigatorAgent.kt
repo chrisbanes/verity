@@ -1,6 +1,8 @@
 package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.model.Platform
 
 /**
@@ -38,7 +40,7 @@ class NavigatorAgent(
       val response = agent.run(userMessage)
       cleanResponse(response)
     } finally {
-      agent.close()
+      withContext(NonCancellable) { agent.close() }
     }
   }
 
