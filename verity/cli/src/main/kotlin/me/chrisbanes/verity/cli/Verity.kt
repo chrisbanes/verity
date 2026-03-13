@@ -17,7 +17,10 @@ class Verity : CliktCommand(name = "verity") {
   val platform: Platform by option("--platform", help = "Target platform")
     .enum<Platform>()
     .default(Platform.ANDROID_TV)
-  val apiKey: String? by option("--api-key", envvar = "ANTHROPIC_API_KEY", help = "LLM API key")
+  val provider: String? by option("--provider", help = "LLM provider (e.g., anthropic, openai, google, ollama)")
+  val navigatorModel: String? by option("--navigator-model", help = "Override navigator model ID")
+  val inspectorModel: String? by option("--inspector-model", help = "Override inspector model ID")
+  val apiKey: String? by option("--api-key", help = "LLM API key (or set provider-specific env var)")
   val contextPath: String? by option(
     "--context-path",
     help = "Optional path to additional context markdown files",

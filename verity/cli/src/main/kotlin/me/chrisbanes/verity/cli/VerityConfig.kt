@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.cli
 
+import ai.koog.prompt.llm.LLModel
 import com.charleskorn.kaml.Yaml
 import java.io.File
 import kotlinx.serialization.SerialName
@@ -20,4 +21,19 @@ data class VerityConfig(
       return if (text.isEmpty()) VerityConfig() else fromYaml(text)
     }
   }
+}
+
+fun resolveProvider(cliProvider: String?, config: VerityConfig): VerityProvider {
+  val name = cliProvider ?: config.provider ?: "anthropic"
+  return VerityProvider.fromName(name)
+}
+
+fun resolveModel(
+  cliModel: String?,
+  configModel: String?,
+  default: LLModel,
+  provider: VerityProvider,
+): LLModel {
+  val id = cliModel ?: configModel ?: return default
+  return provider.findModel(id)
 }
