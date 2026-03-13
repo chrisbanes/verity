@@ -2,8 +2,6 @@ package me.chrisbanes.verity.cli
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.dsl.prompt
-import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
-import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
 import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
@@ -26,14 +24,25 @@ class RunCommand : CliktCommand(name = "run") {
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
 
-    val apiKey = parent.apiKey
-      ?: error("API key required. Set ANTHROPIC_API_KEY or use --api-key")
+    val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
+    val provider = resolveProvider(parent.provider, config)
+
+    val apiKey = parent.apiKey ?: System.getenv(provider.envVar)
+    if (provider.requiresAuth && apiKey == null) {
+      error("API key required. Set ${provider.envVar} or use --api-key")
+    }
+
+    val navigatorModel = resolveModel(parent.navigatorModel, config.navigatorModel, provider.defaultNavigatorModel, provider)
+    val inspectorModel = resolveModel(parent.inspectorModel, config.inspectorModel, provider.defaultInspectorModel, provider)
 
     val file = journeyPath?.let { File(it) }
       ?: error("Journey path required. Use: verity run <path.journey.yaml>")
     require(file.exists()) { "Journey file not found: $file" }
 
     val journey = JourneyLoader.fromFile(file)
+    echo("Provider: ${provider.name}")
+    echo("Navigator model: ${navigatorModel.id}")
+    echo("Inspector model: ${inspectorModel.id}")
     echo("Running journey: ${journey.name}")
     echo("App: ${journey.app}")
     echo("Platform: ${journey.platform}")
@@ -44,7 +53,7 @@ class RunCommand : CliktCommand(name = "run") {
       disableAnimations = parent.noAnimations,
     )
 
-    val executor = SingleLLMPromptExecutor(AnthropicLLMClient(apiKey))
+    val executor = SingleLLMPromptExecutor(provider.createClient(apiKey ?: ""))
 
     session.use {
       val injectedContext = parent.contextPath?.let { ContextLoader.load(File(it)) } ?: ""
@@ -57,7 +66,7 @@ class RunCommand : CliktCommand(name = "run") {
             agentFactory = { systemPrompt ->
               AIAgent(
                 promptExecutor = executor,
-                llmModel = AnthropicModels.Haiku_4_5,
+                llmModel = navigatorModel,
                 systemPrompt = systemPrompt,
               )
             },
@@ -68,7 +77,7 @@ class RunCommand : CliktCommand(name = "run") {
             treeAgentFactory = {
               AIAgent(
                 promptExecutor = executor,
-                llmModel = AnthropicModels.Sonnet_4_5,
+                llmModel = inspectorModel,
                 systemPrompt = InspectorAgent.SYSTEM_PROMPT,
               )
             },
@@ -80,7 +89,7 @@ class RunCommand : CliktCommand(name = "run") {
                   image(kotlinx.io.files.Path(screenshotPath.toString()))
                 }
               }
-              val responses = executor.execute(p, AnthropicModels.Sonnet_4_5)
+              val responses = executor.execute(p, inspectorModel)
               responses.last().content
             },
           )
