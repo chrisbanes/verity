@@ -3,6 +3,7 @@ package me.chrisbanes.verity.mcp
 import assertk.assertThat
 import assertk.assertions.containsExactlyInAnyOrder
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
 import kotlin.test.Test
 
@@ -37,8 +38,8 @@ class VerityMcpServerTest {
   fun `each tool has a description`() {
     val server = VerityMcpServer().create()
     for ((name, tool) in server.tools) {
-      assertThat(tool.tool.description).isNotNull()
-        .transform { it.isNotBlank() }.isEqualTo(true)
+      assertThat(tool.tool.description, name = "description of tool '$name'")
+        .isNotNull().isNotEmpty()
     }
   }
 
