@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.model.Platform
 
 class NavigatorAgentTest {
@@ -71,5 +72,34 @@ class NavigatorAgentTest {
   fun `passes through clean response unchanged`() {
     val response = "appId: com.example\n---\n- pressKey: back"
     assertThat(NavigatorAgent.cleanResponse(response)).contains("appId: com.example")
+  }
+
+  @Test
+  fun `generate builds prompts, invokes executor, and strips code fences`() = runTest {
+    var capturedSystemPrompt = ""
+    var capturedUserMessage = ""
+    val agent = NavigatorAgent(
+      bundledContext = "Bundled context",
+      agentFactory = { systemPrompt ->
+        capturedSystemPrompt = systemPrompt
+        FakeTextAgent { userMessage ->
+          capturedUserMessage = userMessage
+          "```yaml\nappId: com.example.app\n---\n- launchApp\n```"
+        }
+      },
+    )
+
+    val result = agent.generate(
+      actions = listOf("Launch the app"),
+      appId = "com.example.app",
+      platform = Platform.ANDROID_TV,
+      injectedContext = "Injected context",
+    )
+
+    assertThat(capturedSystemPrompt).contains("Bundled context")
+    assertThat(capturedSystemPrompt).contains("Injected context")
+    assertThat(capturedUserMessage).contains("Launch the app")
+    assertThat(result).doesNotContain("```")
+    assertThat(result).contains("appId: com.example.app")
   }
 }

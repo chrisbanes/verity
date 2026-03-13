@@ -8,6 +8,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.executeMaestroFlow
 
 /**
  * Android device session backed by Dadb (ADB over TCP) and Maestro SDK (gRPC).
@@ -21,11 +22,7 @@ class AndroidDeviceSession(
   override val platform: Platform,
 ) : DeviceSession {
 
-  override suspend fun executeFlow(yaml: String): FlowResult {
-    // Orchestra and YamlCommandReader are in a separate maestro-orchestra module
-    // not included in maestro-client. Flow execution requires that dependency.
-    TODO("Wire Maestro SDK flow execution — requires maestro-orchestra dependency")
-  }
+  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
 
   override suspend fun pressKey(keyName: String) {
     val keyCode = KeyCode.valueOf(keyName)

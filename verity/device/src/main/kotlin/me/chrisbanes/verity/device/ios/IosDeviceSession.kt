@@ -6,6 +6,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.executeMaestroFlow
 
 /**
  * iOS device session backed by Maestro's XCTest HTTP client.
@@ -20,9 +21,7 @@ class IosDeviceSession(
 
   override val platform: Platform = Platform.IOS
 
-  override suspend fun executeFlow(yaml: String): FlowResult {
-    TODO("Wire Maestro iOS flow execution — requires maestro-orchestra dependency")
-  }
+  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
 
   override suspend fun pressKey(keyName: String) {
     iosDevice.pressKey(keyName)

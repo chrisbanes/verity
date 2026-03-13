@@ -6,6 +6,7 @@ import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.keymap.PlatformKeyMapper
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.InspectionVerdict
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
@@ -65,7 +66,7 @@ class Orchestrator(
 
     // Execute loop
     segment.loop?.let { loop ->
-      val loopResult = executeLoop(loop.action, loop.until, loop.max, platform)
+      val loopResult = executeLoop(loop.action, loop.until, loop.max, appId, platform, navigator)
       return SegmentResult(
         index = segment.index,
         passed = loopResult.satisfied,
@@ -78,9 +79,9 @@ class Orchestrator(
       val verdict = evaluateAssertion(assert.description, assert.mode, inspector)
       return SegmentResult(
         index = segment.index,
-        passed = verdict,
+        passed = verdict.passed,
         assertionMode = assert.mode,
-        reasoning = "",
+        reasoning = verdict.reasoning,
       )
     }
 
@@ -113,27 +114,39 @@ class Orchestrator(
     action: String,
     until: String,
     max: Int,
+    appId: String,
     platform: Platform,
+    navigator: NavigatorAgent,
   ): LoopResult {
     val mapper = PlatformKeyMapper.forPlatform(platform)
     val keyName = mapper.map(action)
+    var actionsExecuted = 0
 
-    for (i in 1..max) {
+    repeat(max) {
       // Check exit condition (deterministic first)
       if (session.containsText(until)) {
-        return LoopResult(satisfied = true, iterations = i, reasoning = "Text '$until' found")
+        return LoopResult(
+          satisfied = true,
+          iterations = actionsExecuted,
+          reasoning = "Text '$until' found after $actionsExecuted iterations",
+        )
       }
 
       // Execute action
       if (keyName != null) {
         session.pressKey(keyName)
         session.waitForAnimationToEnd()
+        actionsExecuted += 1
       } else {
-        return LoopResult(
-          satisfied = false,
-          iterations = i,
-          reasoning = "LLM fallback for non-key-mapped loop action '$action' is not yet implemented",
-        )
+        val flowResult = executeSlowPath(listOf(action), appId, platform, navigator)
+        if (!flowResult.success) {
+          return LoopResult(
+            satisfied = false,
+            iterations = actionsExecuted,
+            reasoning = "Loop flow execution failed: ${flowResult.output}",
+          )
+        }
+        actionsExecuted += 1
       }
     }
 
@@ -141,15 +154,15 @@ class Orchestrator(
     if (session.containsText(until)) {
       return LoopResult(
         satisfied = true,
-        iterations = max,
-        reasoning = "Text '$until' found after max iterations",
+        iterations = actionsExecuted,
+        reasoning = "Text '$until' found after $actionsExecuted iterations",
       )
     }
 
     return LoopResult(
       satisfied = false,
-      iterations = max,
-      reasoning = "Text '$until' not found after $max iterations",
+      iterations = actionsExecuted,
+      reasoning = "Text '$until' not found after $actionsExecuted iterations",
     )
   }
 
@@ -157,21 +170,33 @@ class Orchestrator(
     description: String,
     mode: AssertMode,
     inspector: InspectorAgent,
-  ): Boolean = when (mode) {
-    AssertMode.VISIBLE -> session.containsText(description)
+  ): InspectionVerdict = when (mode) {
+    AssertMode.VISIBLE -> {
+      val passed = session.containsText(description)
+      InspectionVerdict(
+        passed = passed,
+        reasoning = if (passed) "Text '$description' is visible" else "Text '$description' is not visible",
+      )
+    }
 
-    AssertMode.FOCUSED -> session.checkFocused(description)
+    AssertMode.FOCUSED -> {
+      val passed = session.checkFocused(description)
+      InspectionVerdict(
+        passed = passed,
+        reasoning = if (passed) "Text '$description' is focused" else "Text '$description' is not focused",
+      )
+    }
 
     AssertMode.TREE -> {
       val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
-      inspector.evaluateTree(hierarchy, description).passed
+      inspector.evaluateTree(hierarchy, description)
     }
 
     AssertMode.VISUAL -> {
       val tempFile = Files.createTempFile("verity-screenshot-", ".png")
       try {
         session.captureScreenshot(tempFile)
-        inspector.evaluateVisual(tempFile, description).passed
+        inspector.evaluateVisual(tempFile, description)
       } finally {
         Files.deleteIfExists(tempFile)
       }
