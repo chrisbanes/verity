@@ -20,13 +20,11 @@
 mkdir -p verity/core/src/main/resources/verity/context
 ```
 
-**Step 2: Copy content from skills files**
+**Step 2: Create resource files**
 
-Copy the content of `verity/skills/context/maestro.md` → `verity/core/src/main/resources/verity/context/maestro.md`.
+Author the Maestro YAML reference and TV remote controls reference directly as classpath resources. These contain universal Maestro/platform knowledge needed by `NavigatorAgent`. The other skills context files (`procedures.md` = agent workflow guidance, `app.md` = user template) are not bundled — they serve different purposes.
 
-Copy the content of `verity/skills/context/tv-controls.md` → `verity/core/src/main/resources/verity/context/tv-controls.md`.
-
-These are the two files that contain universal Maestro/platform knowledge needed by `NavigatorAgent`. The other skills context files (`procedures.md` = agent workflow guidance, `app.md` = user template) are not bundled — they serve different purposes.
+> **Note:** These files were originally also placed in `verity/skills/context/`, but the duplicates were later removed to avoid content drift. The classpath resources in `core` are the single source of truth.
 
 **Step 3: Commit**
 
