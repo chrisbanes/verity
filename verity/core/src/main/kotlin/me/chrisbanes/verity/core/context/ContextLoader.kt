@@ -4,10 +4,15 @@ import java.io.File
 
 object ContextLoader {
 
-  fun loadBundled(): String {
+  private val bundledCache: String by lazy { loadBundledFromClasspath() }
+
+  fun loadBundled(): String = bundledCache
+
+  internal val BUNDLED_FILES = listOf("maestro.md", "tv-controls.md")
+
+  private fun loadBundledFromClasspath(): String {
     val resourceDir = "verity/context"
-    val files = listOf("maestro.md", "tv-controls.md")
-    return files.mapNotNull { filename ->
+    return BUNDLED_FILES.mapNotNull { filename ->
       ContextLoader::class.java.classLoader
         ?.getResourceAsStream("$resourceDir/$filename")
         ?.bufferedReader()

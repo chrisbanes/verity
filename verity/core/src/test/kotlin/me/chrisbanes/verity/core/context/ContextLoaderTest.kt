@@ -3,8 +3,10 @@ package me.chrisbanes.verity.core.context
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNotEmpty
+import assertk.assertions.isTrue
 import java.io.File
 import kotlin.test.Test
 
@@ -105,6 +107,22 @@ class ContextLoaderTest {
     // Both files should be present
     assertThat(bundled).contains("Maestro YAML Reference")
     assertThat(bundled).contains("TV Remote Controls")
+  }
+
+  @Test
+  fun `bundled resources match skills context files`() {
+    val skillsDir = File("../skills/context")
+    if (!skillsDir.isDirectory) return // Skip if not running from expected working dir
+
+    for (filename in ContextLoader.BUNDLED_FILES) {
+      val resource = ContextLoader::class.java.classLoader
+        ?.getResourceAsStream("verity/context/$filename")
+        ?.bufferedReader()?.readText()?.trim()
+      val skillsFile = File(skillsDir, filename)
+      assertThat(skillsFile.exists(), "skills/context/$filename exists").isTrue()
+      val skillsContent = skillsFile.readText().trim()
+      assertThat(resource).isEqualTo(skillsContent)
+    }
   }
 
   private fun createTempContextDir(vararg files: Pair<String, String>): File {
