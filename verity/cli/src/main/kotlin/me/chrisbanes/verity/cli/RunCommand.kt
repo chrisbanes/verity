@@ -65,7 +65,7 @@ class RunCommand : CliktCommand(name = "run") {
         session = session,
         navigatorFactory = {
           NavigatorAgent(
-            bundledContext = ContextLoader.loadBundled(),
+            bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
             agentFactory = { systemPrompt ->
               AIAgent(
                 promptExecutor = executor,

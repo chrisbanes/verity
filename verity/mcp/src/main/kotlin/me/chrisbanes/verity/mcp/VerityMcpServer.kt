@@ -44,6 +44,7 @@ class VerityMcpServer(
   private val sessionManager: McpDeviceSessionManager = McpDeviceSessionManager(),
   private val snapshotStore: McpHierarchySnapshotStore = McpHierarchySnapshotStore(),
   private val contextPath: File? = null,
+  private val skipBundledContext: Boolean = false,
 ) {
 
   fun create(): Server {
@@ -588,6 +589,11 @@ class VerityMcpServer(
           contextPath != null -> contextPath
 
           else -> {
+            if (skipBundledContext) {
+              return@addTool error(
+                "No context path configured. Use the 'path' parameter or start the server with --context-path.",
+              )
+            }
             val bundled = ContextLoader.loadBundled()
             return@addTool if (bundled.isNotBlank()) {
               success(bundled)
@@ -599,7 +605,7 @@ class VerityMcpServer(
         val appContext = withContext(Dispatchers.IO) {
           ContextLoader.load(contextDir)
         }
-        val bundled = ContextLoader.loadBundled()
+        val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
         val combined = listOf(bundled, appContext).filter { it.isNotBlank() }.joinToString("\n\n")
         if (combined.isBlank()) {
           success("No context files found in: ${contextDir.absolutePath}")
