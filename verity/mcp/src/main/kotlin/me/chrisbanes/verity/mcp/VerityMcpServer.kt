@@ -372,12 +372,12 @@ class VerityMcpServer(
                   content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
                 )
               } finally {
-                withContext(Dispatchers.IO) {
+                withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                   Files.deleteIfExists(jpegPath)
                 }
               }
             } finally {
-              withContext(Dispatchers.IO) {
+              withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                 Files.deleteIfExists(tempPng)
               }
             }

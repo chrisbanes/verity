@@ -193,12 +193,16 @@ class Orchestrator(
     }
 
     AssertMode.VISUAL -> {
-      val tempFile = Files.createTempFile("verity-screenshot-", ".png")
+      val tempFile = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        java.nio.file.Files.createTempFile("verity-screenshot-", ".png")
+      }
       try {
         session.captureScreenshot(tempFile)
         inspector.evaluateVisual(tempFile, description)
       } finally {
-        Files.deleteIfExists(tempFile)
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+          java.nio.file.Files.deleteIfExists(tempFile)
+        }
       }
     }
   }

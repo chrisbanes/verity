@@ -28,10 +28,12 @@ internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowRes
     FlowResult(success = success)
   } catch (error: SyntaxError) {
     FlowResult(success = false, output = error.message)
+  } catch (error: kotlinx.coroutines.CancellationException) {
+    throw error
   } catch (error: Exception) {
     FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
   } finally {
-    withContext(Dispatchers.IO) {
+    withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
       Files.deleteIfExists(flowPath)
     }
   }
