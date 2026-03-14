@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEmpty
 import assertk.assertions.isFalse
+import assertk.assertions.isNotEmpty
 import java.io.File
 import kotlin.test.Test
 
@@ -81,6 +82,29 @@ class ContextLoaderTest {
     } finally {
       dir.deleteRecursively()
     }
+  }
+
+  @Test
+  fun `loadBundled returns Maestro reference content`() {
+    val bundled = ContextLoader.loadBundled()
+    assertThat(bundled).isNotEmpty()
+    assertThat(bundled).contains("Maestro")
+    assertThat(bundled).contains("pressKey")
+  }
+
+  @Test
+  fun `loadBundled returns TV controls content`() {
+    val bundled = ContextLoader.loadBundled()
+    assertThat(bundled).contains("Remote Dpad")
+    assertThat(bundled).contains("D-pad")
+  }
+
+  @Test
+  fun `loadBundled concatenates all resource files`() {
+    val bundled = ContextLoader.loadBundled()
+    // Both files should be present
+    assertThat(bundled).contains("Maestro YAML Reference")
+    assertThat(bundled).contains("TV Remote Controls")
   }
 
   private fun createTempContextDir(vararg files: Pair<String, String>): File {

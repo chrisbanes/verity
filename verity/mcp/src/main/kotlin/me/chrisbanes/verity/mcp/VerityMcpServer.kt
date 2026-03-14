@@ -44,6 +44,7 @@ class VerityMcpServer(
   private val sessionManager: McpDeviceSessionManager = McpDeviceSessionManager(),
   private val snapshotStore: McpHierarchySnapshotStore = McpHierarchySnapshotStore(),
   private val contextPath: File? = null,
+  private val skipBundledContext: Boolean = false,
 ) {
 
   fun create(): Server {
@@ -569,7 +570,7 @@ class VerityMcpServer(
   private fun registerGetContext(server: Server) {
     server.addTool(
       name = "get_context",
-      description = "Load app-specific context from markdown files for prompt injection",
+      description = "Load context for prompt injection. Returns bundled Maestro and TV controls defaults, optionally augmented with app-specific markdown files from a directory path.",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
           putJsonObject("path") {
@@ -587,17 +588,29 @@ class VerityMcpServer(
 
           contextPath != null -> contextPath
 
-          else -> return@addTool error(
-            "No context path configured. Use the 'path' parameter or start the server with --context-path.",
-          )
+          else -> {
+            if (skipBundledContext) {
+              return@addTool error(
+                "No context path configured. Use the 'path' parameter or start the server with --context-path.",
+              )
+            }
+            val bundled = ContextLoader.loadBundled()
+            return@addTool if (bundled.isNotBlank()) {
+              success(bundled)
+            } else {
+              error("No context path configured and no bundled defaults found.")
+            }
+          }
         }
-        val context = withContext(Dispatchers.IO) {
+        val appContext = withContext(Dispatchers.IO) {
           ContextLoader.load(contextDir)
         }
-        if (context.isBlank()) {
+        val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
+        val combined = listOf(bundled, appContext).filter { it.isNotBlank() }.joinToString("\n\n")
+        if (combined.isBlank()) {
           success("No context files found in: ${contextDir.absolutePath}")
         } else {
-          success(context)
+          success(combined)
         }
       } catch (e: CancellationException) {
         throw e

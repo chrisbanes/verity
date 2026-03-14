@@ -1,11 +1,17 @@
 package me.chrisbanes.verity.mcp
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.containsExactlyInAnyOrder
 import assertk.assertions.isEqualTo
+import assertk.assertions.isIn
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
 
 class VerityMcpServerTest {
 
@@ -47,5 +53,17 @@ class VerityMcpServerTest {
   fun `tool count is exactly 12`() {
     val server = VerityMcpServer().create()
     assertThat(server.tools.size).isEqualTo(12)
+  }
+
+  @Test
+  fun `get_context returns bundled defaults when no path configured`() = runTest {
+    val server = VerityMcpServer().create()
+    val tool = server.tools["get_context"]!!
+    val request = CallToolRequest(CallToolRequestParams(name = "get_context"))
+    val result = tool.handler.invoke(StubClientConnection(), request)
+    val text = (result.content.first() as TextContent).text
+    assertThat(result.isError).isIn(null, false)
+    assertThat(text).contains("Maestro")
+    assertThat(text).contains("Remote Dpad")
   }
 }

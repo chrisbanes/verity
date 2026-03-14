@@ -24,7 +24,10 @@ class McpCommand : CliktCommand(name = "mcp") {
     val parent = currentContext.parent?.command as Verity
     val contextDir = parent.contextPath?.let { File(it) }
 
-    val server = VerityMcpServer(contextPath = contextDir)
+    val server = VerityMcpServer(
+      contextPath = contextDir,
+      skipBundledContext = parent.noBundledContext,
+    )
 
     when (transport) {
       "stdio" -> {

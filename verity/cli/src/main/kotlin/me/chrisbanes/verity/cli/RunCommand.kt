@@ -65,7 +65,7 @@ class RunCommand : CliktCommand(name = "run") {
         session = session,
         navigatorFactory = {
           NavigatorAgent(
-            bundledContext = MAESTRO_CONTEXT,
+            bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
             agentFactory = { systemPrompt ->
               AIAgent(
                 promptExecutor = executor,
@@ -112,20 +112,5 @@ class RunCommand : CliktCommand(name = "run") {
         }
       }
     }
-  }
-
-  companion object {
-    private const val MAESTRO_CONTEXT =
-      "Common Maestro YAML commands:\n" +
-        "- launchApp: launches the app (must have appId header)\n" +
-        "- tapOn: tap on element by text or id\n" +
-        "- assertVisible: assert element is visible\n" +
-        "- waitForAnimationToEnd: wait for animations to settle\n" +
-        "- extendedWaitUntil: wait until a condition is met\n" +
-        "- scrollUntilVisible: scroll until element appears\n" +
-        "- inputText: type text into focused field\n" +
-        "- pressKey: press a specific key (Home, Back, Enter, etc.)\n" +
-        "- swipe: swipe in a direction\n" +
-        "- back: press back button"
   }
 }

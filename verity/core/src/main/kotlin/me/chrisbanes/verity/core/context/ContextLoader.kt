@@ -4,6 +4,21 @@ import java.io.File
 
 object ContextLoader {
 
+  private val bundledCache: String by lazy { loadBundledFromClasspath() }
+
+  fun loadBundled(): String = bundledCache
+
+  private fun loadBundledFromClasspath(): String {
+    val resourceDir = "verity/context"
+    val files = listOf("maestro.md", "tv-controls.md")
+    return files.mapNotNull { filename ->
+      ContextLoader::class.java.classLoader
+        ?.getResourceAsStream("$resourceDir/$filename")
+        ?.bufferedReader()
+        ?.use { it.readText().trim() }
+    }.joinToString("\n\n")
+  }
+
   fun load(directory: File): String {
     if (!directory.isDirectory) return ""
 

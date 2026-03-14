@@ -25,6 +25,10 @@ class Verity : CliktCommand(name = "verity") {
   )
   val noAnimations: Boolean by option("--no-animations", help = "Disable device animations")
     .flag()
+  val noBundledContext: Boolean by option(
+    "--no-bundled-context",
+    help = "Skip built-in Maestro and TV controls context",
+  ).flag()
 
   override fun run() = Unit
 }
