@@ -51,9 +51,10 @@ class McpDeviceSessionManager(
   }
 
   suspend fun close(sessionId: UUID) {
-    val entry = sessions.remove(sessionId)
+    val entry = sessions[sessionId]
       ?: throw IllegalArgumentException("No session found with ID: $sessionId")
     entry.mutex.withLock {
+      sessions.remove(sessionId)
       entry.session.close()
     }
   }
