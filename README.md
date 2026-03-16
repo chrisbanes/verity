@@ -57,3 +57,18 @@ core  ←  device  ←  agent  ←  cli
 - **Fast-path key mapping** — Common navigation actions (D-pad, gestures) go straight to the device, bypassing LLM generation entirely.
 - **Subagent isolation** — Each journey segment runs in its own LLM session, keeping context windows small and preventing hallucination from long histories.
 - **Persistent connections** — Embedded Maestro SDK holds persistent gRPC/HTTP connections to devices instead of spawning processes per operation.
+
+## Manual smoke checklist
+
+Minimal path to verify real-device integration:
+
+1. **Start MCP server**
+   ```bash
+   ./gradlew :verity:cli:run --args="mcp --transport stdio"
+   # or: --args="mcp --transport http --port 8080"
+   ```
+2. **Open session** — call `open_session` with `platform: android-tv` (or `android`/`ios`)
+3. **Press a key** — call `press_key` with `key: DPAD_DOWN`
+4. **Check visibility** — call `check_visible` with `text: <visible UI text>`
+5. **Capture hierarchy** — call `capture_hierarchy` with `filter: content` and verify the tree renders
+6. **Close session** — call `close_session` and verify device state is restored
