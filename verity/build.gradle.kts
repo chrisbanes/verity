@@ -2,7 +2,7 @@ subprojects {
   apply(plugin = "org.jetbrains.kotlin.jvm")
 
   group = "me.chrisbanes.verity"
-  version = "0.1.0"
+  version = findProperty("version")?.toString()?.takeIf { it != "unspecified" } ?: "0.1.0"
 
   extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
     jvmToolchain(21)

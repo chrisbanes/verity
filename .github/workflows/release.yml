@@ -22,12 +22,12 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build shadow JAR
-        run: ./gradlew :verity:cli:shadowJar
-
       - name: Get version from tag
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build shadow JAR
+        run: ./gradlew :verity:cli:shadowJar -Pversion=${{ steps.version.outputs.version }}
 
       - name: Compute SHA256
         id: sha
