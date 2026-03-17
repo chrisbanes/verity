@@ -40,7 +40,7 @@ class IosDeviceSession(
   }
 
   override suspend fun shell(command: String): String = withContext(Dispatchers.IO) {
-    val process = ProcessBuilder("sh", "-c", "xcrun simctl $command")
+    val process = ProcessBuilder(listOf("xcrun", "simctl") + parseCommandArgs(command))
       .redirectErrorStream(true)
       .start()
     val output = process.inputStream.bufferedReader().readText()
@@ -57,4 +57,44 @@ class IosDeviceSession(
     maestro.close()
     iosDevice.close()
   }
+}
+
+internal fun parseCommandArgs(command: String): List<String> {
+  val args = mutableListOf<String>()
+  val current = StringBuilder()
+  var quote: Char? = null
+  var escaping = false
+
+  for (ch in command.trim()) {
+    if (escaping) {
+      current.append(ch)
+      escaping = false
+      continue
+    }
+
+    when {
+      ch == '\\' -> escaping = true
+
+      quote != null && ch == quote -> quote = null
+
+      quote != null -> current.append(ch)
+
+      ch == '"' || ch == '\'' -> quote = ch
+
+      ch.isWhitespace() -> {
+        if (current.isNotEmpty()) {
+          args += current.toString()
+          current.clear()
+        }
+      }
+
+      else -> current.append(ch)
+    }
+  }
+
+  if (quote != null) error("Unterminated quote in command: $command")
+  if (escaping) error("Trailing escape in command: $command")
+  if (current.isNotEmpty()) args += current.toString()
+  if (args.isEmpty()) error("Command cannot be blank")
+  return args
 }
