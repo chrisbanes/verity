@@ -1,7 +1,9 @@
 package me.chrisbanes.verity.device
 
 import java.nio.file.Files
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import maestro.Maestro
 import maestro.orchestra.Orchestra
@@ -28,10 +30,12 @@ internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowRes
     FlowResult(success = success)
   } catch (error: SyntaxError) {
     FlowResult(success = false, output = error.message)
+  } catch (error: CancellationException) {
+    throw error
   } catch (error: Exception) {
     FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
   } finally {
-    withContext(Dispatchers.IO) {
+    withContext(NonCancellable + Dispatchers.IO) {
       Files.deleteIfExists(flowPath)
     }
   }

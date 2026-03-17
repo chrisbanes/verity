@@ -1,6 +1,9 @@
 package me.chrisbanes.verity.agent
 
 import java.nio.file.Files
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.keymap.PlatformKeyMapper
@@ -193,12 +196,16 @@ class Orchestrator(
     }
 
     AssertMode.VISUAL -> {
-      val tempFile = Files.createTempFile("verity-screenshot-", ".png")
+      val tempFile = withContext(Dispatchers.IO) {
+        Files.createTempFile("verity-screenshot-", ".png")
+      }
       try {
         session.captureScreenshot(tempFile)
         inspector.evaluateVisual(tempFile, description)
       } finally {
-        Files.deleteIfExists(tempFile)
+        withContext(NonCancellable + Dispatchers.IO) {
+          Files.deleteIfExists(tempFile)
+        }
       }
     }
   }

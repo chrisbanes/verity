@@ -18,7 +18,7 @@ class McpCommand : CliktCommand(name = "mcp") {
     .int()
     .default(8080)
   private val host by option("--host", help = "HTTP host (only for http transport)")
-    .default("0.0.0.0")
+    .default("127.0.0.1")
 
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity

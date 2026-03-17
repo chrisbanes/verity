@@ -143,7 +143,7 @@ private class AnimationRestoringSession(
   override fun close() {
     try {
       if (savedState != null) {
-        runBlocking {
+        runBlocking(Dispatchers.IO) {
           withTimeout(5.seconds) {
             delegate.restoreAnimationState(savedState)
           }

@@ -8,9 +8,9 @@ import ai.koog.prompt.llm.LLModel
 
 /**
  * Test double for [AIAgent] that delegates to a lambda responder.
- * Shared across agent test files to avoid duplication.
+ * Shared across modules via testFixtures.
  */
-internal class FakeTextAgent(
+class FakeTextAgent(
   private val responder: suspend (String) -> String,
 ) : AIAgent<String, String> {
   override val id: String = "fake-agent"

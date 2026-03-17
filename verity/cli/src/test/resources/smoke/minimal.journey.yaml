@@ -1,0 +1,6 @@
+name: Minimal smoke
+app: com.example.app
+platform: android-tv
+steps:
+  - Press d-pad down
+  - "[?] Home"
