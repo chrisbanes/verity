@@ -1,10 +1,22 @@
 plugins {
   application
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.shadow)
 }
 
 application {
   mainClass.set("me.chrisbanes.verity.cli.VerityKt")
+}
+
+tasks.shadowJar {
+  archiveBaseName.set("verity")
+  archiveClassifier.set("")
+  isZip64 = true
+  mergeServiceFiles()
+  // Exclude POM-only artifacts that have no JAR (Shadow cannot expand them as ZIPs)
+  dependencies {
+    exclude(dependency("org.graalvm.js:js-community"))
+  }
 }
 
 dependencies {
