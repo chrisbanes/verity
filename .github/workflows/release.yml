@@ -52,6 +52,7 @@ jobs:
 
       - name: Write updated formula
         run: |
+          mkdir -p homebrew-tap/Formula
           VERSION="${{ steps.version.outputs.version }}"
           SHA="${{ steps.sha.outputs.sha256 }}"
           sed -e "s/PLACEHOLDER/$SHA/" \
