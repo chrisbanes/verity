@@ -8,42 +8,25 @@ import assertk.assertions.isTrue
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
-import java.nio.file.Path
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
-import me.chrisbanes.verity.core.model.FlowResult
-import me.chrisbanes.verity.core.model.Platform
-import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FakeDeviceSession
 
 class VerityMcpServerSmokeTest {
 
-  /** A [DeviceSession] that returns canned hierarchy data for deterministic assertions. */
-  private class SmokeDeviceSession : DeviceSession {
-    override val platform: Platform = Platform.ANDROID_TV
-    var closed = false
-
-    override suspend fun executeFlow(yaml: String): FlowResult = FlowResult(success = true)
-    override suspend fun pressKey(keyName: String) = Unit
-    override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(
-      attributes = mapOf("class" to "FrameLayout"),
-      children = listOf(
-        HierarchyNode(attributes = mapOf("text" to "Home", "focused" to "true")),
-        HierarchyNode(attributes = mapOf("text" to "Settings")),
+  private fun createSmokeServer(): Pair<VerityMcpServer, FakeDeviceSession> {
+    val fakeSession = FakeDeviceSession(
+      hierarchyNode = HierarchyNode(
+        attributes = mapOf("class" to "FrameLayout"),
+        children = listOf(
+          HierarchyNode(attributes = mapOf("text" to "Home", "focused" to "true")),
+          HierarchyNode(attributes = mapOf("text" to "Settings")),
+        ),
       ),
     )
-    override suspend fun captureScreenshot(output: Path) = Unit
-    override suspend fun shell(command: String): String = ""
-    override suspend fun waitForAnimationToEnd() = Unit
-    override fun close() {
-      closed = true
-    }
-  }
-
-  private fun createSmokeServer(): Pair<VerityMcpServer, SmokeDeviceSession> {
-    val fakeSession = SmokeDeviceSession()
     val sessionManager = McpDeviceSessionManager(
       sessionFactory = { _, _, _ -> fakeSession },
     )

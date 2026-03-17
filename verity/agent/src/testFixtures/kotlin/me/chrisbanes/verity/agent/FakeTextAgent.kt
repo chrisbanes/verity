@@ -1,4 +1,4 @@
-package me.chrisbanes.verity.cli
+package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.config.AIAgentConfigBase
@@ -7,10 +7,10 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 
 /**
- * Minimal [AIAgent] test double that delegates to a responder lambda.
- * Local copy of the agent module's internal FakeTextAgent for cross-module tests.
+ * Test double for [AIAgent] that delegates to a lambda responder.
+ * Shared across modules via testFixtures.
  */
-internal class FakeTextAgent(
+class FakeTextAgent(
   private val responder: suspend (String) -> String,
 ) : AIAgent<String, String> {
   override val id: String = "fake-agent"

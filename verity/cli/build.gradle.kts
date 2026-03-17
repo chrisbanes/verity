@@ -26,4 +26,7 @@ dependencies {
   implementation(libs.kaml)
   implementation(libs.kotlinx.serialization.json)
   implementation(libs.kotlinx.coroutines.core)
+
+  testImplementation(testFixtures(project(":verity:device")))
+  testImplementation(testFixtures(project(":verity:agent")))
 }

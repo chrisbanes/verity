@@ -92,6 +92,29 @@ class VerityMcpServer(
     isError = true,
   )
 
+  private fun Server.addSafeTool(
+    name: String,
+    description: String,
+    inputSchema: ToolSchema,
+    required: List<String>? = null,
+    handler: suspend (JsonObject?) -> CallToolResult,
+  ) {
+    val schema = if (required != null) {
+      ToolSchema(properties = inputSchema.properties, required = required)
+    } else {
+      inputSchema
+    }
+    addTool(name = name, description = description, inputSchema = schema) { request ->
+      try {
+        handler(request.params.arguments)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        error("${e::class.simpleName}: ${e.message}")
+      }
+    }
+  }
+
   private fun parsePlatform(value: String): Platform = when (value) {
     "android-tv" -> Platform.ANDROID_TV
     "android" -> Platform.ANDROID_MOBILE
@@ -102,7 +125,7 @@ class VerityMcpServer(
   // --- Tool Registrations ---
 
   private fun registerOpenSession(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "open_session",
       description = "Connect to a device and start a testing session",
       inputSchema = ToolSchema(
@@ -126,26 +149,19 @@ class VerityMcpServer(
           }
         },
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val platform = parsePlatform(args.requireString("platform"))
-        val device = args.string("device")
-        val disableAnimations = args.bool("disable_animations") ?: false
-        val handle = sessionManager.open(platform, device, disableAnimations)
-        success(
-          "Session opened.\nsession_id: ${handle.sessionId}\ndevice: ${handle.deviceId}\nplatform: $platform",
-        )
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
-      }
+    ) { args ->
+      val platform = parsePlatform(args.requireString("platform"))
+      val device = args.string("device")
+      val disableAnimations = args.bool("disable_animations") ?: false
+      val handle = sessionManager.open(platform, device, disableAnimations)
+      success(
+        "Session opened.\nsession_id: ${handle.sessionId}\ndevice: ${handle.deviceId}\nplatform: $platform",
+      )
     }
   }
 
   private fun registerCloseSession(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "close_session",
       description = "Close a device testing session and restore device state",
       inputSchema = ToolSchema(
@@ -155,25 +171,18 @@ class VerityMcpServer(
             put("description", "Session ID returned by open_session")
           }
         },
-        required = listOf("session_id"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        sessionManager.close(sessionId)
-        snapshotStore.clear(sessionId)
-        success("Session $sessionId closed.")
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
-      }
+      required = listOf("session_id"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      sessionManager.close(sessionId)
+      snapshotStore.clear(sessionId)
+      success("Session $sessionId closed.")
     }
   }
 
   private fun registerListJourneys(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "list_journeys",
       description = "List available journey YAML files in a directory",
       inputSchema = ToolSchema(
@@ -184,28 +193,21 @@ class VerityMcpServer(
           }
         },
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val dir = File(args.string("path") ?: ".")
-        val files = withContext(Dispatchers.IO) {
-          JourneyLoader.listJourneyFiles(dir)
-        }
-        if (files.isEmpty()) {
-          success("No journey files found in: ${dir.absolutePath}")
-        } else {
-          success(files.joinToString("\n") { it.absolutePath })
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+    ) { args ->
+      val dir = File(args.string("path") ?: ".")
+      val files = withContext(Dispatchers.IO) {
+        JourneyLoader.listJourneyFiles(dir)
+      }
+      if (files.isEmpty()) {
+        success("No journey files found in: ${dir.absolutePath}")
+      } else {
+        success(files.joinToString("\n") { it.absolutePath })
       }
     }
   }
 
   private fun registerLoadJourney(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "load_journey",
       description = "Parse and display steps from a journey YAML file",
       inputSchema = ToolSchema(
@@ -215,40 +217,33 @@ class VerityMcpServer(
             put("description", "Path to the .journey.yaml file")
           }
         },
-        required = listOf("path"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val path = args.requireString("path")
-        val journey = withContext(Dispatchers.IO) {
-          JourneyLoader.fromFile(File(path))
-        }
-        val output = buildString {
-          appendLine("Journey: ${journey.name}")
-          appendLine("App: ${journey.app}")
-          appendLine("Platform: ${journey.platform}")
-          appendLine()
-          appendLine("Steps:")
-          journey.steps.forEachIndexed { i, step ->
-            when (step) {
-              is JourneyStep.Action -> appendLine("  ${i + 1}. [Action] ${step.instruction}")
-              is JourneyStep.Assert -> appendLine("  ${i + 1}. [Assert:${step.mode}] ${step.description}")
-              is JourneyStep.Loop -> appendLine("  ${i + 1}. [Loop] ${step.action} until '${step.until}' (max: ${step.max})")
-            }
+      required = listOf("path"),
+    ) { args ->
+      val path = args.requireString("path")
+      val journey = withContext(Dispatchers.IO) {
+        JourneyLoader.fromFile(File(path))
+      }
+      val output = buildString {
+        appendLine("Journey: ${journey.name}")
+        appendLine("App: ${journey.app}")
+        appendLine("Platform: ${journey.platform}")
+        appendLine()
+        appendLine("Steps:")
+        journey.steps.forEachIndexed { i, step ->
+          when (step) {
+            is JourneyStep.Action -> appendLine("  ${i + 1}. [Action] ${step.instruction}")
+            is JourneyStep.Assert -> appendLine("  ${i + 1}. [Assert:${step.mode}] ${step.description}")
+            is JourneyStep.Loop -> appendLine("  ${i + 1}. [Loop] ${step.action} until '${step.until}' (max: ${step.max})")
           }
         }
-        success(output.trim())
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
       }
+      success(output.trim())
     }
   }
 
   private fun registerRunFlow(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "run_flow",
       description = "Execute a Maestro YAML flow on the device",
       inputSchema = ToolSchema(
@@ -266,34 +261,27 @@ class VerityMcpServer(
             put("description", "Wait for focus to change after execution (Android TV)")
           }
         },
-        required = listOf("session_id", "yaml"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val yaml = args.requireString("yaml")
-        val awaitFocusChange = args.bool("await_focus_change") ?: false
-        val result = sessionManager.withSession(sessionId) { session ->
-          val flowResult = session.executeFlow(yaml)
-          if (awaitFocusChange) session.waitForAnimationToEnd()
-          flowResult
-        }
-        if (result.success) {
-          success("SUCCESS")
-        } else {
-          success("FAILED: ${result.output}")
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+      required = listOf("session_id", "yaml"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val yaml = args.requireString("yaml")
+      val awaitFocusChange = args.bool("await_focus_change") ?: false
+      val result = sessionManager.withSession(sessionId) { session ->
+        val flowResult = session.executeFlow(yaml)
+        if (awaitFocusChange) session.waitForAnimationToEnd()
+        flowResult
+      }
+      if (result.success) {
+        success("SUCCESS")
+      } else {
+        success("FAILED: ${result.output}")
       }
     }
   }
 
   private fun registerPressKey(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "press_key",
       description = "Press a key on the device (e.g., DPAD_CENTER, BACK, HOME)",
       inputSchema = ToolSchema(
@@ -307,28 +295,21 @@ class VerityMcpServer(
             put("description", "Key name to press (e.g., DPAD_UP, DPAD_CENTER, BACK)")
           }
         },
-        required = listOf("session_id", "key"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val key = args.requireString("key")
-        sessionManager.withSession(sessionId) { session ->
-          session.pressKey(key)
-          session.waitForAnimationToEnd()
-        }
-        success("Pressed key: $key")
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+      required = listOf("session_id", "key"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val key = args.requireString("key")
+      sessionManager.withSession(sessionId) { session ->
+        session.pressKey(key)
+        session.waitForAnimationToEnd()
       }
+      success("Pressed key: $key")
     }
   }
 
   private fun registerCaptureScreenshot(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "capture_screenshot",
       description = "Capture a screenshot from the device",
       inputSchema = ToolSchema(
@@ -342,57 +323,50 @@ class VerityMcpServer(
             put("description", "Optional file path to save the screenshot PNG")
           }
         },
-        required = listOf("session_id"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val saveToFile = args.string("save_to_file")
-        sessionManager.withSession(sessionId) { session ->
-          if (saveToFile != null) {
-            val target = Path.of(saveToFile)
-            session.captureScreenshot(target)
-            success("Screenshot saved to: $saveToFile")
-          } else {
-            val tempPng = withContext(Dispatchers.IO) {
-              Files.createTempFile("verity-screenshot-", ".png")
+      required = listOf("session_id"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val saveToFile = args.string("save_to_file")
+      sessionManager.withSession(sessionId) { session ->
+        if (saveToFile != null) {
+          val target = Path.of(saveToFile)
+          session.captureScreenshot(target)
+          success("Screenshot saved to: $saveToFile")
+        } else {
+          val tempPng = withContext(Dispatchers.IO) {
+            Files.createTempFile("verity-screenshot-", ".png")
+          }
+          try {
+            session.captureScreenshot(tempPng)
+            val jpegPath = withContext(Dispatchers.IO) {
+              ScreenshotCompressor.compress(tempPng)
             }
             try {
-              session.captureScreenshot(tempPng)
-              val jpegPath = withContext(Dispatchers.IO) {
-                ScreenshotCompressor.compress(tempPng)
+              val bytes = withContext(Dispatchers.IO) {
+                Files.readAllBytes(jpegPath)
               }
-              try {
-                val bytes = withContext(Dispatchers.IO) {
-                  Files.readAllBytes(jpegPath)
-                }
-                val base64 = Base64.getEncoder().encodeToString(bytes)
-                CallToolResult(
-                  content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
-                )
-              } finally {
-                withContext(Dispatchers.IO) {
-                  Files.deleteIfExists(jpegPath)
-                }
-              }
+              val base64 = Base64.getEncoder().encodeToString(bytes)
+              CallToolResult(
+                content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
+              )
             } finally {
               withContext(Dispatchers.IO) {
-                Files.deleteIfExists(tempPng)
+                Files.deleteIfExists(jpegPath)
               }
+            }
+          } finally {
+            withContext(Dispatchers.IO) {
+              Files.deleteIfExists(tempPng)
             }
           }
         }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
       }
     }
   }
 
   private fun registerCaptureHierarchy(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "capture_hierarchy",
       description = "Capture the accessibility hierarchy from the device",
       inputSchema = ToolSchema(
@@ -411,33 +385,26 @@ class VerityMcpServer(
             }
           }
         },
-        required = listOf("session_id"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val filter = when (args.string("filter")) {
-          "focus" -> HierarchyFilter.FOCUS
-          "all" -> HierarchyFilter.ALL
-          else -> HierarchyFilter.CONTENT
-        }
-        sessionManager.withSession(sessionId) { session ->
-          val tree = session.captureHierarchyTree()
-          val snapshotId = snapshotStore.add(sessionId, tree)
-          val rendered = HierarchyRenderer.render(tree, filter)
-          success("snapshot_id: $snapshotId\n\n$rendered")
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+      required = listOf("session_id"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val filter = when (args.string("filter")) {
+        "focus" -> HierarchyFilter.FOCUS
+        "all" -> HierarchyFilter.ALL
+        else -> HierarchyFilter.CONTENT
+      }
+      sessionManager.withSession(sessionId) { session ->
+        val tree = session.captureHierarchyTree()
+        val snapshotId = snapshotStore.add(sessionId, tree)
+        val rendered = HierarchyRenderer.render(tree, filter)
+        success("snapshot_id: $snapshotId\n\n$rendered")
       }
     }
   }
 
   private fun registerCheckVisible(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "check_visible",
       description = "Check if text is visible on screen (deterministic substring match)",
       inputSchema = ToolSchema(
@@ -451,27 +418,20 @@ class VerityMcpServer(
             put("description", "Text to search for (case-insensitive)")
           }
         },
-        required = listOf("session_id", "text"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val text = args.requireString("text")
-        val visible = sessionManager.withSession(sessionId) { session ->
-          session.containsText(text)
-        }
-        success(if (visible) "true" else "false")
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+      required = listOf("session_id", "text"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val text = args.requireString("text")
+      val visible = sessionManager.withSession(sessionId) { session ->
+        session.containsText(text)
       }
+      success(if (visible) "true" else "false")
     }
   }
 
   private fun registerCheckFocused(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "check_focused",
       description = "Check if an element containing the given text is focused",
       inputSchema = ToolSchema(
@@ -485,27 +445,20 @@ class VerityMcpServer(
             put("description", "Text of the element to check focus on")
           }
         },
-        required = listOf("session_id", "text"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val text = args.requireString("text")
-        val focused = sessionManager.withSession(sessionId) { session ->
-          session.checkFocused(text)
-        }
-        success(if (focused) "true" else "false")
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+      required = listOf("session_id", "text"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val text = args.requireString("text")
+      val focused = sessionManager.withSession(sessionId) { session ->
+        session.checkFocused(text)
       }
+      success(if (focused) "true" else "false")
     }
   }
 
   private fun registerRunLoop(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "run_loop",
       description = "Repeat an action until a condition is met or max iterations reached",
       inputSchema = ToolSchema(
@@ -531,44 +484,37 @@ class VerityMcpServer(
             put("description", "Milliseconds to wait between iterations (default: 500)")
           }
         },
-        required = listOf("session_id", "action", "until"),
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val sessionId = UUID.fromString(args.requireString("session_id"))
-        val action = args.requireString("action")
-        val until = args.requireString("until")
-        val max = args.int("max") ?: 10
-        val waitMs = args.int("wait_ms") ?: 500
-        val result = sessionManager.withSession(sessionId) { session ->
-          var actionsExecuted = 0
-          repeat(max) {
-            if (session.containsText(until)) {
-              return@withSession "SATISFIED after $actionsExecuted iterations: text '$until' found"
-            }
-            session.pressKey(action)
-            session.waitForAnimationToEnd()
-            if (waitMs > 0) delay(waitMs.toLong())
-            actionsExecuted += 1
-          }
+      required = listOf("session_id", "action", "until"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val action = args.requireString("action")
+      val until = args.requireString("until")
+      val max = args.int("max") ?: 10
+      val waitMs = args.int("wait_ms") ?: 500
+      val result = sessionManager.withSession(sessionId) { session ->
+        var actionsExecuted = 0
+        repeat(max) {
           if (session.containsText(until)) {
-            "SATISFIED after $actionsExecuted iterations: text '$until' found"
-          } else {
-            "NOT SATISFIED after $actionsExecuted iterations: text '$until' not found"
+            return@withSession "SATISFIED after $actionsExecuted iterations: text '$until' found"
           }
+          session.pressKey(action)
+          session.waitForAnimationToEnd()
+          if (waitMs > 0) delay(waitMs.toLong())
+          actionsExecuted += 1
         }
-        success(result)
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+        if (session.containsText(until)) {
+          "SATISFIED after $actionsExecuted iterations: text '$until' found"
+        } else {
+          "NOT SATISFIED after $actionsExecuted iterations: text '$until' not found"
+        }
       }
+      success(result)
     }
   }
 
   private fun registerGetContext(server: Server) {
-    server.addTool(
+    server.addSafeTool(
       name = "get_context",
       description = "Load context for prompt injection. Returns bundled Maestro and TV controls defaults, optionally augmented with app-specific markdown files from a directory path.",
       inputSchema = ToolSchema(
@@ -579,43 +525,36 @@ class VerityMcpServer(
           }
         },
       ),
-    ) { request ->
-      val args = request.params.arguments
-      try {
-        val pathArg = args.string("path")
-        val contextDir = when {
-          pathArg != null -> File(pathArg)
+    ) { args ->
+      val pathArg = args.string("path")
+      val contextDir = when {
+        pathArg != null -> File(pathArg)
 
-          contextPath != null -> contextPath
+        contextPath != null -> contextPath
 
-          else -> {
-            if (skipBundledContext) {
-              return@addTool error(
-                "No context path configured. Use the 'path' parameter or start the server with --context-path.",
-              )
-            }
-            val bundled = ContextLoader.loadBundled()
-            return@addTool if (bundled.isNotBlank()) {
-              success(bundled)
-            } else {
-              error("No context path configured and no bundled defaults found.")
-            }
+        else -> {
+          if (skipBundledContext) {
+            return@addSafeTool error(
+              "No context path configured. Use the 'path' parameter or start the server with --context-path.",
+            )
+          }
+          val bundled = ContextLoader.loadBundled()
+          return@addSafeTool if (bundled.isNotBlank()) {
+            success(bundled)
+          } else {
+            error("No context path configured and no bundled defaults found.")
           }
         }
-        val appContext = withContext(Dispatchers.IO) {
-          ContextLoader.load(contextDir)
-        }
-        val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
-        val combined = listOf(bundled, appContext).filter { it.isNotBlank() }.joinToString("\n\n")
-        if (combined.isBlank()) {
-          success("No context files found in: ${contextDir.absolutePath}")
-        } else {
-          success(combined)
-        }
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        error("${e::class.simpleName}: ${e.message}")
+      }
+      val appContext = withContext(Dispatchers.IO) {
+        ContextLoader.load(contextDir)
+      }
+      val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
+      val combined = listOf(bundled, appContext).filter { it.isNotBlank() }.joinToString("\n\n")
+      if (combined.isBlank()) {
+        success("No context files found in: ${contextDir.absolutePath}")
+      } else {
+        success(combined)
       }
     }
   }

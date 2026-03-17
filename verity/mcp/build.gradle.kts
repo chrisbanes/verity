@@ -6,4 +6,6 @@ dependencies {
   implementation(libs.mcp.kotlin.sdk)
   implementation(libs.ktor.server.core)
   implementation(libs.ktor.server.netty)
+
+  testImplementation(testFixtures(project(":verity:device")))
 }

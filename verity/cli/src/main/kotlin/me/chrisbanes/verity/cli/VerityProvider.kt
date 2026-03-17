@@ -221,8 +221,10 @@ sealed class VerityProvider {
       BedrockModels.MetaLlama3_3_70BInstruct,
     )
 
-    override fun createClient(apiKey: String): BedrockLLMClient {
-      val secret = System.getenv("AWS_SECRET_ACCESS_KEY")
+    override fun createClient(apiKey: String): BedrockLLMClient = createClient(apiKey, System.getenv("AWS_SECRET_ACCESS_KEY"))
+
+    internal fun createClient(apiKey: String, awsSecretKey: String?): BedrockLLMClient {
+      val secret = awsSecretKey
         ?: error("AWS_SECRET_ACCESS_KEY environment variable is required for the Bedrock provider")
       val credProvider =
         StaticCredentialsProvider {

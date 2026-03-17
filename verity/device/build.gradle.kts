@@ -1,3 +1,7 @@
+plugins {
+  `java-test-fixtures`
+}
+
 dependencies {
   implementation(project(":verity:core"))
   implementation(libs.kotlinx.coroutines.core)
@@ -17,6 +21,8 @@ dependencies {
   implementation(libs.grpc.netty.shaded)
   implementation(libs.grpc.stub)
   implementation(libs.grpc.protobuf)
+
+  testFixturesImplementation(project(":verity:core"))
 }
 
 val grpcVersion: String = rootProject.extensions

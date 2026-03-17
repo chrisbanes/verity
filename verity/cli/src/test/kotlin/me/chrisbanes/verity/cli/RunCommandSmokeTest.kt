@@ -4,17 +4,16 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
-import java.nio.file.Path
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
+import me.chrisbanes.verity.agent.FakeTextAgent
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.journey.JourneyLoader
-import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
-import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FakeDeviceSession
 
 class RunCommandSmokeTest {
 
@@ -90,19 +89,5 @@ class RunCommandSmokeTest {
     val contextUrl = javaClass.classLoader.getResource("smoke/context/app.md")!!
     val content = java.io.File(contextUrl.toURI()).readText()
     assertThat(content).transform { it.contains("Smoke Test App Context") }.isTrue()
-  }
-
-  private class FakeDeviceSession(
-    private val hierarchyNode: HierarchyNode = HierarchyNode(attributes = emptyMap()),
-  ) : DeviceSession {
-    override val platform: Platform = Platform.ANDROID_TV
-
-    override suspend fun executeFlow(yaml: String): FlowResult = FlowResult(success = true)
-    override suspend fun pressKey(keyName: String) = Unit
-    override suspend fun captureHierarchyTree(): HierarchyNode = hierarchyNode
-    override suspend fun captureScreenshot(output: Path) = Unit
-    override suspend fun shell(command: String): String = ""
-    override suspend fun waitForAnimationToEnd() = Unit
-    override fun close() = Unit
   }
 }
