@@ -15,6 +15,7 @@ grpc-kotlin = "1.5.0"
 grpc-netty-shaded = "1.79.0"
 assertk = "0.28.1"
 ktlint = "1.8.0"
+shadow = "9.4.0"
 spotless = "8.2.1"
 
 [libraries]
@@ -49,4 +50,5 @@ assertk = { module = "com.willowtreeapps.assertk:assertk", version.ref = "assert
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+shadow = { id = "com.gradleup.shadow", version.ref = "shadow" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
