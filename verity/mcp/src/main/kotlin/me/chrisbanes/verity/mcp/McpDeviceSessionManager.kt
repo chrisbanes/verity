@@ -2,8 +2,10 @@ package me.chrisbanes.verity.mcp
 
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.DeviceSessionFactory
@@ -51,11 +53,12 @@ class McpDeviceSessionManager(
   }
 
   suspend fun close(sessionId: UUID) {
-    val entry = sessions[sessionId]
+    val entry = sessions.remove(sessionId)
       ?: throw IllegalArgumentException("No session found with ID: $sessionId")
     entry.mutex.withLock {
-      sessions.remove(sessionId)
-      entry.session.close()
+      withContext(NonCancellable) {
+        entry.session.close()
+      }
     }
   }
 

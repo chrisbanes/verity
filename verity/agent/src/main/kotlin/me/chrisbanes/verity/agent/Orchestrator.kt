@@ -2,6 +2,7 @@ package me.chrisbanes.verity.agent
 
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.journey.JourneySegmenter
@@ -202,7 +203,7 @@ class Orchestrator(
         session.captureScreenshot(tempFile)
         inspector.evaluateVisual(tempFile, description)
       } finally {
-        withContext(Dispatchers.IO) {
+        withContext(NonCancellable + Dispatchers.IO) {
           Files.deleteIfExists(tempFile)
         }
       }
