@@ -148,13 +148,15 @@ class DeviceLifecycle private constructor(
 
     private suspend fun waitForAndroidBoot() {
       while (true) {
-        val result = runCatching {
+        val output = try {
           val p = ProcessBuilder("adb", "shell", "getprop", "sys.boot_completed")
             .redirectErrorStream(true)
             .start()
           p.inputStream.bufferedReader().readText().trim()
+        } catch (_: Exception) {
+          null
         }
-        if (result.getOrNull() == "1") break
+        if (output == "1") break
         delay(2.seconds)
       }
     }

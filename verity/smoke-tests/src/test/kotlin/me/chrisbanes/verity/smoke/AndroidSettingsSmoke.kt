@@ -30,8 +30,8 @@ class AndroidSettingsSmoke {
     @AfterAll
     @JvmStatic
     fun shutdown() {
-      session.close()
-      lifecycle.close()
+      if (::session.isInitialized) session.close()
+      if (::lifecycle.isInitialized) lifecycle.close()
     }
   }
 
