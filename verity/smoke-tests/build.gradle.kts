@@ -3,6 +3,8 @@ dependencies {
   testImplementation(project(":verity:device"))
   testImplementation(project(":verity:agent"))
   testImplementation(testFixtures(project(":verity:agent")))
+  testImplementation(libs.kotlinx.serialization.json)
+  testImplementation(libs.dadb)
 }
 
 tasks.test {
