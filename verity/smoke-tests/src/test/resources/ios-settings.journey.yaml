@@ -1,0 +1,6 @@
+name: iOS Settings smoke
+app: com.apple.Preferences
+platform: ios
+steps:
+  - Tap General
+  - "[?] About"

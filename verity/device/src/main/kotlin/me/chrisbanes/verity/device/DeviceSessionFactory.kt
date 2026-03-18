@@ -102,7 +102,9 @@ object DeviceSessionFactory {
       resolveIosDeviceId(deviceId),
     )
     val driver = IOSDriver(iosDevice)
-    val maestro = Maestro.ios(driver)
+    // openDriver = false: SimctlIOSDevice.open() in Maestro 2.3.0 is a TODO() stub.
+    // Remove this once Maestro ships a working SimctlIOSDevice implementation.
+    val maestro = Maestro.ios(driver, openDriver = false)
     return IosDeviceSession(maestro, iosDevice)
   }
 
