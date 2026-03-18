@@ -6,11 +6,11 @@ Validate that Verity's device layer works against real Android emulators and iOS
 
 ## Decisions
 
-- **Test level**: Orchestrator-level. Tests load journey YAML and run it through the real `Orchestrator`, exercising device connection, key presses, Maestro flow execution, hierarchy capture, and text assertions.
+- **Test level**: Orchestrator-level. Tests load journey YAML and run it through the real `Orchestrator`, exercising device connection, Maestro flow execution, hierarchy capture, and text assertions.
 - **Target app**: Settings (pre-installed on both platforms, predictable UI).
 - **Module**: Dedicated `:verity:smoke-tests` Gradle module, excluded from `./gradlew check`.
 - **Device lifecycle**: Auto-boot an emulator or simulator if none is running. Shut down only what the test started.
-- **LLM avoidance**: Android TV journeys use key-mapped fast-path actions (no agent called). iOS journeys use a `FakeTextAgent`-backed navigator that returns hardcoded Maestro YAML.
+- **LLM avoidance**: All journeys use a `FakeTextAgent`-backed navigator that returns hardcoded Maestro YAML.
 
 ## Module Structure
 
@@ -21,7 +21,9 @@ verity/smoke-tests/
     ├── kotlin/me/chrisbanes/verity/smoke/
     │   ├── AndroidSettingsSmoke.kt
     │   ├── IosSettingsSmoke.kt
-    │   └── DeviceLifecycle.kt
+    │   ├── DeviceLifecycle.kt
+    │   ├── DeviceLifecycleTest.kt
+    │   └── JourneyLoadTest.kt
     └── resources/
         ├── android-settings.journey.yaml
         └── ios-settings.journey.yaml
@@ -35,7 +37,7 @@ A helper object responsible for booting and tearing down devices.
 
 1. Check `Dadb.discover()` for a running emulator.
 2. If none found, launch one via `emulator -avd <name> -no-window -no-audio`.
-3. Wait for `adb wait-for-device && adb shell getprop sys.boot_completed`.
+3. Wait for `adb shell getprop sys.boot_completed` to return `1`.
 4. Track whether the test started the emulator so `close()` only kills what it owns.
 
 **iOS:**
@@ -57,13 +59,13 @@ Gradle properties control device selection:
 ```yaml
 name: Android Settings smoke
 app: com.android.settings
-platform: android-tv
+platform: android
 steps:
-  - Press d-pad down
-  - "[?] Network"
+  - Tap Network & internet
+  - "[?] Internet"
 ```
 
-All actions are key-mappable, so the Orchestrator takes the fast path. The assertion uses `VISIBLE` mode (deterministic text search). No agent is invoked.
+"Tap Network & internet" is not key-mappable on Android mobile, so the Orchestrator calls the navigator. The test injects a `FakeTextAgent` that returns hardcoded Maestro YAML including `launchApp` and `tapOn`. The assertion uses `VISIBLE` mode (deterministic text search).
 
 **`ios-settings.journey.yaml`:**
 
@@ -76,97 +78,23 @@ steps:
   - "[?] About"
 ```
 
-"Tap General" is not key-mappable, so the Orchestrator calls the navigator. The test injects a `FakeTextAgent` that returns a hardcoded Maestro flow:
-
-```yaml
-appId: com.apple.Preferences
----
-- tapOn: General
-```
-
-## Test Structure
-
-```kotlin
-@Tag("android")
-class AndroidSettingsSmoke {
-  companion object {
-    private lateinit var session: DeviceSession
-    private lateinit var lifecycle: DeviceLifecycle
-
-    @BeforeAll @JvmStatic
-    fun boot() {
-      lifecycle = DeviceLifecycle.android()
-      session = lifecycle.connect()
-    }
-
-    @AfterAll @JvmStatic
-    fun shutdown() {
-      session.close()
-      lifecycle.teardown()
-    }
-  }
-
-  @Test
-  fun `settings journey passes`() = runTest {
-    val journey = JourneyLoader.fromResource("/android-settings.journey.yaml")
-    val orchestrator = Orchestrator(
-      session = session,
-      navigatorFactory = { error("fast path: navigator should not be called") },
-      inspectorFactory = { error("VISIBLE mode: inspector should not be called") },
-    )
-    val result = orchestrator.run(journey)
-    assertThat(result.passed).isTrue()
-  }
-}
-
-@Tag("ios")
-class IosSettingsSmoke {
-  companion object {
-    private lateinit var session: DeviceSession
-    private lateinit var lifecycle: DeviceLifecycle
-
-    @BeforeAll @JvmStatic
-    fun boot() {
-      lifecycle = DeviceLifecycle.ios()
-      session = lifecycle.connect()
-    }
-
-    @AfterAll @JvmStatic
-    fun shutdown() {
-      session.close()
-      lifecycle.teardown()
-    }
-  }
-
-  @Test
-  fun `settings journey passes`() = runTest {
-    val journey = JourneyLoader.fromResource("/ios-settings.journey.yaml")
-    val orchestrator = Orchestrator(
-      session = session,
-      navigatorFactory = {
-        NavigatorAgent(FakeTextAgent { _ ->
-          "appId: com.apple.Preferences\n---\n- tapOn: General"
-        })
-      },
-      inspectorFactory = { error("VISIBLE mode: inspector should not be called") },
-    )
-    val result = orchestrator.run(journey)
-    assertThat(result.passed).isTrue()
-  }
-}
-```
+Same pattern as Android — `FakeTextAgent` returns hardcoded Maestro flow with `launchApp` and `tapOn`.
 
 ## Gradle Integration
 
 - `./gradlew check` does **not** run smoke tests.
-- Run Android tests: `./gradlew :verity:smoke-tests:test -Dinclude.tags=android`
-- Run iOS tests: `./gradlew :verity:smoke-tests:test -Dinclude.tags=ios`
-- Run both: `./gradlew :verity:smoke-tests:test`
+- Run Android tests: `./gradlew :verity:smoke-tests:smokeTest -Dinclude.tags=android`
+- Run iOS tests: `./gradlew :verity:smoke-tests:smokeTest -Dinclude.tags=ios`
+- Run both: `./gradlew :verity:smoke-tests:smokeTest`
 
 The module depends on `:verity:device`, `:verity:agent` (for `Orchestrator` and `FakeTextAgent`), and `:verity:core` (for `JourneyLoader`).
 
+## Known Limitations
+
+- **iOS disabled**: `SimctlIOSDevice` in Maestro 2.3.0 is entirely unimplemented (all methods are `TODO()` stubs). iOS smoke tests are `@Disabled` until Maestro ships a working implementation.
+- **gRPC version pinning**: The smoke-tests module forces gRPC 1.50.2 to maintain compatibility with Maestro 2.3.0, which requires `AbstractManagedChannelImplBuilder` (removed in gRPC 1.57).
+
 ## Out of Scope
 
-- CI integration (macOS runners with emulator images) — follow-up.
 - Adding taps/swipes to the fast path — separate change to core Orchestrator.
 - Full end-to-end tests with a real LLM.

@@ -1,7 +1,5 @@
 # Device Smoke Tests Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Add a `:verity:smoke-tests` module that validates device connectivity and basic journey execution against real Android emulators and iOS simulators.
 
 **Architecture:** A dedicated Gradle module excluded from `./gradlew check`. Tests use real `DeviceSession` connections via `DeviceSessionFactory.connect()`, real `Orchestrator` with fake agents, and the Settings app as the test target. A `DeviceLifecycle` helper auto-boots emulators/simulators when none are running.
@@ -54,8 +52,8 @@ dependencies {
 
 tasks.test {
   // Excluded from ./gradlew check by default.
-  // Run explicitly: ./gradlew :verity:smoke-tests:test -Dinclude.tags=android
-  //            or:  ./gradlew :verity:smoke-tests:test -Dinclude.tags=ios
+  // Run explicitly: ./gradlew :verity:smoke-tests:smokeTest -Dinclude.tags=android
+  //            or:  ./gradlew :verity:smoke-tests:smokeTest -Dinclude.tags=ios
   enabled = false
 }
 

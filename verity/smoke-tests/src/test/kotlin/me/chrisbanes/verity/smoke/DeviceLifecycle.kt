@@ -109,7 +109,9 @@ class DeviceLifecycle private constructor(
         "-no-window",
         "-no-audio",
         "-no-boot-anim",
-      ).redirectErrorStream(true).start()
+      ).redirectErrorStream(true)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .start()
 
       withTimeout(3.minutes) {
         waitForAndroidBoot()
@@ -136,10 +138,11 @@ class DeviceLifecycle private constructor(
       }
 
       val udid = System.getProperty("verity.smoke.ios.udid") ?: findFirstIosSimulator()
-      ProcessBuilder("xcrun", "simctl", "boot", udid)
+      val bootProcess = ProcessBuilder("xcrun", "simctl", "boot", udid)
         .redirectErrorStream(true)
         .start()
-        .waitFor()
+      val bootOutput = bootProcess.inputStream.bufferedReader().readText()
+      check(bootProcess.waitFor() == 0) { "xcrun simctl boot $udid failed: $bootOutput" }
 
       withTimeout(2.minutes) {
         waitForIosBoot(udid)
