@@ -5,6 +5,7 @@ dependencies {
   testImplementation(testFixtures(project(":verity:agent")))
   testImplementation(libs.kotlinx.serialization.json)
   testImplementation(libs.dadb)
+  testImplementation(libs.koog.agents)
 }
 
 tasks.test {
