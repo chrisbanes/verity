@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.smoke
 
+import java.io.File
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +30,7 @@ class DeviceLifecycle private constructor(
   suspend fun connect(): DeviceSession = DeviceSessionFactory.connect(
     platform = platform,
     deviceId = simulatorUdid,
-    disableAnimations = platform != Platform.IOS,
+    disableAnimations = false,
   )
 
   override fun close() {
@@ -52,8 +53,25 @@ class DeviceLifecycle private constructor(
   }
 
   companion object {
+    private val androidHome: File? by lazy {
+      val envHome = System.getenv("ANDROID_HOME")
+        ?: System.getenv("ANDROID_SDK_ROOT")
+      if (envHome != null) {
+        File(envHome)
+      } else {
+        val default = File(System.getProperty("user.home"), "Library/Android/sdk")
+        default.takeIf { it.isDirectory }
+      }
+    }
+
+    private fun adb(): String = androidHome?.resolve("platform-tools/adb")?.takeIf { it.canExecute() }?.absolutePath
+      ?: "adb"
+
+    private fun emulator(): String = androidHome?.resolve("emulator/emulator")?.takeIf { it.canExecute() }?.absolutePath
+      ?: "emulator"
+
     fun android(): DeviceLifecycle = DeviceLifecycle(
-      platform = Platform.ANDROID_TV,
+      platform = Platform.ANDROID_MOBILE,
       bootedByUs = false,
       processToKill = null,
       simulatorUdid = null,
@@ -76,7 +94,7 @@ class DeviceLifecycle private constructor(
       if (existingDevice != null) {
         existingDevice.close()
         return@withContext DeviceLifecycle(
-          platform = Platform.ANDROID_TV,
+          platform = Platform.ANDROID_MOBILE,
           bootedByUs = false,
           processToKill = null,
           simulatorUdid = null,
@@ -85,7 +103,7 @@ class DeviceLifecycle private constructor(
 
       val avdName = System.getProperty("verity.smoke.avd") ?: findFirstAvd()
       val process = ProcessBuilder(
-        "emulator",
+        emulator(),
         "-avd",
         avdName,
         "-no-window",
@@ -98,7 +116,7 @@ class DeviceLifecycle private constructor(
       }
 
       DeviceLifecycle(
-        platform = Platform.ANDROID_TV,
+        platform = Platform.ANDROID_MOBILE,
         bootedByUs = true,
         processToKill = process,
         simulatorUdid = null,
@@ -136,7 +154,7 @@ class DeviceLifecycle private constructor(
     }
 
     private fun findFirstAvd(): String {
-      val process = ProcessBuilder("emulator", "-list-avds")
+      val process = ProcessBuilder(emulator(), "-list-avds")
         .redirectErrorStream(true)
         .start()
       val output = process.inputStream.bufferedReader().readText()
@@ -149,7 +167,7 @@ class DeviceLifecycle private constructor(
     private suspend fun waitForAndroidBoot() {
       while (true) {
         val output = try {
-          val p = ProcessBuilder("adb", "shell", "getprop", "sys.boot_completed")
+          val p = ProcessBuilder(adb(), "shell", "getprop", "sys.boot_completed")
             .redirectErrorStream(true)
             .start()
           p.inputStream.bufferedReader().readText().trim()

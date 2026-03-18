@@ -1,6 +1,6 @@
 name: Android Settings smoke
 app: com.android.settings
-platform: android-tv
+platform: android
 steps:
-  - Press d-pad down
-  - "[?] Network"
+  - Tap Network & internet
+  - "[?] Internet"

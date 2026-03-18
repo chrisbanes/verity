@@ -12,7 +12,7 @@ class JourneyLoadTest {
     val url = javaClass.classLoader.getResource("android-settings.journey.yaml")!!
     val journey = JourneyLoader.fromFile(java.io.File(url.toURI()))
     assertThat(journey.name).isEqualTo("Android Settings smoke")
-    assertThat(journey.platform).isEqualTo(Platform.ANDROID_TV)
+    assertThat(journey.platform).isEqualTo(Platform.ANDROID_MOBILE)
   }
 
   @Test

@@ -102,7 +102,7 @@ object DeviceSessionFactory {
       resolveIosDeviceId(deviceId),
     )
     val driver = IOSDriver(iosDevice)
-    val maestro = Maestro.ios(driver)
+    val maestro = Maestro.ios(driver, openDriver = false)
     return IosDeviceSession(maestro, iosDevice)
   }
 

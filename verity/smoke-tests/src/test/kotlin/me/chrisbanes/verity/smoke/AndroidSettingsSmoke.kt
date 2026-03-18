@@ -44,7 +44,9 @@ class AndroidSettingsSmoke {
       session = session,
       navigatorFactory = {
         NavigatorAgent("unused") { _ ->
-          FakeTextAgent { error("fast path: navigator should not be called") }
+          FakeTextAgent { _ ->
+            "appId: com.android.settings\n---\n- tapOn: \"Network & internet\""
+          }
         }
       },
       inspectorFactory = {
