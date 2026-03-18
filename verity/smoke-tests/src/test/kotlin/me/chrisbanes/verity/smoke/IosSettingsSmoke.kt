@@ -50,7 +50,7 @@ class IosSettingsSmoke {
       navigatorFactory = {
         NavigatorAgent("unused") { _ ->
           FakeTextAgent { _ ->
-            "appId: com.apple.Preferences\n---\n- tapOn: General"
+            "appId: com.apple.Preferences\n---\n- launchApp\n- tapOn: General"
           }
         }
       },

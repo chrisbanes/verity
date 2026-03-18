@@ -45,7 +45,7 @@ class AndroidSettingsSmoke {
       navigatorFactory = {
         NavigatorAgent("unused") { _ ->
           FakeTextAgent { _ ->
-            "appId: com.android.settings\n---\n- tapOn: \"Network & internet\""
+            "appId: com.android.settings\n---\n- launchApp\n- tapOn: \"Network & internet\""
           }
         }
       },
@@ -58,6 +58,8 @@ class AndroidSettingsSmoke {
     )
 
     val result = orchestrator.run(journey)
-    assertThat(result.passed).isTrue()
+    val failedSegment = result.segments.firstOrNull { !it.passed }
+    assertThat(result.passed, "segment ${failedSegment?.index} failed: ${failedSegment?.reasoning}")
+      .isTrue()
   }
 }
