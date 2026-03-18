@@ -1,0 +1,6 @@
+name: Android Settings smoke
+app: com.android.settings
+platform: android-tv
+steps:
+  - Press d-pad down
+  - "[?] Network"
