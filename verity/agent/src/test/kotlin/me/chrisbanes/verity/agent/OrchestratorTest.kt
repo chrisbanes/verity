@@ -124,7 +124,7 @@ class OrchestratorTest {
       app = "com.example.app",
       platform = Platform.ANDROID_MOBILE,
       steps = listOf(
-        JourneyStep.Loop(action = "scroll down", until = "Settings", max = 2),
+        JourneyStep.Loop(action = "navigate to settings page", until = "Settings", max = 2),
       ),
     )
 
@@ -132,7 +132,7 @@ class OrchestratorTest {
 
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows).isEqualTo(listOf("appId: com.example.app\n---\n- swipe"))
-    assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate a Maestro YAML flow for these actions:\n1. scroll down")
+    assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate a Maestro YAML flow for these actions:\n1. navigate to settings page")
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
   }
 
@@ -187,6 +187,20 @@ class OrchestratorTest {
 
     assertThat(result.passed).isFalse()
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Home' is not visible")
+  }
+
+  @Test
+  fun `classifies tap instruction as fast path on mobile`() {
+    val actions = listOf("tap Settings")
+    val isFastPath = Orchestrator.isFastPath(actions, Platform.ANDROID_MOBILE)
+    assertThat(isFastPath).isTrue()
+  }
+
+  @Test
+  fun `classifies scroll instruction as fast path on mobile`() {
+    val actions = listOf("scroll down", "tap OK")
+    val isFastPath = Orchestrator.isFastPath(actions, Platform.ANDROID_MOBILE)
+    assertThat(isFastPath).isTrue()
   }
 
   private class FakeDeviceSession(

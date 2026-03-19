@@ -5,8 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
-import me.chrisbanes.verity.core.keymap.PlatformKeyMapper
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.InspectionVerdict
@@ -93,13 +93,13 @@ class Orchestrator(
   }
 
   private suspend fun executeFastPath(instructions: List<String>, platform: Platform) {
-    val mapper = PlatformKeyMapper.forPlatform(platform)
+    val mapper = InteractionMapper.forPlatform(platform)
+    val executor = InteractionExecutor(session)
     for (instruction in instructions) {
-      val keyName = checkNotNull(mapper.map(instruction)) {
-        "Fast-path instruction '$instruction' did not map to a key for $platform"
+      val interaction = checkNotNull(mapper.map(instruction)) {
+        "Fast-path instruction '$instruction' did not map to an interaction for $platform"
       }
-      session.pressKey(keyName)
-      session.waitForAnimationToEnd()
+      executor.execute(interaction)
     }
   }
 
@@ -121,12 +121,12 @@ class Orchestrator(
     platform: Platform,
     navigator: NavigatorAgent,
   ): LoopResult {
-    val mapper = PlatformKeyMapper.forPlatform(platform)
-    val keyName = mapper.map(action)
+    val mapper = InteractionMapper.forPlatform(platform)
+    val executor = InteractionExecutor(session)
+    val interaction = mapper.map(action)
     var actionsExecuted = 0
 
     repeat(max) {
-      // Check exit condition (deterministic first)
       if (session.containsText(until)) {
         return LoopResult(
           satisfied = true,
@@ -135,10 +135,8 @@ class Orchestrator(
         )
       }
 
-      // Execute action
-      if (keyName != null) {
-        session.pressKey(keyName)
-        session.waitForAnimationToEnd()
+      if (interaction != null) {
+        executor.execute(interaction)
         actionsExecuted += 1
       } else {
         val flowResult = executeSlowPath(listOf(action), appId, platform, navigator)
@@ -212,7 +210,7 @@ class Orchestrator(
 
   companion object {
     fun isFastPath(instructions: List<String>, platform: Platform): Boolean {
-      val mapper = PlatformKeyMapper.forPlatform(platform)
+      val mapper = InteractionMapper.forPlatform(platform)
       return mapper.allMappable(instructions)
     }
   }
