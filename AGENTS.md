@@ -64,6 +64,7 @@ Tasks are only complete once `./gradlew check` is green.
 ## Git
 
 - Do not add `Co-Authored-By` or other agent/bot trailers to commit messages. The human author is the sole commit author.
+- Do not append agent-generated footers, badges, or attributions to PR descriptions. Write only the content relevant to the change.
 
 ## Harness
 
