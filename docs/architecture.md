@@ -1,6 +1,4 @@
-# Verity: LLM-Powered E2E Testing for Mobile and TV
-
-## What Verity Is
+# Verity Architecture
 
 Verity is a Kotlin/JVM tool that combines device automation (Maestro SDK) with LLM reasoning (via Koog) to run end-to-end journey tests on Android TV, Android mobile, and iOS devices. It operates in two modes:
 
@@ -11,15 +9,13 @@ LLMs serve two purposes: flow generation (turning English into Maestro YAML) and
 
 ---
 
-## Architecture
+## Module Dependency Graph
 
 ```
 :verity:core  <── :verity:device  <── :verity:agent  <── :verity:cli
                         ^                                      |
                    :verity:mcp  <──────────────────────────────┘
 ```
-
-### Module Responsibilities
 
 | Module | Depends on | Purpose |
 |--------|-----------|---------|
@@ -28,65 +24,9 @@ LLMs serve two purposes: flow generation (turning English into Maestro YAML) and
 | `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 12 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
+| `:verity:smoke-tests` | `:verity:cli` | Device smoke tests (Android emulator) |
 
 **Key rule:** `:verity:mcp` does not depend on `:verity:agent`. The MCP server exposes raw device capabilities — the external AI agent provides the intelligence.
-
-### Project Structure
-
-```
-verity/
-├── build.gradle.kts
-├── settings.gradle.kts
-│
-└── verity/
-    ├── build.gradle.kts          # Shared config for submodules
-    ├── core/
-    │   └── src/main/kotlin/
-    │       ├── model/            # Journey, JourneyStep, AssertMode, VerityResult
-    │       ├── journey/          # JourneyLoader, JourneySegmenter
-    │       ├── parser/           # JourneyStepSerializer, inferrers
-    │       ├── keymap/           # PlatformKeyMapper interface + implementations
-    │       ├── hierarchy/        # HierarchyRenderer, HierarchyFilter
-    │       └── context/          # ContextLoader
-    │
-    ├── device/
-    │   └── src/main/kotlin/
-    │       ├── DeviceSession.kt
-    │       ├── DeviceSessionFactory.kt
-    │       ├── android/          # AndroidDeviceSession (Dadb + Maestro gRPC)
-    │       └── ios/              # IosDeviceSession (Maestro XCTest HTTP)
-    │
-    ├── agent/
-    │   └── src/main/kotlin/
-    │       ├── Models.kt
-    │       ├── NavigatorAgent.kt
-    │       ├── InspectorAgent.kt
-    │       └── Orchestrator.kt
-    │
-    ├── cli/
-    │   └── src/main/kotlin/
-    │       ├── Verity.kt         # Clikt root command
-    │       ├── RunCommand.kt
-    │       ├── ListCommand.kt
-    │       └── McpCommand.kt
-    │
-    ├── mcp/
-    │   └── src/main/kotlin/
-    │       ├── VerityMcpServer.kt
-    │       ├── McpDeviceSessionManager.kt
-    │       └── McpHierarchySnapshotStore.kt
-    │
-    └── skills/                   # Not a Gradle module — markdown only
-        ├── context/
-        │   ├── procedures.md
-        │   ├── app.md
-        │   ├── tv-controls.md
-        │   └── maestro.md
-        ├── run/
-        │   └── SKILL.md
-        └── author/
-            └── SKILL.md
-```
 
 ---
 
@@ -157,7 +97,7 @@ Steps are parsed through a 5-stage priority chain:
 ### Assert Mode Inference
 
 The `AssertModeInferrer` selects the cheapest sufficient mode:
-- Contains visual keywords (color, highlight, image, icon, animation, gradient, blur) → `VISUAL`
+- Contains visual keywords (color, colour, highlight, image, icon, animation, gradient, blur, backdrop, thumbnail, poster, artwork, badge, logo, overlay, opacity, shadow, border) → `VISUAL`
 - 3 words or fewer, no visual keywords → `VISIBLE`
 - Everything else → `TREE`
 
@@ -218,12 +158,20 @@ interface DeviceSession : AutoCloseable {
 
     suspend fun executeFlow(yaml: String): FlowResult
     suspend fun pressKey(keyName: String)
-    suspend fun captureHierarchy(filter: HierarchyFilter = CONTENT): String
-    suspend fun captureScreenshot(outputFile: File)
-    suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean
-    suspend fun checkFocused(text: String): Boolean
+    suspend fun captureHierarchyTree(): HierarchyNode          // abstract
+    suspend fun captureScreenshot(output: Path)
     suspend fun shell(command: String): String
     suspend fun waitForAnimationToEnd()
+
+    // Default methods (derived from captureHierarchyTree)
+    suspend fun captureHierarchy(filter: HierarchyFilter = CONTENT): String
+    suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean
+    suspend fun checkFocused(text: String): Boolean
+
+    // Animation control (no-op defaults, implemented by Android)
+    suspend fun getAnimationState(): AnimationState? = null
+    suspend fun disableAnimations()
+    suspend fun restoreAnimationState(state: AnimationState)
 }
 ```
 
@@ -245,7 +193,7 @@ object DeviceSessionFactory {
 }
 ```
 
-Auto-discovers the device if no ID is given. Saves animation scales on connect, restores on close.
+Auto-discovers the device if no ID is given. When `disableAnimations` is true, wraps the session in an `AnimationRestoringSession` decorator that saves scales on connect and restores on close.
 
 ### Hierarchy Rendering
 
@@ -309,9 +257,9 @@ System prompt instructs: generate only valid Maestro YAML, no explanation, add `
 
 ### InspectorAgent
 
-Evaluates assertions against screen state:
-- `evaluateTree(hierarchy, assertion)` — text-only, Sonnet-class model
-- `evaluateVisual(screenshot, assertion)` — vision-enabled, Sonnet-class model
+Evaluates assertions against screen state using constructor-injected agent factories (no internal model selection):
+- `evaluateTree(hierarchy, assertion)` — text-only evaluation
+- `evaluateVisual(screenshotPath, assertion)` — vision-enabled evaluation
 
 Returns `InspectionVerdict(passed: Boolean, reasoning: String)`. Lenient JSON parsing with code fence stripping.
 
@@ -332,7 +280,7 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 | TREE | `InspectorAgent.evaluateTree()` | Medium |
 | VISUAL | `InspectorAgent.evaluateVisual()` | High |
 
-**Context Optimization:** By isolating each segment's reasoning into sequential subagent calls, Verity supports extremely long journeys that would otherwise exceed model context limits or cause "context drift" where early steps confuse later reasoning.
+**Context Optimization:** By isolating each segment's reasoning into sequential subagent calls, Verity supports extremely long journeys that would otherwise exceed model context limits or cause "context drift" where the model conflates different parts of a long journey.
 
 ---
 
@@ -349,10 +297,10 @@ Thread-safe registry of persistent device connections:
 
 ```
 sessions: Map<UUID, SessionEntry>
-SessionEntry = { platform, DeviceSession, Mutex, lastUsedAt, savedAnimationScales }
+SessionEntry = { deviceId, DeviceSession, Mutex, lastUsedAt }
 ```
 
-Per-session mutex for safe concurrent tool calls. Animation scales saved on open, restored on close.
+Per-session mutex for safe concurrent tool calls. Animation state is managed by the `AnimationRestoringSession` decorator in `DeviceSessionFactory`, not by the session manager.
 
 ### Snapshot Store
 
@@ -366,7 +314,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 
 | Tool | Required params | Returns | Notes |
 |------|----------------|---------|-------|
-| `open_session` | — | session_id, device info | Optional: platform, device, disable_animations |
+| `open_session` | platform | session_id, device info | Optional: device, disable_animations |
 | `close_session` | session_id | confirmation | Restores animations if disabled |
 | `list_journeys` | — | formatted list | Optional: path |
 | `load_journey` | path | parsed steps | |
@@ -396,47 +344,16 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 ```
 --device <id>            Device ID or IP:port (auto-discover if omitted)
 --platform <platform>    android-tv | android | ios (default: android-tv)
---no-animations          Disable device animations during run
+--provider <name>        LLM provider (anthropic, openai, google, etc.)
+--navigator-model <id>   Model for flow generation (cheap tier)
+--inspector-model <id>   Model for assertion evaluation (capable tier)
 --api-key <key>          LLM API key (or ANTHROPIC_API_KEY env var)
 --context-path <dir>     Optional path to additional context markdown files
+--no-animations          Disable device animations during run
+--no-bundled-context     Skip bundled context resources
 ```
 
----
-
-## Skills
-
-### Shared Procedures (context/procedures.md)
-
-1. **Prerequisites** — device precheck, `open_session` with platform + disable_animations, optionally `get_context` for app-specific details
-2. **Flow generation** — agent generates Maestro YAML from bundled Maestro/platform defaults plus optional injected context; calls `capture_hierarchy` first if current state matters
-3. **Step classification** — static (key presses, batchable into one `run_flow`) vs. loop (overshoot-and-correct)
-4. **Assertion evaluation** — `check_visible`/`check_focused` (free) before `capture_hierarchy` + LLM reasoning before `capture_screenshot` + LLM vision
-5. **Cleanup** — always `close_session`
-
-### verity-run
-
-Non-interactive journey execution:
-1. Resolve journey (path argument or pick from `list_journeys`)
-2. Announce plan — name, app, platform, segment count, assertion breakdown; confirm
-3. Execute segments — classify steps, batch static actions, overshoot-and-correct for loops, evaluate assertions
-4. On failure — show error, ask to continue or stop
-5. Final report — markdown table + narrative summary
-
-### verity-author
-
-Interactive journey creation from a live device:
-1. Open session, screenshot + hierarchy, confirm starting point
-2. Get journey name, app ID, goal
-3. Step loop — suggest next step from screen state, suggest cheapest assertion mode, ask what's next
-4. Review complete YAML, allow edits
-5. Write file, offer to run with verity-run
-
-### Deferred Skills
-
-- **verity-debug**: Step-through with screenshots and confirmation at each step
-- **verity-audit**: Content quality crawling with subagents
-
-Both can be added without modifying any Gradle module.
+The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--port` (default: 8080) for HTTP transport.
 
 ---
 
@@ -510,21 +427,3 @@ VerityMcpServer
 6. **Platform abstraction**: One `DeviceSession` interface, platform-specific implementations. Core logic (parsing, segmentation, key mapping) is platform-aware but SDK-free.
 
 7. **Dual mode from one core**: The same device and core layers serve both autonomous CLI execution and interactive MCP-driven workflows. Author interactively, run in CI.
-
----
-
-## Deliberate Omissions
-
-Features considered but excluded to keep the design lean:
-
-| Omission | Rationale |
-|----------|-----------|
-| LLM-based assertion mode planner | Deterministic inference is sufficient; adding an LLM call to decide whether to use an LLM adds cost without clear benefit |
-| Assertion mode selection policy | Only needed alongside an LLM planner |
-| Visual assertion budget tracking | Unnecessary complexity — journey authors can pin modes explicitly |
-| `diff_hierarchy` MCP tool | Nice-to-have; not needed by the run or author skills |
-| Separate `save_screenshot` tool | Merged into `capture_screenshot` with a `save_to_file` param |
-| Separate `capture_focused_tree` tool | Merged into `capture_hierarchy` with `filter=focus` param |
-| Explicit loop block syntax in YAML | NL inference handles loops cleanly |
-| verity-debug skill | Deferred — add once run and author are stable |
-| verity-audit skill | Deferred — add once run and author are stable |
