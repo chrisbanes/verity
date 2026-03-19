@@ -12,14 +12,9 @@ import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.device.DeviceSession
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Tag
 
 @Tag("ios")
-@Disabled(
-  "SimctlIOSDevice in Maestro 2.3.0 is a stub — most methods are TODO(). " +
-    "iOS smoke tests require a Maestro upgrade or alternative device implementation.",
-)
 class IosSettingsSmoke {
   companion object {
     private lateinit var lifecycle: DeviceLifecycle
@@ -63,6 +58,8 @@ class IosSettingsSmoke {
     )
 
     val result = orchestrator.run(journey)
-    assertThat(result.passed).isTrue()
+    val failedSegment = result.segments.firstOrNull { !it.passed }
+    assertThat(result.passed, "segment ${failedSegment?.index} failed: ${failedSegment?.reasoning}")
+      .isTrue()
   }
 }
