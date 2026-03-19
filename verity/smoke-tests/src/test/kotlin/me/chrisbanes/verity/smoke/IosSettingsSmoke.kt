@@ -30,8 +30,11 @@ class IosSettingsSmoke {
     @AfterAll
     @JvmStatic
     fun shutdown() {
-      if (::session.isInitialized) session.close()
-      if (::lifecycle.isInitialized) lifecycle.close()
+      try {
+        if (::session.isInitialized) session.close()
+      } finally {
+        if (::lifecycle.isInitialized) lifecycle.close()
+      }
     }
   }
 

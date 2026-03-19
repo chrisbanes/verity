@@ -16,10 +16,6 @@ configurations.all {
     force("io.grpc:grpc-netty-shaded:$maestroGrpcVersion")
     force("io.grpc:grpc-stub:$maestroGrpcVersion")
     force("io.grpc:grpc-protobuf:$maestroGrpcVersion")
-    force("io.grpc:grpc-protobuf-lite:$maestroGrpcVersion")
-    force("io.grpc:grpc-core:$maestroGrpcVersion")
-    force("io.grpc:grpc-api:$maestroGrpcVersion")
-    force("io.grpc:grpc-context:$maestroGrpcVersion")
   }
 }
 

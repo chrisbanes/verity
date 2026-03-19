@@ -82,6 +82,10 @@ jobs:
           sys.exit(1)
           PYTHON
           UDID=$(xcrun simctl list devices available -j | python3 /tmp/find_sim.py)
+          if [ -z "$UDID" ]; then
+            echo "No available iOS simulator found" >&2
+            exit 1
+          fi
           xcrun simctl boot "$UDID"
           xcrun simctl bootstatus "$UDID" -b
           echo "UDID=$UDID" >> "$GITHUB_ENV"
