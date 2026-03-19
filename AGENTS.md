@@ -65,6 +65,10 @@ Tasks are only complete once `./gradlew check` is green.
 
 - Do not add `Co-Authored-By` or other agent/bot trailers to commit messages. The human author is the sole commit author.
 
+## Architecture
+
+- `docs/architecture.md` is the architecture reference. When you add, remove, or change modules, interfaces, CLI options, MCP tools, or data models, update the architecture doc to match.
+
 ## Harness
 
 - Prefer fd to grep
