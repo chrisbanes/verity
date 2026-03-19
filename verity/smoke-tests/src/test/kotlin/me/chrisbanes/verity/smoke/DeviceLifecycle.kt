@@ -113,8 +113,13 @@ class DeviceLifecycle private constructor(
         .redirectOutput(ProcessBuilder.Redirect.DISCARD)
         .start()
 
-      withTimeout(3.minutes) {
-        waitForAndroidBoot()
+      try {
+        withTimeout(3.minutes) {
+          waitForAndroidBoot()
+        }
+      } catch (e: Exception) {
+        process.destroyForcibly()
+        throw e
       }
 
       DeviceLifecycle(
@@ -144,8 +149,16 @@ class DeviceLifecycle private constructor(
       val bootOutput = bootProcess.inputStream.bufferedReader().readText()
       check(bootProcess.waitFor() == 0) { "xcrun simctl boot $udid failed: $bootOutput" }
 
-      withTimeout(2.minutes) {
-        waitForIosBoot(udid)
+      try {
+        withTimeout(2.minutes) {
+          waitForIosBoot(udid)
+        }
+      } catch (e: Exception) {
+        ProcessBuilder("xcrun", "simctl", "shutdown", udid)
+          .redirectErrorStream(true)
+          .start()
+          .waitFor()
+        throw e
       }
 
       DeviceLifecycle(

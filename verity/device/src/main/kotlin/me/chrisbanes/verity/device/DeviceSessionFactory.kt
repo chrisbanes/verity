@@ -3,6 +3,8 @@ package me.chrisbanes.verity.device
 import dadb.Dadb
 import dadb.adbserver.AdbServer
 import device.SimctlIOSDevice
+import ios.LocalIOSDevice
+import ios.xctest.XCTestIOSDevice
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -19,6 +21,10 @@ import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.ios.IosDeviceSession
+import util.IOSDeviceType
+import xcuitest.XCTestDriverClient
+import xcuitest.installer.Context
+import xcuitest.installer.LocalXCTestInstaller
 
 /**
  * Creates [DeviceSession] instances with auto-discovery and animation management.
@@ -98,13 +104,35 @@ object DeviceSessionFactory {
   }
 
   private suspend fun connectIos(deviceId: String?): DeviceSession {
-    val iosDevice = SimctlIOSDevice(
-      resolveIosDeviceId(deviceId),
+    val resolvedId = resolveIosDeviceId(deviceId)
+    val simctlDevice = SimctlIOSDevice(resolvedId)
+
+    val installer = LocalXCTestInstaller(
+      deviceId = resolvedId,
+      deviceType = IOSDeviceType.SIMULATOR,
+      defaultPort = 22087,
+      iOSDriverConfig = LocalXCTestInstaller.IOSDriverConfig(
+        prebuiltRunner = true,
+        sourceDirectory = "driver-iPhoneSimulator",
+        context = Context.CLI,
+        snapshotKeyHonorModalViews = null,
+      ),
+      deviceController = simctlDevice,
     )
+    val driverClient = XCTestDriverClient(installer)
+    val xcTestDevice = XCTestIOSDevice(
+      deviceId = resolvedId,
+      client = driverClient,
+      getInstalledApps = { emptySet() },
+    )
+    val iosDevice = LocalIOSDevice(
+      deviceId = resolvedId,
+      xcTestDevice = xcTestDevice,
+      deviceController = simctlDevice,
+    )
+
     val driver = IOSDriver(iosDevice)
-    // openDriver = false: SimctlIOSDevice.open() in Maestro 2.3.0 is a TODO() stub.
-    // Remove this once Maestro ships a working SimctlIOSDevice implementation.
-    val maestro = Maestro.ios(driver, openDriver = false)
+    val maestro = Maestro.ios(driver, openDriver = true)
     return IosDeviceSession(maestro, iosDevice)
   }
 

@@ -16,31 +16,19 @@ configurations.all {
     force("io.grpc:grpc-netty-shaded:$maestroGrpcVersion")
     force("io.grpc:grpc-stub:$maestroGrpcVersion")
     force("io.grpc:grpc-protobuf:$maestroGrpcVersion")
-    force("io.grpc:grpc-protobuf-lite:$maestroGrpcVersion")
-    force("io.grpc:grpc-core:$maestroGrpcVersion")
-    force("io.grpc:grpc-api:$maestroGrpcVersion")
-    force("io.grpc:grpc-context:$maestroGrpcVersion")
   }
 }
 
 tasks.test {
   // Excluded from ./gradlew check by default.
-  // Run explicitly: ./gradlew :verity:smoke-tests:smokeTest -Dinclude.tags=android
-  //            or:  ./gradlew :verity:smoke-tests:smokeTest -Dinclude.tags=ios
-  enabled = false
-}
-
-tasks.register<Test>("smokeTest") {
-  description = "Run device smoke tests (requires a running emulator or simulator)"
-  group = "verification"
-
+  // Run explicitly: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android
+  //            or:  ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios
+  val includeTags = providers.gradleProperty("include.tags")
   useJUnitPlatform {
-    val tags = System.getProperty("include.tags")
+    val tags = includeTags.orNull
     if (tags != null) {
       includeTags(tags)
     }
   }
-
-  testClassesDirs = sourceSets.test.get().output.classesDirs
-  classpath = sourceSets.test.get().runtimeClasspath
+  onlyIf { includeTags.isPresent }
 }
