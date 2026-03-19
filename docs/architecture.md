@@ -24,6 +24,7 @@ LLMs serve two purposes: flow generation (turning English into Maestro YAML) and
 | `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 12 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
+| `:verity:smoke-tests` | `:verity:cli` | Device smoke tests (Android emulator) |
 
 **Key rule:** `:verity:mcp` does not depend on `:verity:agent`. The MCP server exposes raw device capabilities — the external AI agent provides the intelligence.
 
@@ -96,7 +97,7 @@ Steps are parsed through a 5-stage priority chain:
 ### Assert Mode Inference
 
 The `AssertModeInferrer` selects the cheapest sufficient mode:
-- Contains visual keywords (color, highlight, image, icon, animation, gradient, blur) → `VISUAL`
+- Contains visual keywords (color, colour, highlight, image, icon, animation, gradient, blur, backdrop, thumbnail, poster, artwork, badge, logo, overlay, opacity, shadow, border) → `VISUAL`
 - 3 words or fewer, no visual keywords → `VISIBLE`
 - Everything else → `TREE`
 
@@ -157,12 +158,20 @@ interface DeviceSession : AutoCloseable {
 
     suspend fun executeFlow(yaml: String): FlowResult
     suspend fun pressKey(keyName: String)
-    suspend fun captureHierarchy(filter: HierarchyFilter = CONTENT): String
-    suspend fun captureScreenshot(outputFile: File)
-    suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean
-    suspend fun checkFocused(text: String): Boolean
+    suspend fun captureHierarchyTree(): HierarchyNode          // abstract
+    suspend fun captureScreenshot(output: Path)
     suspend fun shell(command: String): String
     suspend fun waitForAnimationToEnd()
+
+    // Default methods (derived from captureHierarchyTree)
+    suspend fun captureHierarchy(filter: HierarchyFilter = CONTENT): String
+    suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean
+    suspend fun checkFocused(text: String): Boolean
+
+    // Animation control (no-op defaults, implemented by Android)
+    suspend fun getAnimationState(): AnimationState? = null
+    suspend fun disableAnimations()
+    suspend fun restoreAnimationState(state: AnimationState)
 }
 ```
 
@@ -184,7 +193,7 @@ object DeviceSessionFactory {
 }
 ```
 
-Auto-discovers the device if no ID is given. Saves animation scales on connect, restores on close.
+Auto-discovers the device if no ID is given. When `disableAnimations` is true, wraps the session in an `AnimationRestoringSession` decorator that saves scales on connect and restores on close.
 
 ### Hierarchy Rendering
 
@@ -248,9 +257,9 @@ System prompt instructs: generate only valid Maestro YAML, no explanation, add `
 
 ### InspectorAgent
 
-Evaluates assertions against screen state:
-- `evaluateTree(hierarchy, assertion)` — text-only, Sonnet-class model
-- `evaluateVisual(screenshot, assertion)` — vision-enabled, Sonnet-class model
+Evaluates assertions against screen state using constructor-injected agent factories (no internal model selection):
+- `evaluateTree(hierarchy, assertion)` — text-only evaluation
+- `evaluateVisual(screenshotPath, assertion)` — vision-enabled evaluation
 
 Returns `InspectionVerdict(passed: Boolean, reasoning: String)`. Lenient JSON parsing with code fence stripping.
 
@@ -288,10 +297,10 @@ Thread-safe registry of persistent device connections:
 
 ```
 sessions: Map<UUID, SessionEntry>
-SessionEntry = { platform, DeviceSession, Mutex, lastUsedAt, savedAnimationScales }
+SessionEntry = { deviceId, DeviceSession, Mutex, lastUsedAt }
 ```
 
-Per-session mutex for safe concurrent tool calls. Animation scales saved on open, restored on close.
+Per-session mutex for safe concurrent tool calls. Animation state is managed by the `AnimationRestoringSession` decorator in `DeviceSessionFactory`, not by the session manager.
 
 ### Snapshot Store
 
@@ -305,7 +314,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 
 | Tool | Required params | Returns | Notes |
 |------|----------------|---------|-------|
-| `open_session` | — | session_id, device info | Optional: platform, device, disable_animations |
+| `open_session` | platform | session_id, device info | Optional: device, disable_animations |
 | `close_session` | session_id | confirmation | Restores animations if disabled |
 | `list_journeys` | — | formatted list | Optional: path |
 | `load_journey` | path | parsed steps | |
@@ -335,10 +344,16 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 ```
 --device <id>            Device ID or IP:port (auto-discover if omitted)
 --platform <platform>    android-tv | android | ios (default: android-tv)
---no-animations          Disable device animations during run
+--provider <name>        LLM provider (anthropic, openai, google, etc.)
+--navigator-model <id>   Model for flow generation (cheap tier)
+--inspector-model <id>   Model for assertion evaluation (capable tier)
 --api-key <key>          LLM API key (or ANTHROPIC_API_KEY env var)
 --context-path <dir>     Optional path to additional context markdown files
+--no-animations          Disable device animations during run
+--no-bundled-context     Skip bundled context resources
 ```
+
+The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--port` (default: 8080) for HTTP transport.
 
 ---
 
