@@ -3,6 +3,7 @@ package me.chrisbanes.verity.agent
 import ai.koog.agents.core.agent.AIAgent
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.model.Platform
 
 /**
@@ -39,6 +40,29 @@ class NavigatorAgent(
     return try {
       val response = agent.run(userMessage)
       cleanResponse(response)
+    } finally {
+      withContext(NonCancellable) { agent.close() }
+    }
+  }
+
+  /**
+   * Ask the LLM which direction to scroll to find a target element.
+   *
+   * @param target The text or ID of the element to find
+   * @param hierarchy The current accessibility tree as rendered text
+   * @return The suggested scroll direction, or null if the LLM believes scrolling won't help
+   */
+  suspend fun suggestScrollDirection(target: String, hierarchy: String): Direction? {
+    val systemPrompt =
+      "You are helping find a UI element that isn't currently visible on screen. " +
+        "Given the current accessibility tree and a target element, suggest which direction to scroll " +
+        "(UP, DOWN, LEFT, or RIGHT) to find it. Respond with ONLY the direction word, or NONE if you believe " +
+        "the element cannot be found by scrolling."
+    val userMessage = "Target: $target\n\nCurrent screen:\n$hierarchy"
+    val agent = agentFactory(systemPrompt)
+    return try {
+      val response = agent.run(userMessage).trim().uppercase()
+      Direction.entries.firstOrNull { it.name == response }
     } finally {
       withContext(NonCancellable) { agent.close() }
     }

@@ -203,6 +203,97 @@ class OrchestratorTest {
     assertThat(isFastPath).isTrue()
   }
 
+  @Test
+  fun `fast path taps directly when target is visible`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(true)), // target is visible
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("should not be called") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "tap-visible",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+  }
+
+  @Test
+  fun `fast path scrolls to find off-screen target then taps`() = runTest {
+    // First containsText: not visible. After scroll: visible.
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(false, true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { _ ->
+          FakeTextAgent { "DOWN" }
+        }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "scroll-to-find",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    // Should have executed a scroll flow + a tap flow
+    assertThat(session.executedFlows.size).isEqualTo(2)
+  }
+
+  @Test
+  fun `fast path executes non-targeted interaction without tree check`() = runTest {
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("should not be called") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "scroll-no-check",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "scroll down")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    assertThat(session.executedFlows.size).isEqualTo(1)
+  }
+
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
   ) : DeviceSession {

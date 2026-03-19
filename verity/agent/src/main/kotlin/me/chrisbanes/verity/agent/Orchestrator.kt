@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.model.AssertMode
@@ -54,7 +55,7 @@ class Orchestrator(
     if (segment.actions.isNotEmpty()) {
       val instructions = segment.actions.map { it.instruction }
       if (isFastPath(instructions, platform)) {
-        executeFastPath(instructions, platform)
+        executeFastPath(instructions, platform, navigator)
       } else {
         val flowResult = executeSlowPath(instructions, appId, platform, navigator)
         if (!flowResult.success) {
@@ -92,15 +93,62 @@ class Orchestrator(
     return SegmentResult(index = segment.index, passed = true)
   }
 
-  private suspend fun executeFastPath(instructions: List<String>, platform: Platform) {
+  private suspend fun executeFastPath(
+    instructions: List<String>,
+    platform: Platform,
+    navigator: NavigatorAgent,
+  ) {
     val mapper = InteractionMapper.forPlatform(platform)
-    val executor = InteractionExecutor(session)
     for (instruction in instructions) {
       val interaction = checkNotNull(mapper.map(instruction)) {
         "Fast-path instruction '$instruction' did not map to an interaction for $platform"
       }
-      executor.execute(interaction)
+      executeWithScrollToFind(interaction, navigator)
     }
+  }
+
+  private suspend fun executeWithScrollToFind(
+    interaction: Interaction,
+    navigator: NavigatorAgent,
+  ) {
+    val executor = InteractionExecutor(session)
+
+    // For interactions that don't target a named element, just execute directly
+    val targetText = when (interaction) {
+      is Interaction.TapOnText -> interaction.text
+
+      is Interaction.TapOnId -> interaction.resourceId
+
+      is Interaction.LongPressOnText -> interaction.text
+
+      else -> {
+        executor.execute(interaction)
+        return
+      }
+    }
+
+    // Check if target is already on screen
+    if (session.containsText(targetText)) {
+      executor.execute(interaction)
+      return
+    }
+
+    // Scroll-to-find loop (max 5 attempts)
+    repeat(5) {
+      val hierarchy = session.captureHierarchy()
+      val direction = navigator.suggestScrollDirection(targetText, hierarchy)
+        ?: return@repeat // LLM gave up
+
+      executor.execute(Interaction.Scroll(direction))
+
+      if (session.containsText(targetText)) {
+        executor.execute(interaction)
+        return
+      }
+    }
+
+    // Fall through: execute anyway (Maestro may find it via its own matching)
+    executor.execute(interaction)
   }
 
   private suspend fun executeSlowPath(
