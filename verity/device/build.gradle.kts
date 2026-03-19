@@ -16,6 +16,7 @@ dependencies {
 
   // iOS device
   implementation(libs.maestro.ios.driver)
+  implementation(libs.maestro.ios)
 
   // gRPC with shaded Netty to avoid Ktor conflict
   implementation(libs.grpc.netty.shaded)
