@@ -113,7 +113,7 @@ object DeviceSessionFactory {
       defaultPort = 22087,
       iOSDriverConfig = LocalXCTestInstaller.IOSDriverConfig(
         prebuiltRunner = true,
-        sourceDirectory = "",
+        sourceDirectory = "driver-iPhoneSimulator",
         context = Context.CLI,
         snapshotKeyHonorModalViews = null,
       ),
