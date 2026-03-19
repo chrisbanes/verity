@@ -82,6 +82,7 @@ jobs:
           sys.exit(1)
           ")
           xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
           echo "UDID=$UDID" >> "$GITHUB_ENV"
 
       - name: iOS smoke tests
