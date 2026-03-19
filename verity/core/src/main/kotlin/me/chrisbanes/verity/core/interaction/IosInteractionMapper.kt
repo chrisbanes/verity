@@ -1,11 +1,10 @@
 package me.chrisbanes.verity.core.interaction
 
-object AndroidMobileInteractionMapper : InteractionMapper {
+object IosInteractionMapper : InteractionMapper {
 
   private val KEY_MAP = mapOf(
-    "press back" to "back",
     "press home" to "home",
-    "press enter" to "enter",
+    "press lock" to "lock",
     "press volume up" to "volume up",
     "press volume down" to "volume down",
   )
