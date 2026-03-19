@@ -35,7 +35,7 @@ interface DeviceSession : AutoCloseable {
   /** Execute a Maestro YAML flow against the device. */
   suspend fun executeFlow(yaml: String): FlowResult
 
-  /** Press a single key by its platform key name (from PlatformKeyMapper). */
+  /** Press a single key by its platform key name. */
   suspend fun pressKey(keyName: String)
 
   /** Capture the accessibility tree as a [HierarchyNode]. */
