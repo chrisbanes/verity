@@ -1,6 +1,8 @@
 package me.chrisbanes.verity.agent
 
 import assertk.assertThat
+import assertk.assertions.containsExactly
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
@@ -292,6 +294,198 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows.size).isEqualTo(1)
+  }
+
+  @Test
+  fun `fast path tap generates correct tapOn Maestro flow`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "tap-flow-content",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    assertThat(session.executedFlows).containsExactly("- tapOn:\n    text: \"Settings\"")
+  }
+
+  @Test
+  fun `fast path scroll generates correct scroll Maestro flow`() = runTest {
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "scroll-flow-content",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "scroll down")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    assertThat(session.executedFlows).containsExactly("- scroll:\n    direction: DOWN")
+  }
+
+  @Test
+  fun `mixed mobile gestures all go through fast path without navigator`() = runTest {
+    val session = FakeDeviceSession(
+      // Two taps need containsText checks: "tap Settings" and "tap OK"
+      containsTextResults = ArrayDeque(listOf(true, true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "mixed-gestures",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(
+        JourneyStep.Action(instruction = "tap Settings"),
+        JourneyStep.Action(instruction = "scroll down"),
+        JourneyStep.Action(instruction = "press back"),
+        JourneyStep.Action(instruction = "tap OK"),
+      ),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    // tap Settings + scroll down + tap OK = 3 flows; press back uses pressKey, not executeFlow
+    assertThat(session.executedFlows).containsExactly(
+      "- tapOn:\n    text: \"Settings\"",
+      "- scroll:\n    direction: DOWN",
+      "- tapOn:\n    text: \"OK\"",
+    )
+  }
+
+  @Test
+  fun `scroll-to-find triggers when target not visible and generates scroll then tap flows`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(false, true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { _ ->
+          FakeTextAgent { "DOWN" }
+        }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "scroll-to-find-content",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    assertThat(session.executedFlows).containsExactly(
+      "- scroll:\n    direction: DOWN",
+      "- tapOn:\n    text: \"Settings\"",
+    )
+  }
+
+  @Test
+  fun `long press goes through fast path and generates longPressOn flow`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "long-press",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "long press Settings")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    assertThat(session.executedFlows).containsExactly("- longPressOn:\n    text: \"Settings\"")
+  }
+
+  @Test
+  fun `pull to refresh goes through fast path and generates scroll UP flow`() = runTest {
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val journey = Journey(
+      name = "pull-to-refresh",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action(instruction = "pull to refresh")),
+    )
+
+    val result = orchestrator.run(journey)
+    assertThat(result.passed).isTrue()
+    assertThat(session.executedFlows).containsExactly("- scroll:\n    direction: UP")
   }
 
   private class FakeDeviceSession(
