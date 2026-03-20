@@ -28,7 +28,8 @@ class DeviceLifecycle private constructor(
   private val simulatorUdid: String?,
 ) : AutoCloseable {
 
-  suspend fun connect(retries: Int = 2): DeviceSession {
+  suspend fun connect(retries: Int = if (platform == Platform.IOS) 2 else 1): DeviceSession {
+    require(retries >= 1) { "retries must be at least 1, but was $retries" }
     var lastException: Exception? = null
     repeat(retries) { attempt ->
       try {
