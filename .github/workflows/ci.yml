@@ -78,4 +78,6 @@ jobs:
           shutdown_after_job: true
 
       - name: iOS smoke tests
+        env:
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
         run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios
