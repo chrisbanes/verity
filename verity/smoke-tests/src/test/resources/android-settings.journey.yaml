@@ -4,3 +4,6 @@ platform: android
 steps:
   - Tap Network & internet
   - "[?] Internet"
+  - Press back
+  - Scroll down
+  - "[?] System"

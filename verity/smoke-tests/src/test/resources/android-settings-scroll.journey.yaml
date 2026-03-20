@@ -1,0 +1,7 @@
+name: Android Settings scroll smoke
+app: com.android.settings
+platform: android
+steps:
+  - Scroll down
+  - Scroll down
+  - Press back

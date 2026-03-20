@@ -5,8 +5,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
-import me.chrisbanes.verity.core.keymap.PlatformKeyMapper
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.InspectionVerdict
@@ -27,6 +28,10 @@ class Orchestrator(
   private val context: String = "",
 ) {
   suspend fun run(journey: Journey): JourneyResult {
+    // Launch the app before executing any segments.
+    // Use bare `- launchApp` which reads appId from the flow header.
+    session.executeFlow("appId: ${journey.app}\n---\n- launchApp")
+
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
 
@@ -54,7 +59,7 @@ class Orchestrator(
     if (segment.actions.isNotEmpty()) {
       val instructions = segment.actions.map { it.instruction }
       if (isFastPath(instructions, platform)) {
-        executeFastPath(instructions, platform)
+        executeFastPath(instructions, appId, platform, navigator)
       } else {
         val flowResult = executeSlowPath(instructions, appId, platform, navigator)
         if (!flowResult.success) {
@@ -92,15 +97,64 @@ class Orchestrator(
     return SegmentResult(index = segment.index, passed = true)
   }
 
-  private suspend fun executeFastPath(instructions: List<String>, platform: Platform) {
-    val mapper = PlatformKeyMapper.forPlatform(platform)
+  private suspend fun executeFastPath(
+    instructions: List<String>,
+    appId: String,
+    platform: Platform,
+    navigator: NavigatorAgent,
+  ) {
+    val mapper = InteractionMapper.forPlatform(platform)
     for (instruction in instructions) {
-      val keyName = checkNotNull(mapper.map(instruction)) {
-        "Fast-path instruction '$instruction' did not map to a key for $platform"
+      val interaction = checkNotNull(mapper.map(instruction)) {
+        "Fast-path instruction '$instruction' did not map to an interaction for $platform"
       }
-      session.pressKey(keyName)
-      session.waitForAnimationToEnd()
+      executeWithScrollToFind(interaction, appId, navigator)
     }
+  }
+
+  private suspend fun executeWithScrollToFind(
+    interaction: Interaction,
+    appId: String,
+    navigator: NavigatorAgent,
+  ) {
+    val executor = InteractionExecutor(session, appId)
+
+    // For interactions that don't target a named element, just execute directly
+    val targetText = when (interaction) {
+      is Interaction.TapOnText -> interaction.text
+
+      is Interaction.TapOnId -> interaction.resourceId
+
+      is Interaction.LongPressOnText -> interaction.text
+
+      else -> {
+        executor.execute(interaction)
+        return
+      }
+    }
+
+    // Check if target is already on screen
+    if (session.containsText(targetText)) {
+      executor.execute(interaction)
+      return
+    }
+
+    // Scroll-to-find loop (max 5 attempts)
+    repeat(5) {
+      val hierarchy = session.captureHierarchy()
+      val direction = navigator.suggestScrollDirection(targetText, hierarchy)
+        ?: return@repeat // LLM gave up
+
+      executor.execute(Interaction.Scroll(direction))
+
+      if (session.containsText(targetText)) {
+        executor.execute(interaction)
+        return
+      }
+    }
+
+    // Fall through: execute anyway (Maestro may find it via its own matching)
+    executor.execute(interaction)
   }
 
   private suspend fun executeSlowPath(
@@ -121,12 +175,12 @@ class Orchestrator(
     platform: Platform,
     navigator: NavigatorAgent,
   ): LoopResult {
-    val mapper = PlatformKeyMapper.forPlatform(platform)
-    val keyName = mapper.map(action)
+    val mapper = InteractionMapper.forPlatform(platform)
+    val executor = InteractionExecutor(session, appId)
+    val interaction = mapper.map(action)
     var actionsExecuted = 0
 
     repeat(max) {
-      // Check exit condition (deterministic first)
       if (session.containsText(until)) {
         return LoopResult(
           satisfied = true,
@@ -135,10 +189,8 @@ class Orchestrator(
         )
       }
 
-      // Execute action
-      if (keyName != null) {
-        session.pressKey(keyName)
-        session.waitForAnimationToEnd()
+      if (interaction != null) {
+        executor.execute(interaction)
         actionsExecuted += 1
       } else {
         val flowResult = executeSlowPath(listOf(action), appId, platform, navigator)
@@ -212,7 +264,7 @@ class Orchestrator(
 
   companion object {
     fun isFastPath(instructions: List<String>, platform: Platform): Boolean {
-      val mapper = PlatformKeyMapper.forPlatform(platform)
+      val mapper = InteractionMapper.forPlatform(platform)
       return mapper.allMappable(instructions)
     }
   }

@@ -1,6 +1,6 @@
-package me.chrisbanes.verity.core.keymap
+package me.chrisbanes.verity.core.interaction
 
-object AndroidTvKeyMapper : PlatformKeyMapper {
+object AndroidTvInteractionMapper : InteractionMapper {
 
   private val KEY_MAP = mapOf(
     "press d-pad down" to "Remote Dpad Down",
@@ -19,5 +19,8 @@ object AndroidTvKeyMapper : PlatformKeyMapper {
     "press fast forward" to "Remote Media Fast Forward",
   )
 
-  override fun map(instruction: String): String? = KEY_MAP[instruction.trim().lowercase()]
+  override fun map(instruction: String): Interaction? {
+    val keyName = KEY_MAP[instruction.trim().lowercase()] ?: return null
+    return Interaction.KeyPress(keyName)
+  }
 }

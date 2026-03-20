@@ -1,0 +1,8 @@
+name: iOS Settings scroll smoke
+app: com.apple.Preferences
+platform: ios
+steps:
+  - Scroll down
+  - Scroll down
+  - "[?] Privacy"
+  - Swipe right

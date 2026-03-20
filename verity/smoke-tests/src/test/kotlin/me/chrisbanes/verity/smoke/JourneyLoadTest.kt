@@ -22,4 +22,20 @@ class JourneyLoadTest {
     assertThat(journey.name).isEqualTo("iOS Settings smoke")
     assertThat(journey.platform).isEqualTo(Platform.IOS)
   }
+
+  @Test
+  fun `android settings scroll journey loads`() {
+    val url = javaClass.classLoader.getResource("android-settings-scroll.journey.yaml")!!
+    val journey = JourneyLoader.fromFile(java.io.File(url.toURI()))
+    assertThat(journey.name).isEqualTo("Android Settings scroll smoke")
+    assertThat(journey.platform).isEqualTo(Platform.ANDROID_MOBILE)
+  }
+
+  @Test
+  fun `ios settings scroll journey loads`() {
+    val url = javaClass.classLoader.getResource("ios-settings-scroll.journey.yaml")!!
+    val journey = JourneyLoader.fromFile(java.io.File(url.toURI()))
+    assertThat(journey.name).isEqualTo("iOS Settings scroll smoke")
+    assertThat(journey.platform).isEqualTo(Platform.IOS)
+  }
 }

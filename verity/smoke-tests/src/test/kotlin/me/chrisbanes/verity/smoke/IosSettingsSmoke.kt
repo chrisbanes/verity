@@ -42,27 +42,40 @@ class IosSettingsSmoke {
   fun `settings journey passes`() = runBlocking {
     val url = javaClass.classLoader.getResource("ios-settings.journey.yaml")!!
     val journey = JourneyLoader.fromFile(java.io.File(url.toURI()))
-
-    val orchestrator = Orchestrator(
-      session = session,
-      navigatorFactory = {
-        NavigatorAgent("unused") { _ ->
-          FakeTextAgent { _ ->
-            "appId: com.apple.Preferences\n---\n- launchApp\n- tapOn: General"
-          }
-        }
-      },
-      inspectorFactory = {
-        InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("VISIBLE mode: inspector should not be called") } },
-          evaluateVisualContent = { _, _, _ -> error("inspector visual should not be called") },
-        )
-      },
-    )
-
+    val orchestrator = createOrchestrator()
     val result = orchestrator.run(journey)
     val failedSegment = result.segments.firstOrNull { !it.passed }
     assertThat(result.passed, "segment ${failedSegment?.index} failed: ${failedSegment?.reasoning}")
       .isTrue()
   }
+
+  @Test
+  fun `scroll journey passes`() = runBlocking {
+    val url = javaClass.classLoader.getResource("ios-settings-scroll.journey.yaml")!!
+    val journey = JourneyLoader.fromFile(java.io.File(url.toURI()))
+    val orchestrator = createOrchestrator()
+    val result = orchestrator.run(journey)
+    val failedSegment = result.segments.firstOrNull { !it.passed }
+    assertThat(result.passed, "segment ${failedSegment?.index} failed: ${failedSegment?.reasoning}")
+      .isTrue()
+  }
+
+  private fun createOrchestrator() = Orchestrator(
+    session = session,
+    navigatorFactory = {
+      NavigatorAgent("unused") { _ ->
+        FakeTextAgent { "DOWN" }
+      }
+    },
+    inspectorFactory = {
+      InspectorAgent(
+        treeAgentFactory = {
+          FakeTextAgent { error("VISIBLE mode: inspector should not be called") }
+        },
+        evaluateVisualContent = { _, _, _ ->
+          error("inspector visual should not be called")
+        },
+      )
+    },
+  )
 }

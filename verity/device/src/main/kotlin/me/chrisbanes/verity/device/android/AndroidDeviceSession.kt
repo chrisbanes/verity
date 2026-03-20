@@ -27,7 +27,9 @@ class AndroidDeviceSession(
   override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
 
   override suspend fun pressKey(keyName: String) = withContext(Dispatchers.IO) {
-    val keyCode = KeyCode.valueOf(keyName)
+    val keyCode = checkNotNull(KeyCode.Companion.getByName(keyName)) {
+      "Unknown key name: '$keyName'"
+    }
     maestro.pressKey(keyCode)
   }
 
