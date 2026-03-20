@@ -133,7 +133,9 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
 
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).isEqualTo(listOf("appId: com.example.app\n---\n- swipe"))
+    assertThat(session.executedFlows).isEqualTo(
+      listOf(LAUNCH_FLOW, "appId: com.example.app\n---\n- swipe"),
+    )
     assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate a Maestro YAML flow for these actions:\n1. navigate to settings page")
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
   }
@@ -162,7 +164,7 @@ class OrchestratorTest {
 
     assertThat(result.passed).isTrue()
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 0 iterations")
-    assertThat(session.executedFlows).isEqualTo(emptyList())
+    assertThat(session.executedFlows).isEqualTo(listOf(LAUNCH_FLOW))
   }
 
   @Test
@@ -264,8 +266,8 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    // Should have executed a scroll flow + a tap flow
-    assertThat(session.executedFlows.size).isEqualTo(2)
+    // Should have executed launchApp + scroll flow + tap flow
+    assertThat(session.executedFlows.size).isEqualTo(3)
   }
 
   @Test
@@ -293,7 +295,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows.size).isEqualTo(1)
+    assertThat(session.executedFlows.size).isEqualTo(2) // launchApp + scroll
   }
 
   @Test
@@ -323,7 +325,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly("- tapOn:\n    text: \"Settings\"")
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn:\n    text: \"Settings\""))
   }
 
   @Test
@@ -351,7 +353,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly("- scroll:\n    direction: DOWN")
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- scroll:\n    direction: DOWN"))
   }
 
   @Test
@@ -389,9 +391,10 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     // tap Settings + scroll down + tap OK = 3 flows; press back uses pressKey, not executeFlow
     assertThat(session.executedFlows).containsExactly(
-      "- tapOn:\n    text: \"Settings\"",
-      "- scroll:\n    direction: DOWN",
-      "- tapOn:\n    text: \"OK\"",
+      LAUNCH_FLOW,
+      flow("- tapOn:\n    text: \"Settings\""),
+      flow("- scroll:\n    direction: DOWN"),
+      flow("- tapOn:\n    text: \"OK\""),
     )
   }
 
@@ -425,8 +428,9 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows).containsExactly(
-      "- scroll:\n    direction: DOWN",
-      "- tapOn:\n    text: \"Settings\"",
+      LAUNCH_FLOW,
+      flow("- scroll:\n    direction: DOWN"),
+      flow("- tapOn:\n    text: \"Settings\""),
     )
   }
 
@@ -457,7 +461,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly("- longPressOn:\n    text: \"Settings\"")
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- longPressOn:\n    text: \"Settings\""))
   }
 
   @Test
@@ -485,7 +489,13 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly("- scroll:\n    direction: UP")
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- scroll:\n    direction: UP"))
+  }
+
+  private companion object {
+    const val APP_ID = "com.example.app"
+    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp:\n    appId: $APP_ID"
+    fun flow(command: String) = "appId: $APP_ID\n---\n$command"
   }
 
   private class FakeDeviceSession(

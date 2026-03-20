@@ -4,6 +4,7 @@ platform: ios
 steps:
   - Tap General
   - "[?] About"
+  - Tap About
+  - "[?] Name"
   - Swipe right
-  - Scroll down
-  - "[?] Developer"
+  - "[?] About"

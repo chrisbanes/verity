@@ -28,6 +28,9 @@ class Orchestrator(
   private val context: String = "",
 ) {
   suspend fun run(journey: Journey): JourneyResult {
+    // Launch the app before executing any segments
+    session.executeFlow("appId: ${journey.app}\n---\n- launchApp:\n    appId: ${journey.app}")
+
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
 
@@ -55,7 +58,7 @@ class Orchestrator(
     if (segment.actions.isNotEmpty()) {
       val instructions = segment.actions.map { it.instruction }
       if (isFastPath(instructions, platform)) {
-        executeFastPath(instructions, platform, navigator)
+        executeFastPath(instructions, appId, platform, navigator)
       } else {
         val flowResult = executeSlowPath(instructions, appId, platform, navigator)
         if (!flowResult.success) {
@@ -95,6 +98,7 @@ class Orchestrator(
 
   private suspend fun executeFastPath(
     instructions: List<String>,
+    appId: String,
     platform: Platform,
     navigator: NavigatorAgent,
   ) {
@@ -103,15 +107,16 @@ class Orchestrator(
       val interaction = checkNotNull(mapper.map(instruction)) {
         "Fast-path instruction '$instruction' did not map to an interaction for $platform"
       }
-      executeWithScrollToFind(interaction, navigator)
+      executeWithScrollToFind(interaction, appId, navigator)
     }
   }
 
   private suspend fun executeWithScrollToFind(
     interaction: Interaction,
+    appId: String,
     navigator: NavigatorAgent,
   ) {
-    val executor = InteractionExecutor(session)
+    val executor = InteractionExecutor(session, appId)
 
     // For interactions that don't target a named element, just execute directly
     val targetText = when (interaction) {
@@ -170,7 +175,7 @@ class Orchestrator(
     navigator: NavigatorAgent,
   ): LoopResult {
     val mapper = InteractionMapper.forPlatform(platform)
-    val executor = InteractionExecutor(session)
+    val executor = InteractionExecutor(session, appId)
     val interaction = mapper.map(action)
     var actionsExecuted = 0
 

@@ -4,8 +4,5 @@ platform: ios
 steps:
   - Scroll down
   - Scroll down
-  - Scroll down
-  - "[?] Developer"
-  - Tap Developer
-  - "[?] Dark Appearance"
+  - "[?] Privacy"
   - Swipe right
