@@ -27,7 +27,7 @@ class InteractionExecutorTest {
   fun `tap on text generates tapOn flow`() = runTest {
     val session = RecordingDeviceSession()
     createExecutor(session).execute(Interaction.TapOnText("Settings"))
-    assertThat(session.executedFlows.single()).isEqualTo(flow("- tapOn:\n    text: \"Settings\""))
+    assertThat(session.executedFlows.single()).isEqualTo(flow("- tapOn: \"Settings\""))
   }
 
   @Test
@@ -55,7 +55,7 @@ class InteractionExecutorTest {
   fun `long press on text generates longPressOn flow`() = runTest {
     val session = RecordingDeviceSession()
     createExecutor(session).execute(Interaction.LongPressOnText("Photo"))
-    assertThat(session.executedFlows.single()).isEqualTo(flow("- longPressOn:\n    text: \"Photo\""))
+    assertThat(session.executedFlows.single()).isEqualTo(flow("- longPressOn: \"Photo\""))
   }
 
   @Test

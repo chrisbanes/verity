@@ -16,7 +16,7 @@ class InteractionExecutor(
         return
       }
 
-      is Interaction.TapOnText -> executeCommand("- tapOn:\n    text: \"${interaction.text}\"")
+      is Interaction.TapOnText -> executeCommand("- tapOn: \"${interaction.text}\"")
 
       is Interaction.TapOnId -> executeCommand("- tapOn:\n    id: \"${interaction.resourceId}\"")
 
@@ -28,8 +28,7 @@ class InteractionExecutor(
 
       is Interaction.LongPressOnFocused -> executeCommand("- longPressOn:\n    focused: true")
 
-      is Interaction.LongPressOnText ->
-        executeCommand("- longPressOn:\n    text: \"${interaction.text}\"")
+      is Interaction.LongPressOnText -> executeCommand("- longPressOn: \"${interaction.text}\"")
 
       // Pull-to-refresh is a swipe down from near the top
       Interaction.PullToRefresh -> executeCommand("- swipe:\n    direction: UP")

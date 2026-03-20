@@ -28,8 +28,9 @@ class Orchestrator(
   private val context: String = "",
 ) {
   suspend fun run(journey: Journey): JourneyResult {
-    // Launch the app before executing any segments
-    session.executeFlow("appId: ${journey.app}\n---\n- launchApp:\n    appId: ${journey.app}")
+    // Launch the app before executing any segments.
+    // Use bare `- launchApp` which reads appId from the flow header.
+    session.executeFlow("appId: ${journey.app}\n---\n- launchApp")
 
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()

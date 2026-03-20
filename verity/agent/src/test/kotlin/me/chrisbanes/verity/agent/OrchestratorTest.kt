@@ -325,7 +325,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn:\n    text: \"Settings\""))
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn: \"Settings\""))
   }
 
   @Test
@@ -392,9 +392,9 @@ class OrchestratorTest {
     // tap Settings + scroll down + tap OK = 3 flows; press back uses pressKey, not executeFlow
     assertThat(session.executedFlows).containsExactly(
       LAUNCH_FLOW,
-      flow("- tapOn:\n    text: \"Settings\""),
+      flow("- tapOn: \"Settings\""),
       flow("- swipe:\n    direction: DOWN"),
-      flow("- tapOn:\n    text: \"OK\""),
+      flow("- tapOn: \"OK\""),
     )
   }
 
@@ -430,7 +430,7 @@ class OrchestratorTest {
     assertThat(session.executedFlows).containsExactly(
       LAUNCH_FLOW,
       flow("- swipe:\n    direction: DOWN"),
-      flow("- tapOn:\n    text: \"Settings\""),
+      flow("- tapOn: \"Settings\""),
     )
   }
 
@@ -461,7 +461,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- longPressOn:\n    text: \"Settings\""))
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- longPressOn: \"Settings\""))
   }
 
   @Test
@@ -494,7 +494,7 @@ class OrchestratorTest {
 
   private companion object {
     const val APP_ID = "com.example.app"
-    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp:\n    appId: $APP_ID"
+    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp"
     fun flow(command: String) = "appId: $APP_ID\n---\n$command"
   }
 
