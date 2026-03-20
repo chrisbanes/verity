@@ -4,8 +4,4 @@ platform: android
 steps:
   - Scroll down
   - Scroll down
-  - Scroll down
-  - "[?] System"
-  - Tap System
-  - "[?] Languages"
   - Press back
