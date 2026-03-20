@@ -53,7 +53,7 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android --stacktrace
+          script: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android
 
   smoke-ios:
     runs-on: macos-latest
