@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.smoke
 
 import java.io.File
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
@@ -27,11 +28,25 @@ class DeviceLifecycle private constructor(
   private val simulatorUdid: String?,
 ) : AutoCloseable {
 
-  suspend fun connect(): DeviceSession = DeviceSessionFactory.connect(
-    platform = platform,
-    deviceId = simulatorUdid,
-    disableAnimations = false,
-  )
+  suspend fun connect(retries: Int = 2): DeviceSession {
+    var lastException: Exception? = null
+    repeat(retries) { attempt ->
+      try {
+        return DeviceSessionFactory.connect(
+          platform = platform,
+          deviceId = simulatorUdid,
+          disableAnimations = false,
+        )
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        lastException = e
+        System.err.println("Device connect attempt ${attempt + 1}/$retries failed: ${e.message}")
+        if (attempt < retries - 1) delay(5.seconds)
+      }
+    }
+    throw lastException!!
+  }
 
   override fun close() {
     if (!bootedByUs) return
