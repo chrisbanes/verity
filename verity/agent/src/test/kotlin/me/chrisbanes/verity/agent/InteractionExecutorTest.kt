@@ -38,10 +38,10 @@ class InteractionExecutorTest {
   }
 
   @Test
-  fun `scroll generates scroll flow`() = runTest {
+  fun `scroll generates swipe flow`() = runTest {
     val session = RecordingDeviceSession()
     createExecutor(session).execute(Interaction.Scroll(Direction.DOWN))
-    assertThat(session.executedFlows.single()).isEqualTo(flow("- scroll:\n    direction: DOWN"))
+    assertThat(session.executedFlows.single()).isEqualTo(flow("- swipe:\n    direction: DOWN"))
   }
 
   @Test
@@ -59,10 +59,10 @@ class InteractionExecutorTest {
   }
 
   @Test
-  fun `pull to refresh generates scroll up`() = runTest {
+  fun `pull to refresh generates swipe up`() = runTest {
     val session = RecordingDeviceSession()
     createExecutor(session).execute(Interaction.PullToRefresh)
-    assertThat(session.executedFlows.single()).isEqualTo(flow("- scroll:\n    direction: UP"))
+    assertThat(session.executedFlows.single()).isEqualTo(flow("- swipe:\n    direction: UP"))
   }
 
   @Test

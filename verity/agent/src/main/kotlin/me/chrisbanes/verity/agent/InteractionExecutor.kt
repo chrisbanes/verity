@@ -20,7 +20,9 @@ class InteractionExecutor(
 
       is Interaction.TapOnId -> executeCommand("- tapOn:\n    id: \"${interaction.resourceId}\"")
 
-      is Interaction.Scroll -> executeCommand("- scroll:\n    direction: ${interaction.direction}")
+      // Maestro's `scroll` has no direction param (always scrolls down).
+      // Use `swipe` for directional scrolling.
+      is Interaction.Scroll -> executeCommand("- swipe:\n    direction: ${interaction.direction}")
 
       is Interaction.Swipe -> executeCommand("- swipe:\n    direction: ${interaction.direction}")
 
@@ -29,7 +31,8 @@ class InteractionExecutor(
       is Interaction.LongPressOnText ->
         executeCommand("- longPressOn:\n    text: \"${interaction.text}\"")
 
-      Interaction.PullToRefresh -> executeCommand("- scroll:\n    direction: UP")
+      // Pull-to-refresh is a swipe down from near the top
+      Interaction.PullToRefresh -> executeCommand("- swipe:\n    direction: UP")
     }
     session.waitForAnimationToEnd()
   }

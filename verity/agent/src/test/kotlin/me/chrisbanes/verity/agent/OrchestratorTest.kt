@@ -353,7 +353,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- scroll:\n    direction: DOWN"))
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: DOWN"))
   }
 
   @Test
@@ -393,7 +393,7 @@ class OrchestratorTest {
     assertThat(session.executedFlows).containsExactly(
       LAUNCH_FLOW,
       flow("- tapOn:\n    text: \"Settings\""),
-      flow("- scroll:\n    direction: DOWN"),
+      flow("- swipe:\n    direction: DOWN"),
       flow("- tapOn:\n    text: \"OK\""),
     )
   }
@@ -429,7 +429,7 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows).containsExactly(
       LAUNCH_FLOW,
-      flow("- scroll:\n    direction: DOWN"),
+      flow("- swipe:\n    direction: DOWN"),
       flow("- tapOn:\n    text: \"Settings\""),
     )
   }
@@ -489,7 +489,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- scroll:\n    direction: UP"))
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: UP"))
   }
 
   private companion object {
