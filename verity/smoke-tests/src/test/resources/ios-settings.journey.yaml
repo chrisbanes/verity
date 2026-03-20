@@ -4,3 +4,6 @@ platform: ios
 steps:
   - Tap General
   - "[?] About"
+  - Swipe right
+  - Scroll down
+  - "[?] Developer"

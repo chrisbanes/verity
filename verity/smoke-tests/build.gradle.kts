@@ -20,15 +20,15 @@ configurations.all {
 }
 
 tasks.test {
-  // Excluded from ./gradlew check by default.
-  // Run explicitly: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android
-  //            or:  ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios
+  // Device smoke tests require -Pinclude.tags=android or -Pinclude.tags=ios.
+  // Without tags, only untagged tests (e.g. JourneyLoadTest) run.
   val includeTags = providers.gradleProperty("include.tags")
   useJUnitPlatform {
     val tags = includeTags.orNull
     if (tags != null) {
       includeTags(tags)
+    } else {
+      excludeTags("android", "ios")
     }
   }
-  onlyIf { includeTags.isPresent }
 }
