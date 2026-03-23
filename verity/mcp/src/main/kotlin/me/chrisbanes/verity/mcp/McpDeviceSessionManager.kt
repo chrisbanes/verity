@@ -27,12 +27,13 @@ class McpDeviceSessionManager(
 ) {
 
   private val sessions = ConcurrentHashMap<UUID, SessionEntry>()
+  private val openMutex = Mutex()
 
   suspend fun open(
     platform: Platform,
     deviceId: String? = null,
     disableAnimations: Boolean = false,
-  ): SessionHandle {
+  ): SessionHandle = openMutex.withLock {
     val session = sessionFactory(platform, deviceId, disableAnimations)
     val id = UUID.randomUUID()
     val resolvedDeviceId = deviceId ?: "auto-discovered"
@@ -40,7 +41,7 @@ class McpDeviceSessionManager(
       deviceId = resolvedDeviceId,
       session = session,
     )
-    return SessionHandle(sessionId = id, deviceId = resolvedDeviceId)
+    SessionHandle(sessionId = id, deviceId = resolvedDeviceId)
   }
 
   suspend fun <T> withSession(sessionId: UUID, block: suspend (DeviceSession) -> T): T {

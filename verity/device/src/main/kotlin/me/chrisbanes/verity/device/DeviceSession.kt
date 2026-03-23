@@ -18,17 +18,25 @@ interface DeviceSession : AutoCloseable {
     val animatorScale: String,
   ) {
     init {
-      require(windowScale.matches(SCALE_PATTERN)) { "Invalid window animation scale: $windowScale" }
-      require(transitionScale.matches(SCALE_PATTERN)) {
-        "Invalid transition animation scale: $transitionScale"
-      }
-      require(animatorScale.matches(SCALE_PATTERN)) {
-        "Invalid animator duration scale: $animatorScale"
-      }
+      validateScale(windowScale, "window animation")
+      validateScale(transitionScale, "transition animation")
+      validateScale(animatorScale, "animator duration")
     }
 
     private companion object {
       val SCALE_PATTERN = Regex("""\d+(\.\d+)?""")
+
+      /** Android animation scale bounds: 0.0 (off) to 10.0 (10x speed) */
+      private const val MIN_SCALE = 0.0
+      private const val MAX_SCALE = 10.0
+
+      fun validateScale(value: String, name: String) {
+        require(value.matches(SCALE_PATTERN)) { "Invalid $name scale: $value" }
+        val numeric = value.toDouble()
+        require(numeric in MIN_SCALE..MAX_SCALE) {
+          "$name scale $value out of bounds. Expected: $MIN_SCALE to $MAX_SCALE"
+        }
+      }
     }
   }
 
