@@ -1,8 +1,10 @@
 package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.model.Platform
 
@@ -38,7 +40,9 @@ class NavigatorAgent(
     val userMessage = buildUserMessage(actions, appId)
     val agent = agentFactory(systemPrompt)
     return try {
-      val response = agent.run(userMessage)
+      val response = withTimeout(TIMEOUT) {
+        agent.run(userMessage)
+      }
       cleanResponse(response)
     } finally {
       withContext(NonCancellable) { agent.close() }
@@ -61,7 +65,9 @@ class NavigatorAgent(
     val userMessage = "Target: $target\n\nCurrent screen:\n$hierarchy"
     val agent = agentFactory(systemPrompt)
     return try {
-      val response = agent.run(userMessage).trim().uppercase()
+      val response = withTimeout(TIMEOUT) {
+        agent.run(userMessage)
+      }.trim().uppercase()
       Direction.entries.firstOrNull { it.name == response }
     } finally {
       withContext(NonCancellable) { agent.close() }
@@ -69,6 +75,9 @@ class NavigatorAgent(
   }
 
   companion object {
+    /** Timeout for LLM calls - navigator uses cheap models and should be fast. */
+    private val TIMEOUT = 30.seconds
+
     fun buildSystemPrompt(
       platform: Platform,
       bundledContext: String,

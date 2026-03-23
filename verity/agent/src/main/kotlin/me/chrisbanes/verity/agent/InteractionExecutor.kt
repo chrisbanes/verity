@@ -16,9 +16,9 @@ class InteractionExecutor(
         return
       }
 
-      is Interaction.TapOnText -> executeCommand("- tapOn: \"${interaction.text}\"")
+      is Interaction.TapOnText -> executeCommand("- tapOn: ${escapeYaml(interaction.text)}")
 
-      is Interaction.TapOnId -> executeCommand("- tapOn:\n    id: \"${interaction.resourceId}\"")
+      is Interaction.TapOnId -> executeCommand("- tapOn:\n    id: ${escapeYaml(interaction.resourceId)}")
 
       // Maestro's `scroll` has no direction param (always scrolls down).
       // Use `swipe` for directional scrolling.
@@ -28,7 +28,7 @@ class InteractionExecutor(
 
       is Interaction.LongPressOnFocused -> executeCommand("- longPressOn:\n    focused: true")
 
-      is Interaction.LongPressOnText -> executeCommand("- longPressOn: \"${interaction.text}\"")
+      is Interaction.LongPressOnText -> executeCommand("- longPressOn: ${escapeYaml(interaction.text)}")
 
       // Pull-to-refresh is a swipe down from near the top
       Interaction.PullToRefresh -> executeCommand("- swipe:\n    direction: UP")
@@ -38,5 +38,22 @@ class InteractionExecutor(
 
   private suspend fun executeCommand(command: String) {
     session.executeFlow("appId: $appId\n---\n$command")
+  }
+
+  companion object {
+    /**
+     * Escapes a string for safe use in YAML double-quoted scalars.
+     * Handles backslashes, quotes, newlines, and control characters.
+     */
+    fun escapeYaml(value: String): String {
+      val escaped = value
+        .replace("\\", "\\\\") // Backslash must be first
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        .replace("\b", "\\b")
+      return "\"$escaped\""
+    }
   }
 }

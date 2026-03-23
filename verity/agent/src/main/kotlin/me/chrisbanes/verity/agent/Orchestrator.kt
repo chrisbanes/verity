@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.agent
 
 import java.nio.file.Files
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -142,8 +143,14 @@ class Orchestrator(
     // Scroll-to-find loop (max 5 attempts)
     repeat(5) {
       val hierarchy = session.captureHierarchy()
-      val direction = navigator.suggestScrollDirection(targetText, hierarchy)
-        ?: return@repeat // LLM gave up
+      val direction = try {
+        navigator.suggestScrollDirection(targetText, hierarchy)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        // LLM call failed, stop scrolling and try executing anyway
+        null
+      } ?: return@repeat // LLM gave up or failed
 
       executor.execute(Interaction.Scroll(direction))
 

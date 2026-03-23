@@ -20,6 +20,7 @@ import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.io.asSink
@@ -334,30 +335,31 @@ class VerityMcpServer(
           session.captureScreenshot(target)
           success("Screenshot saved to: $saveToFile")
         } else {
-          val tempPng = withContext(Dispatchers.IO) {
-            Files.createTempFile("verity-screenshot-", ".png")
-          }
+          // Use a single cleanup block to ensure all temp files are deleted
+          val tempFiles = mutableListOf<Path>()
           try {
+            val tempPng = withContext(Dispatchers.IO) {
+              Files.createTempFile("verity-screenshot-", ".png")
+            }
+            tempFiles.add(tempPng)
+
             session.captureScreenshot(tempPng)
+
             val jpegPath = withContext(Dispatchers.IO) {
               ScreenshotCompressor.compress(tempPng)
             }
-            try {
-              val bytes = withContext(Dispatchers.IO) {
-                Files.readAllBytes(jpegPath)
-              }
-              val base64 = Base64.getEncoder().encodeToString(bytes)
-              CallToolResult(
-                content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
-              )
-            } finally {
-              withContext(Dispatchers.IO) {
-                Files.deleteIfExists(jpegPath)
-              }
+            tempFiles.add(jpegPath)
+
+            val bytes = withContext(Dispatchers.IO) {
+              Files.readAllBytes(jpegPath)
             }
+            val base64 = Base64.getEncoder().encodeToString(bytes)
+            CallToolResult(
+              content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
+            )
           } finally {
-            withContext(Dispatchers.IO) {
-              Files.deleteIfExists(tempPng)
+            withContext(NonCancellable + Dispatchers.IO) {
+              tempFiles.forEach { Files.deleteIfExists(it) }
             }
           }
         }

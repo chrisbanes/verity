@@ -2,8 +2,10 @@ package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
 import java.nio.file.Path
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.core.model.InspectionVerdict
 
@@ -28,7 +30,9 @@ class InspectorAgent(
     val message = buildTreeMessage(hierarchy, assertion)
     val agent = treeAgentFactory()
     return try {
-      val response = agent.run(message)
+      val response = withTimeout(TREE_TIMEOUT) {
+        agent.run(message)
+      }
       parseVerdict(response)
     } finally {
       withContext(NonCancellable) { agent.close() }
@@ -49,6 +53,13 @@ class InspectorAgent(
       ignoreUnknownKeys = true
       isLenient = true
     }
+
+    /** Timeout for tree-based evaluation (text-only, should be fast). */
+    private val TREE_TIMEOUT = 30.seconds
+
+    /** Maximum length of raw response included in error messages to prevent oversized output. */
+    private const val MAX_RAW_RESPONSE_LENGTH = 500
+
     const val SYSTEM_PROMPT =
       "You are a visual testing inspector for a mobile/TV app.\n" +
         "Evaluate whether a screenshot or accessibility tree matches an assertion.\n" +
@@ -69,9 +80,14 @@ class InspectorAgent(
       return try {
         lenientJson.decodeFromString(InspectionVerdict.serializer(), cleaned)
       } catch (e: Exception) {
+        val truncated = if (cleaned.length > MAX_RAW_RESPONSE_LENGTH) {
+          cleaned.take(MAX_RAW_RESPONSE_LENGTH) + "... [truncated ${cleaned.length - MAX_RAW_RESPONSE_LENGTH} chars]"
+        } else {
+          cleaned
+        }
         InspectionVerdict(
           passed = false,
-          reasoning = "Inspector parse error: ${e.message}. Raw response: $cleaned",
+          reasoning = "Inspector parse error: ${e.message}. Raw response: $truncated",
         )
       }
     }
