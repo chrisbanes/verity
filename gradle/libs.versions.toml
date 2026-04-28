@@ -15,7 +15,7 @@ grpc-kotlin = "1.5.0"
 grpc-netty-shaded = "1.79.0"
 assertk = "0.28.1"
 ktlint = "1.8.0"
-shadow = "9.4.0"
+shadow = "9.4.1"
 spotless = "8.2.1"
 
 [libraries]
