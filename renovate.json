@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "matchPackagePrefixes": ["io.grpc:grpc"],
+      "groupName": "gRPC"
+    },
+    {
+      "matchPackagePrefixes": ["dev.mobile:maestro"],
+      "groupName": "Maestro"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    }
+  ]
+}
