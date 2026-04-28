@@ -16,7 +16,7 @@ grpc-netty-shaded = "1.79.0"
 assertk = "0.28.1"
 ktlint = "1.8.0"
 shadow = "9.4.0"
-spotless = "8.2.1"
+spotless = "8.4.0"
 
 [libraries]
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
