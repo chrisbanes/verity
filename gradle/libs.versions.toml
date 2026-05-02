@@ -1,6 +1,6 @@
 [versions]
 kotlin = "2.3.10"
-kotlinx-serialization = "1.10.0"
+kotlinx-serialization = "1.11.0"
 kotlinx-coroutines = "1.10.2"
 kaml = "0.104.0"
 koog = "0.6.4"
