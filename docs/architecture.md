@@ -338,7 +338,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 | `check_visible` | session_id, text | true/false | Deterministic, case-insensitive |
 | `check_focused` | session_id, text | true/false | Lenient ancestor/sibling/child check |
 | `run_loop` | session_id, action, until | SATISFIED/NOT + iterations | Optional: max, wait_ms |
-| `get_context` | — | bundled defaults + markdown context text | Optional: path |
+| `get_context` | optional path | loaded-file metadata + bundled defaults + markdown context text | Required context can error |
 
 ---
 
@@ -362,11 +362,25 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 --inspector-model <id>   Model for assertion evaluation (capable tier)
 --api-key <key>          LLM API key (or ANTHROPIC_API_KEY env var)
 --context-path <dir>     Optional path to additional context markdown files
+--require-context        Fail if project context is missing or contains no markdown files
 --no-animations          Disable device animations during run
 --no-bundled-context     Skip bundled context resources
 ```
 
 The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--port` (default: 8080) for HTTP transport.
+
+### Configuration
+
+`verity/config.yaml` can provide defaults for provider and model selection:
+
+```yaml
+provider: anthropic
+navigator-model: claude-haiku-4-5
+inspector-model: claude-opus-4-5
+require-context: true
+```
+
+`require-context` makes `--context-path` mandatory for workflows that depend on project context. The CLI `--require-context` flag also enables this behavior for one invocation.
 
 ---
 
@@ -382,6 +396,13 @@ RunCommand.resolveJourneys() ──→ ordered List<ResolvedJourney>
     │
     ▼
 JourneyLoader.fromFile() ──→ Journey(name, app, platform, steps)
+    │
+    ▼
+ContextLoader.loadProject()
+    ├── LOADED → report loaded markdown files, inject text into NavigatorAgent
+    ├── NOT_CONFIGURED → optional explicit status or required error
+    ├── MISSING_DIRECTORY → optional explicit status or required error
+    └── EMPTY_DIRECTORY → optional explicit status or required error
     │
     ▼
 JourneySegmenter.segment() ──→ List<JourneySegment>
