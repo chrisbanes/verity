@@ -564,13 +564,16 @@ class VerityMcpServer(
       }
       val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
       val metadata = projectContext.describeForMcp(contextDir, requireContext)
-      val content = listOf(metadata, bundled, projectContext.text)
+      val usableContext = listOf(bundled, projectContext.text)
         .filter { it.isNotBlank() }
         .joinToString("\n\n")
 
-      if (content.isBlank()) {
+      if (usableContext.isBlank()) {
         error("No context path configured and no bundled defaults found.")
       } else {
+        val content = listOf(metadata, usableContext)
+          .filter { it.isNotBlank() }
+          .joinToString("\n\n")
         success(content)
       }
     }

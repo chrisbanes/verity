@@ -165,6 +165,21 @@ class VerityMcpServerTest {
   }
 
   @Test
+  fun `get_context errors when bundled and project context are absent`() = runTest {
+    val server = VerityMcpServer(skipBundledContext = true).create()
+    val tool = server.tools["get_context"]!!
+
+    val result = tool.handler.invoke(
+      StubClientConnection(),
+      CallToolRequest(CallToolRequestParams(name = "get_context")),
+    )
+
+    val text = (result.content.first() as TextContent).text
+    assertThat(result.isError).isEqualTo(true)
+    assertThat(text).contains("No context path configured and no bundled defaults found.")
+  }
+
+  @Test
   fun `get_context reports loaded project context files`() = runTest {
     val dir = kotlin.io.path.createTempDirectory("mcp-context").toFile()
     try {
