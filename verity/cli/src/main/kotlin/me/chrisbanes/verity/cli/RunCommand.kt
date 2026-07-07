@@ -130,29 +130,41 @@ class RunCommand(
     journeys: List<ResolvedJourney>,
   ): SuiteRunResult {
     val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
-    val provider = resolveProvider(parent.provider, config)
+    val firstJourney = journeys.first().journey
+    val platform = parent.platform ?: firstJourney.platform
 
-    val apiKey = parent.apiKey ?: System.getenv(provider.envVar)
-    if (provider.requiresAuth && apiKey == null) {
-      throw UsageError("API key required. Set ${provider.envVar} or use --api-key")
+    val preflight = CliPreflightChecker().check(
+      request = CliPreflightRequest(
+        cliProvider = parent.provider,
+        cliNavigatorModel = parent.navigatorModel,
+        cliInspectorModel = parent.inspectorModel,
+        apiKey = parent.apiKey,
+        journeyPath = journeyPath,
+        contextPath = parent.contextPath,
+        platform = platform,
+        deviceId = parent.device,
+      ),
+      config = config,
+    )
+    if (!preflight.report.passed) {
+      throw CliktError(preflight.report.renderPlainText())
     }
 
-    val navigatorModel = resolveModel(parent.navigatorModel, config.navigatorModel, provider.defaultNavigatorModel, provider)
-    val inspectorModel = resolveModel(parent.inspectorModel, config.inspectorModel, provider.defaultInspectorModel, provider)
-
+    val provider = checkNotNull(preflight.provider)
+    val apiKey = preflight.apiKey.orEmpty()
+    val navigatorModel = checkNotNull(preflight.navigatorModel)
+    val inspectorModel = checkNotNull(preflight.inspectorModel)
     echo("Provider: ${provider.name}")
     echo("Navigator model: ${navigatorModel.id}")
     echo("Inspector model: ${inspectorModel.id}")
 
-    val firstJourney = journeys.first().journey
-    val platform = parent.platform ?: firstJourney.platform
     val session = DeviceSessionFactory.connect(
       platform = platform,
       deviceId = parent.device,
       disableAnimations = parent.noAnimations,
     )
 
-    val executor = SingleLLMPromptExecutor(provider.createClient(apiKey ?: ""))
+    val executor = SingleLLMPromptExecutor(provider.createClient(apiKey))
 
     session.use {
       val injectedContext = parent.contextPath?.let { ContextLoader.load(File(it)) } ?: ""

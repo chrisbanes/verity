@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.cli
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNotNull
@@ -123,5 +124,33 @@ class CliPreflightCheckerTest {
 
     assertThat(receivedPlatform).isEqualTo(Platform.IOS)
     assertThat(receivedDevice).isEqualTo("sim-1")
+  }
+
+  @Test
+  fun `plain text render contains remediation for cli error`() = runTest {
+    val checker = CliPreflightChecker(
+      environment = { null },
+      devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = "anthropic",
+        cliNavigatorModel = null,
+        cliInspectorModel = null,
+        apiKey = null,
+        journeyPath = null,
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(),
+    )
+
+    val text = result.report.renderPlainText()
+
+    assertThat(text).contains("provider.credential.missing")
+    assertThat(text).contains("Set ANTHROPIC_API_KEY or pass --api-key")
+    assertThat(text).contains("Run `verity run <path.journey.yaml>`")
   }
 }

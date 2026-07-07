@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.cli
 
 import ai.koog.prompt.llm.LLModel
+import java.nio.file.Files
 import java.nio.file.Path
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.preflight.PathPreflightChecker
@@ -117,7 +118,11 @@ class CliPreflightChecker(
         ),
       )
     } else {
-      report += pathPreflightChecker.requireReadableFile(Path.of(request.journeyPath), "Journey file")
+      val path = Path.of(request.journeyPath)
+      report += when {
+        Files.isDirectory(path) -> pathPreflightChecker.requireReadableDirectory(path, "Journey directory")
+        else -> pathPreflightChecker.requireReadableFile(path, "Journey file")
+      }
     }
 
     if (request.contextPath != null) {
