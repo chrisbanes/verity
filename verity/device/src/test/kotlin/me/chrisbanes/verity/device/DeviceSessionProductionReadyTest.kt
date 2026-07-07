@@ -11,10 +11,11 @@ import maestro.DeviceInfo
 import maestro.Driver
 import maestro.KeyCode
 import maestro.Maestro
-import maestro.Platform as MaestroPlatform
 import maestro.Point
 import maestro.ScreenRecording
 import maestro.SwipeDirection
+import maestro.device.DeviceOrientation
+import maestro.device.Platform as MaestroPlatform
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
@@ -196,9 +197,7 @@ class DeviceSessionProductionReadyTest {
     }
 
     override fun takeScreenshot(out: okio.Sink, compressed: Boolean) = Unit
-    override fun startScreenRecording(out: okio.Sink): com.github.michaelbull.result.Result<device.IOSScreenRecording, Throwable> {
-      error("unused in test")
-    }
+    override fun startScreenRecording(out: okio.Sink): device.IOSScreenRecording = error("unused in test")
 
     override fun addMedia(path: String) = Unit
     override fun setLocation(latitude: Double, longitude: Double): com.github.michaelbull.result.Result<Unit, Throwable> {
@@ -246,7 +245,7 @@ class DeviceSessionProductionReadyTest {
       override fun close() = Unit
     }
     override fun setLocation(latitude: Double, longitude: Double) = Unit
-    override fun setOrientation(orientation: maestro.DeviceOrientation) = Unit
+    override fun setOrientation(orientation: DeviceOrientation) = Unit
     override fun eraseText(charactersToErase: Int) = Unit
     override fun setProxy(host: String, port: Int) = Unit
     override fun resetProxy() = Unit
