@@ -7,6 +7,7 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import me.chrisbanes.verity.core.model.AssertMode
+import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.JourneyStep
 
 /**
@@ -37,7 +38,18 @@ object JourneyStepParser {
     "focused" to AssertMode.FOCUSED,
   )
 
-  fun parse(text: String): JourneyStep {
+  private fun AssertionStrategy.resolveMode(description: String): AssertMode = when (this) {
+    AssertionStrategy.INFER -> AssertModeInferrer.infer(description)
+    AssertionStrategy.VISIBLE -> AssertMode.VISIBLE
+    AssertionStrategy.FOCUSED -> AssertMode.FOCUSED
+    AssertionStrategy.TREE -> AssertMode.TREE
+    AssertionStrategy.VISUAL -> AssertMode.VISUAL
+  }
+
+  fun parse(
+    text: String,
+    assertionStrategy: AssertionStrategy = AssertionStrategy.INFER,
+  ): JourneyStep {
     val trimmed = text.trim()
 
     // 1. [?mode] prefix
@@ -52,7 +64,7 @@ object JourneyStepParser {
     // 2. [?] prefix
     GENERIC_ASSERT_PATTERN.matchEntire(trimmed)?.let { match ->
       val description = match.groupValues[1].trim()
-      val mode = AssertModeInferrer.infer(description)
+      val mode = assertionStrategy.resolveMode(description)
       return JourneyStep.Assert(description = description, mode = mode)
     }
 
@@ -60,7 +72,11 @@ object JourneyStepParser {
     LoopStepInferrer.infer(trimmed)?.let { return it }
 
     // 4. Assertion inference (NL keywords)
-    AssertionStepInferrer.infer(trimmed)?.let { return it }
+    AssertionStepInferrer.infer(trimmed)?.let { inferred ->
+      return inferred.copy(
+        mode = assertionStrategy.resolveMode(inferred.description),
+      )
+    }
 
     // 5. Default: Action
     return JourneyStep.Action(instruction = trimmed)
