@@ -227,6 +227,9 @@ class VerityMcpServer(
       ),
     ) { args ->
       val dir = args.string("path")?.let(::File) ?: defaultJourneysPath
+      require(dir.isDirectory) {
+        "Journey path must be a directory: ${dir.path}"
+      }
       val files = withContext(Dispatchers.IO) {
         JourneyLoader.listJourneyFiles(dir)
       }

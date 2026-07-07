@@ -28,6 +28,8 @@ class McpCommand : CliktCommand(name = "mcp") {
       config = config,
       cli = parent.projectCliOptions(),
     )
+    resolved.contextPath?.let { validateReadableDirectory(it, "paths.context") }
+    validateOutputDirectory(resolved.outputPath)
 
     val server = VerityMcpServer(
       contextPath = resolved.contextPath,

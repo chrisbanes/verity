@@ -18,6 +18,7 @@ fun resolveRunJourneyFile(
   val journeyFiles = JourneyLoader.listJourneyFiles(configuredJourneysPath)
   return when (journeyFiles.size) {
     1 -> journeyFiles.single()
+
     0 -> throw IllegalArgumentException(
       "No journey files found in ${configuredJourneysPath.path}. Provide a journey path.",
     )

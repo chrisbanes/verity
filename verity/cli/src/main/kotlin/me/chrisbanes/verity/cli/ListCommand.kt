@@ -19,7 +19,7 @@ class ListCommand : CliktCommand(name = "list") {
       cli = parent.projectCliOptions().copy(journeysPath = path ?: parent.journeysPath),
     )
     val dir = resolved.journeysPath
-    require(dir.isDirectory) { "Not a directory: ${dir.path}" }
+    validateReadableDirectory(dir, "paths.journeys")
 
     val journeys = JourneyLoader.listJourneyFiles(dir)
     if (journeys.isEmpty()) {

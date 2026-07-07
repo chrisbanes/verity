@@ -54,6 +54,38 @@ Maestro SDK uses gRPC with Netty 4.1; Ktor uses Netty 4.2. Resolved by:
 
 ---
 
+## Project Configuration
+
+Verity reads optional project defaults from `verity/config.yaml`. Missing and empty config files preserve current command defaults.
+
+```yaml
+paths:
+  journeys: journeys
+  context: context
+  output: build/verity
+
+device:
+  platform: android-tv
+  id: emulator-5554
+  disable-animations: true
+
+llm:
+  provider: anthropic
+  navigator-model: claude-haiku-4-5
+  inspector-model: claude-sonnet-4-5
+
+assertions:
+  strategy: infer
+```
+
+Precedence is always CLI flag or argument, then config value, then built-in default. Legacy top-level `provider`, `navigator-model`, and `inspector-model` keys remain supported; structured `llm` values win when both forms are present.
+
+`run` uses config for journey fallback, context, output, device, LLM, animation, and assertion strategy defaults. `list` uses `paths.journeys` unless `--path` is provided. `mcp` uses config for default context, journeys, platform, device, and animation handling, while MCP tool arguments still override server defaults.
+
+`assertions.strategy` controls implicit assertion modes only. Explicit prefixes such as `[?visual]` remain authoritative. `infer` preserves current heuristic behavior, while `visible`, `focused`, `tree`, and `visual` force that mode for `[?]` and natural-language inferred assertions.
+
+---
+
 ## Journey Format
 
 Journeys are YAML files describing user flows. File extension: `*.journey.yaml`.

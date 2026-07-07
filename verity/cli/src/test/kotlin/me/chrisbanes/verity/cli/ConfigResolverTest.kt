@@ -1,10 +1,12 @@
 package me.chrisbanes.verity.cli
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isNull
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.Platform
 
@@ -136,5 +138,55 @@ class ConfigResolverTest {
     assertThat(resolved.disableAnimations).isEqualTo(false)
     assertThat(resolved.provider.name).isEqualTo("anthropic")
     assertThat(resolved.assertionStrategy).isEqualTo(AssertionStrategy.INFER)
+  }
+
+  @Test
+  fun `invalid platform message names accepted values`() {
+    val error = assertFailsWith<IllegalArgumentException> {
+      resolvePlatform("watch")
+    }
+
+    assertThat(error.message.orEmpty()).contains("device.platform")
+    assertThat(error.message.orEmpty()).contains("android-tv")
+    assertThat(error.message.orEmpty()).contains("android")
+    assertThat(error.message.orEmpty()).contains("ios")
+  }
+
+  @Test
+  fun `invalid assertion strategy message names accepted values`() {
+    val error = assertFailsWith<IllegalArgumentException> {
+      resolveAssertionStrategy("expensive")
+    }
+
+    assertThat(error.message.orEmpty()).contains("assertions.strategy")
+    assertThat(error.message.orEmpty()).contains("infer")
+    assertThat(error.message.orEmpty()).contains("visible")
+    assertThat(error.message.orEmpty()).contains("focused")
+    assertThat(error.message.orEmpty()).contains("tree")
+    assertThat(error.message.orEmpty()).contains("visual")
+  }
+
+  @Test
+  fun `readable directory validation rejects files`() {
+    val file = kotlin.io.path.createTempFile("verity-context", ".md").toFile()
+
+    val error = assertFailsWith<IllegalArgumentException> {
+      validateReadableDirectory(file, "paths.context")
+    }
+
+    assertThat(error.message.orEmpty()).contains("paths.context")
+    assertThat(error.message.orEmpty()).contains("must be a directory")
+  }
+
+  @Test
+  fun `output directory validation rejects existing files`() {
+    val file = kotlin.io.path.createTempFile("verity-output", ".txt").toFile()
+
+    val error = assertFailsWith<IllegalArgumentException> {
+      validateOutputDirectory(file)
+    }
+
+    assertThat(error.message.orEmpty()).contains("paths.output")
+    assertThat(error.message.orEmpty()).contains("must be a directory")
   }
 }

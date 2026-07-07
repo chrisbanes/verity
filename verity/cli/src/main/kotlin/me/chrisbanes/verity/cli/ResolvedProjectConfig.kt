@@ -66,16 +66,31 @@ data class ResolvedProjectConfig(
 
 fun resolvePlatform(value: String?): Platform? = when (value) {
   null -> null
+
   "android-tv" -> Platform.ANDROID_TV
+
   "android" -> Platform.ANDROID_MOBILE
+
   "ios" -> Platform.IOS
+
   else -> throw IllegalArgumentException(
     "Invalid device.platform '$value'. Expected one of: android-tv, android, ios",
   )
 }
 
-fun resolveAssertionStrategy(value: String?): AssertionStrategy =
-  value?.let(AssertionStrategy::fromConfig) ?: AssertionStrategy.INFER
+fun resolveAssertionStrategy(value: String?): AssertionStrategy = value?.let(AssertionStrategy::fromConfig) ?: AssertionStrategy.INFER
+
+fun validateReadableDirectory(path: File, fieldName: String) {
+  require(path.isDirectory) {
+    "$fieldName must be a directory: ${path.path}"
+  }
+}
+
+fun validateOutputDirectory(path: File) {
+  require(!path.exists() || path.isDirectory) {
+    "paths.output must be a directory when it already exists: ${path.path}"
+  }
+}
 
 val Platform.serialName: String
   get() = when (this) {
