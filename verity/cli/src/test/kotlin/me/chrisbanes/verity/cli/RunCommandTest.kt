@@ -183,7 +183,7 @@ class RunCommandTest {
       platform: android-tv
 
       steps:
-        - [?] Home
+        - "[?] Home"
       """.trimIndent(),
     )
     return file

@@ -70,6 +70,52 @@ class RunCommand(
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
 
+    val path = journeyPath?.let { File(it) }
+      ?: throw UsageError("Journey path required. Use: verity run <path>")
+    val journeys = resolveJourneys(path)
+
+    val suiteResult = suiteRunner?.invoke(journeys)
+      ?: runSuiteWithDevice(parent = parent, journeys = journeys)
+
+    printSuiteResult(suiteResult)
+
+    if (!suiteResult.passed) {
+      throw CliktError("Journey suite failed")
+    }
+  }
+
+  private fun printSuiteResult(suiteResult: SuiteRunResult) {
+    suiteResult.results.forEachIndexed { index, journeyResult ->
+      val resolved = journeyResult.resolvedJourney
+      val result = journeyResult.result
+
+      if (index > 0) echo()
+      echo("File: ${resolved.file.absolutePath}")
+      echo("Journey: ${resolved.journey.name}")
+      echo("App: ${resolved.journey.app}")
+      echo("Platform: ${resolved.journey.platform}")
+
+      if (result.passed) {
+        echo("PASSED: All ${result.segments.size} segments passed")
+      } else {
+        echo("FAILED: Segment ${result.failedAt} failed")
+        result.segments.filter { !it.passed }.forEach { seg ->
+          echo("  Segment ${seg.index}: ${seg.reasoning}")
+        }
+      }
+    }
+
+    echo()
+    echo("Suite result: ${if (suiteResult.passed) "PASSED" else "FAILED"}")
+    echo("Total: ${suiteResult.results.size}")
+    echo("Passed: ${suiteResult.passedCount}")
+    echo("Failed: ${suiteResult.failedCount}")
+  }
+
+  private suspend fun runSuiteWithDevice(
+    parent: Verity,
+    journeys: List<ResolvedJourney>,
+  ): SuiteRunResult {
     val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
     val provider = resolveProvider(parent.provider, config)
 
@@ -81,19 +127,12 @@ class RunCommand(
     val navigatorModel = resolveModel(parent.navigatorModel, config.navigatorModel, provider.defaultNavigatorModel, provider)
     val inspectorModel = resolveModel(parent.inspectorModel, config.inspectorModel, provider.defaultInspectorModel, provider)
 
-    val file = journeyPath?.let { File(it) }
-      ?: throw UsageError("Journey path required. Use: verity run <path.journey.yaml>")
-    if (!file.exists()) throw CliktError("Journey file not found: $file")
-
-    val journey = JourneyLoader.fromFile(file)
     echo("Provider: ${provider.name}")
     echo("Navigator model: ${navigatorModel.id}")
     echo("Inspector model: ${inspectorModel.id}")
-    echo("Running journey: ${journey.name}")
-    echo("App: ${journey.app}")
-    echo("Platform: ${journey.platform}")
 
-    val platform = parent.platform ?: journey.platform
+    val firstJourney = journeys.first().journey
+    val platform = parent.platform ?: firstJourney.platform
     val session = DeviceSessionFactory.connect(
       platform = platform,
       deviceId = parent.device,
@@ -144,17 +183,14 @@ class RunCommand(
         context = injectedContext,
       )
 
-      val result = orchestrator.run(journey)
-
-      echo()
-      if (result.passed) {
-        echo("PASSED: All ${result.segments.size} segments passed")
-      } else {
-        echo("FAILED: Segment ${result.failedAt} failed")
-        result.segments.filter { !it.passed }.forEach { seg ->
-          echo("  Segment ${seg.index}: ${seg.reasoning}")
-        }
-      }
+      return SuiteRunResult(
+        journeys.map { resolved ->
+          ResolvedJourneyResult(
+            resolvedJourney = resolved,
+            result = orchestrator.run(resolved.journey),
+          )
+        },
+      )
     }
   }
 }
