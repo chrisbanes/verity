@@ -65,16 +65,14 @@ sealed class VerityProvider {
     override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
-      AnthropicModels.Opus_3,
       AnthropicModels.Haiku_3,
-      AnthropicModels.Sonnet_3_5,
-      AnthropicModels.Haiku_3_5,
-      AnthropicModels.Sonnet_3_7,
       AnthropicModels.Sonnet_4,
       AnthropicModels.Opus_4,
       AnthropicModels.Opus_4_1,
       AnthropicModels.Opus_4_5,
+      AnthropicModels.Opus_4_6,
       AnthropicModels.Sonnet_4_5,
+      AnthropicModels.Sonnet_4_6,
       AnthropicModels.Haiku_4_5,
     )
 
@@ -190,25 +188,19 @@ sealed class VerityProvider {
     override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
-      BedrockModels.AnthropicClaude3Opus,
-      BedrockModels.AnthropicClaude3Sonnet,
       BedrockModels.AnthropicClaude3Haiku,
       BedrockModels.AnthropicClaude4Opus,
       BedrockModels.AnthropicClaude41Opus,
       BedrockModels.AnthropicClaude45Opus,
+      BedrockModels.AnthropicClaude46Opus,
       BedrockModels.AnthropicClaude4Sonnet,
       BedrockModels.AnthropicClaude4_5Sonnet,
+      BedrockModels.AnthropicClaude4_6Sonnet,
       BedrockModels.AnthropicClaude4_5Haiku,
-      BedrockModels.AnthropicClaude35SonnetV2,
-      BedrockModels.AnthropicClaude35Haiku,
-      BedrockModels.AnthropicClaude21,
-      BedrockModels.AnthropicClaudeInstant,
       BedrockModels.AmazonNovaMicro,
       BedrockModels.AmazonNovaLite,
       BedrockModels.AmazonNovaPro,
       BedrockModels.AmazonNovaPremier,
-      BedrockModels.AI21JambaLarge,
-      BedrockModels.AI21JambaMini,
       BedrockModels.MetaLlama3_0_8BInstruct,
       BedrockModels.MetaLlama3_0_70BInstruct,
       BedrockModels.MetaLlama3_1_8BInstruct,
@@ -219,6 +211,7 @@ sealed class VerityProvider {
       BedrockModels.MetaLlama3_2_11BInstruct,
       BedrockModels.MetaLlama3_2_90BInstruct,
       BedrockModels.MetaLlama3_3_70BInstruct,
+      BedrockModels.MoonshotKimiK2Thinking,
     )
 
     override fun createClient(apiKey: String): BedrockLLMClient = createClient(apiKey, System.getenv("AWS_SECRET_ACCESS_KEY"))
