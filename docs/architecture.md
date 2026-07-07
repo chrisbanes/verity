@@ -334,7 +334,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 ### Commands
 
 ```
-verity run <journey>           Execute a journey autonomously
+verity run <path>              Execute a journey file or directory suite autonomously
 verity list [--path <dir>]     List available journey files
 verity mcp [--transport <t>]   Start MCP server (stdio or http)
 ```
@@ -362,10 +362,13 @@ The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--p
 ### CLI Run
 
 ```
-Journey YAML
+File or directory path
     │
     ▼
-JourneyLoader.load() ──→ Journey(name, app, platform, steps)
+RunCommand.resolveJourneys() ──→ ordered List<ResolvedJourney>
+    │
+    ▼
+JourneyLoader.fromFile() ──→ Journey(name, app, platform, steps)
     │
     ▼
 JourneySegmenter.segment() ──→ List<JourneySegment>
@@ -388,6 +391,8 @@ Orchestrator.run() loops over segments:
     │
     └── Failed? → stop, skip remaining segments
 ```
+
+When the input is a directory, `verity run` discovers non-recursive `*.journey.yaml` files in deterministic filename order, executes every journey, and returns a failed process outcome if any journey fails.
 
 ### MCP Server
 
