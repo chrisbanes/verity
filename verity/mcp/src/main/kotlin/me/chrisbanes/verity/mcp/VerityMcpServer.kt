@@ -58,6 +58,10 @@ class VerityMcpServer(
   private val devicePreflightChecker: DevicePreflightChecker = PlatformDevicePreflightChecker(),
   private val pathPreflightChecker: PathPreflightChecker = PathPreflightChecker(),
   private val requireContext: Boolean = false,
+  private val defaultJourneysPath: File = File("."),
+  private val defaultPlatform: Platform? = null,
+  private val defaultDeviceId: String? = null,
+  private val defaultDisableAnimations: Boolean = false,
 ) {
 
   fun create(): Server {
@@ -172,9 +176,13 @@ class VerityMcpServer(
         },
       ),
     ) { args ->
-      val platform = parsePlatform(args.requireString("platform"))
-      val device = args.string("device")
-      val disableAnimations = args.bool("disable_animations") ?: false
+      val platform = args.string("platform")?.let(::parsePlatform)
+        ?: defaultPlatform
+        ?: throw IllegalArgumentException(
+          "Missing required parameter: platform. Provide platform or configure device.platform.",
+        )
+      val device = args.string("device") ?: defaultDeviceId
+      val disableAnimations = args.bool("disable_animations") ?: defaultDisableAnimations
       val report = devicePreflightChecker.check(platform, device)
       if (!report.passed) return@addSafeTool preflightError(report)
       val handle = sessionManager.open(platform, device, disableAnimations)
@@ -218,7 +226,7 @@ class VerityMcpServer(
         },
       ),
     ) { args ->
-      val dir = File(args.string("path") ?: ".")
+      val dir = args.string("path")?.let(::File) ?: defaultJourneysPath
       val files = withContext(Dispatchers.IO) {
         JourneyLoader.listJourneyFiles(dir)
       }

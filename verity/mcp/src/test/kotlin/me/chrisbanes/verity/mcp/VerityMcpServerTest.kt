@@ -220,4 +220,63 @@ class VerityMcpServerTest {
     assertThat(text)
       .contains("Required project context directory does not exist or is not a directory: /nonexistent/context")
   }
+
+  @Test
+  fun `list journeys uses configured default directory when path argument omitted`() = runTest {
+    val journeysDir = kotlin.io.path.createTempDirectory("verity-journeys").toFile()
+    journeysDir.resolve("sample.journey.yaml").writeText(
+      """
+      name: Sample
+      app: com.example
+      platform: android-tv
+      steps:
+        - "[?] Home"
+      """.trimIndent(),
+    )
+
+    val server = VerityMcpServer(defaultJourneysPath = journeysDir).create()
+    val result = server.tools["list_journeys"]!!.handler.invoke(
+      StubClientConnection(),
+      CallToolRequest(CallToolRequestParams(name = "list_journeys")),
+    )
+
+    val text = (result.content.first() as TextContent).text
+    assertThat(result.isError).isIn(null, false)
+    assertThat(text).contains("sample.journey.yaml")
+  }
+
+  @Test
+  fun `open session uses configured defaults when tool args are omitted`() = runTest {
+    var capturedPlatform: Platform? = null
+    var capturedDeviceId: String? = null
+    var capturedDisableAnimations: Boolean? = null
+    val fakeSession = FakeDeviceSession()
+    val sessionManager = McpDeviceSessionManager(
+      sessionFactory = { platform, deviceId, disableAnimations ->
+        capturedPlatform = platform
+        capturedDeviceId = deviceId
+        capturedDisableAnimations = disableAnimations
+        fakeSession
+      },
+    )
+    val server = VerityMcpServer(
+      sessionManager = sessionManager,
+      devicePreflightChecker = DevicePreflightChecker { _, _ ->
+        PreflightReport()
+      },
+      defaultPlatform = Platform.ANDROID_TV,
+      defaultDeviceId = "configured-device",
+      defaultDisableAnimations = true,
+    ).create()
+
+    val result = server.tools["open_session"]!!.handler.invoke(
+      StubClientConnection(),
+      CallToolRequest(CallToolRequestParams(name = "open_session")),
+    )
+
+    assertThat(result.isError).isIn(null, false)
+    assertThat(capturedPlatform).isEqualTo(Platform.ANDROID_TV)
+    assertThat(capturedDeviceId).isEqualTo("configured-device")
+    assertThat(capturedDisableAnimations).isEqualTo(true)
+  }
 }
