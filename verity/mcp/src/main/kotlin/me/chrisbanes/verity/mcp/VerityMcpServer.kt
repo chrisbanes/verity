@@ -26,6 +26,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -40,12 +42,18 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.preflight.PathPreflightChecker
+import me.chrisbanes.verity.core.preflight.PreflightReport
+import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
+import me.chrisbanes.verity.device.preflight.PlatformDevicePreflightChecker
 
 class VerityMcpServer(
   private val sessionManager: McpDeviceSessionManager = McpDeviceSessionManager(),
   private val snapshotStore: McpHierarchySnapshotStore = McpHierarchySnapshotStore(),
   private val contextPath: File? = null,
   private val skipBundledContext: Boolean = false,
+  private val devicePreflightChecker: DevicePreflightChecker = PlatformDevicePreflightChecker(),
+  private val pathPreflightChecker: PathPreflightChecker = PathPreflightChecker(),
 ) {
 
   fun create(): Server {
@@ -86,6 +94,15 @@ class VerityMcpServer(
 
   private fun success(text: String) = CallToolResult(
     content = listOf(TextContent(text = text)),
+  )
+
+  private val preflightJson = Json {
+    prettyPrint = true
+  }
+
+  private fun preflightError(report: PreflightReport) = CallToolResult(
+    content = listOf(TextContent(text = preflightJson.encodeToString(report))),
+    isError = true,
   )
 
   private fun error(text: String) = CallToolResult(
@@ -154,6 +171,8 @@ class VerityMcpServer(
       val platform = parsePlatform(args.requireString("platform"))
       val device = args.string("device")
       val disableAnimations = args.bool("disable_animations") ?: false
+      val report = devicePreflightChecker.check(platform, device)
+      if (!report.passed) return@addSafeTool preflightError(report)
       val handle = sessionManager.open(platform, device, disableAnimations)
       success(
         "Session opened.\nsession_id: ${handle.sessionId}\ndevice: ${handle.deviceId}\nplatform: $platform",
@@ -332,6 +351,8 @@ class VerityMcpServer(
       sessionManager.withSession(sessionId) { session ->
         if (saveToFile != null) {
           val target = Path.of(saveToFile)
+          val report = pathPreflightChecker.requireWritableFileTarget(target, "Screenshot output")
+          if (!report.passed) return@withSession preflightError(report)
           session.captureScreenshot(target)
           success("Screenshot saved to: $saveToFile")
         } else {

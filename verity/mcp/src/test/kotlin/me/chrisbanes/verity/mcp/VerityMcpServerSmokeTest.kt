@@ -13,7 +13,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.device.FakeDeviceSession
+import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 
 class VerityMcpServerSmokeTest {
 
@@ -30,7 +32,10 @@ class VerityMcpServerSmokeTest {
     val sessionManager = McpDeviceSessionManager(
       sessionFactory = { _, _, _ -> fakeSession },
     )
-    val server = VerityMcpServer(sessionManager = sessionManager)
+    val server = VerityMcpServer(
+      sessionManager = sessionManager,
+      devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+    )
     return server to fakeSession
   }
 
