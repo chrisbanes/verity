@@ -7,6 +7,7 @@ import assertk.assertions.isEqualTo
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.SegmentResult
@@ -15,7 +16,7 @@ class RunCommandTest {
 
   @Test
   fun `single-file input runs one journey`() {
-    val dir = createTempDir(prefix = "verity-run-single")
+    val dir = createTempDirectory("verity-run-single").toFile()
     try {
       val file = writeJourney(dir, "single.journey.yaml", "Single journey")
       val seen = mutableListOf<String>()
@@ -47,7 +48,7 @@ class RunCommandTest {
 
   @Test
   fun `directory input runs journey files in sorted filename order`() {
-    val dir = createTempDir(prefix = "verity-run-suite")
+    val dir = createTempDirectory("verity-run-suite").toFile()
     try {
       writeJourney(dir, "b.journey.yaml", "Second")
       writeJourney(dir, "a.journey.yaml", "First")
@@ -81,7 +82,7 @@ class RunCommandTest {
 
   @Test
   fun `empty directory returns clear non-zero error`() {
-    val dir = createTempDir(prefix = "verity-run-empty")
+    val dir = createTempDirectory("verity-run-empty").toFile()
     try {
       val result = Verity()
         .subcommands(runCommand { error("Suite runner should not be called") })
@@ -96,7 +97,7 @@ class RunCommandTest {
 
   @Test
   fun `failing journey output includes file name journey name and failed segment`() {
-    val dir = createTempDir(prefix = "verity-run-failure")
+    val dir = createTempDirectory("verity-run-failure").toFile()
     try {
       val file = writeJourney(dir, "failure.journey.yaml", "Failure journey")
       val command = runCommand { journeys ->
@@ -133,7 +134,7 @@ class RunCommandTest {
 
   @Test
   fun `multiple journeys aggregate final pass fail outcome`() {
-    val dir = createTempDir(prefix = "verity-run-aggregate")
+    val dir = createTempDirectory("verity-run-aggregate").toFile()
     try {
       writeJourney(dir, "pass.journey.yaml", "Passing journey")
       writeJourney(dir, "fail.journey.yaml", "Failing journey")

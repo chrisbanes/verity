@@ -12,16 +12,60 @@ import com.github.ajalt.clikt.parameters.arguments.optional
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import me.chrisbanes.verity.agent.InspectorAgent
+import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.core.context.ContextLoader
 import me.chrisbanes.verity.core.journey.JourneyLoader
+import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.device.DeviceSessionFactory
 
-class RunCommand : CliktCommand(name = "run") {
+data class ResolvedJourney(
+  val file: File,
+  val journey: Journey,
+)
+
+data class ResolvedJourneyResult(
+  val resolvedJourney: ResolvedJourney,
+  val result: JourneyResult,
+)
+
+data class SuiteRunResult(
+  val results: List<ResolvedJourneyResult>,
+) {
+  val passed: Boolean get() = results.all { it.result.passed }
+  val passedCount: Int get() = results.count { it.result.passed }
+  val failedCount: Int get() = results.count { !it.result.passed }
+}
+
+class RunCommand(
+  private val loadJourney: (File) -> Journey = JourneyLoader::fromFile,
+  private val listJourneyFiles: (File) -> List<File> = JourneyLoader::listJourneyFiles,
+  private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
+) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
   private val journeyPath by argument("journey", help = "Path to .journey.yaml file").optional()
+
+  private fun resolveJourneys(path: File): List<ResolvedJourney> {
+    if (!path.exists()) {
+      throw CliktError("Journey path not found: ${path.absolutePath}")
+    }
+
+    return when {
+      path.isDirectory -> {
+        val files = listJourneyFiles(path)
+        if (files.isEmpty()) {
+          throw CliktError("No journey files found in: ${path.absolutePath}")
+        }
+        files.map { file -> ResolvedJourney(file = file, journey = loadJourney(file)) }
+      }
+
+      path.isFile -> listOf(ResolvedJourney(file = path, journey = loadJourney(path)))
+
+      else -> throw CliktError("Journey path is not a file or directory: ${path.absolutePath}")
+    }
+  }
 
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
