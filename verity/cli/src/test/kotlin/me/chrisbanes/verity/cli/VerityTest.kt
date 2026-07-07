@@ -19,6 +19,7 @@ class VerityTest {
     assertThat(result.output).contains("--provider")
     assertThat(result.output).contains("--navigator-model")
     assertThat(result.output).contains("--inspector-model")
+    assertThat(result.output).contains("--require-context")
   }
 
   @Test

@@ -11,6 +11,7 @@ import assertk.assertions.isNotNull
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import java.io.File
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
@@ -145,5 +146,78 @@ class VerityMcpServerTest {
 
     assertThat(result.isError).isEqualTo(true)
     assertThat(text).contains("path.not_writable")
+  }
+
+  @Test
+  fun `get_context reports optional missing configured path`() = runTest {
+    val server = VerityMcpServer(contextPath = File("/nonexistent/context")).create()
+    val tool = server.tools["get_context"]!!
+
+    val result = tool.handler.invoke(
+      StubClientConnection(),
+      CallToolRequest(CallToolRequestParams(name = "get_context")),
+    )
+
+    val text = (result.content.first() as TextContent).text
+    assertThat(result.isError).isIn(null, false)
+    assertThat(text).contains("Project context: optional, missing directory: /nonexistent/context")
+    assertThat(text).contains("Maestro")
+  }
+
+  @Test
+  fun `get_context errors when bundled and project context are absent`() = runTest {
+    val server = VerityMcpServer(skipBundledContext = true).create()
+    val tool = server.tools["get_context"]!!
+
+    val result = tool.handler.invoke(
+      StubClientConnection(),
+      CallToolRequest(CallToolRequestParams(name = "get_context")),
+    )
+
+    val text = (result.content.first() as TextContent).text
+    assertThat(result.isError).isEqualTo(true)
+    assertThat(text).contains("No context path configured and no bundled defaults found.")
+  }
+
+  @Test
+  fun `get_context reports loaded project context files`() = runTest {
+    val dir = kotlin.io.path.createTempDirectory("mcp-context").toFile()
+    try {
+      File(dir, "app.md").writeText("# App context")
+      val server = VerityMcpServer(contextPath = dir).create()
+      val tool = server.tools["get_context"]!!
+
+      val result = tool.handler.invoke(
+        StubClientConnection(),
+        CallToolRequest(CallToolRequestParams(name = "get_context")),
+      )
+
+      val text = (result.content.first() as TextContent).text
+      assertThat(result.isError).isIn(null, false)
+      assertThat(text).contains("Project context: loaded 1 file(s)")
+      assertThat(text).contains("app.md")
+      assertThat(text).contains("# App context")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `get_context errors when required configured path is missing`() = runTest {
+    val server = VerityMcpServer(
+      contextPath = File("/nonexistent/context"),
+      requireContext = true,
+    ).create()
+    val tool = server.tools["get_context"]!!
+
+    val result = tool.handler.invoke(
+      StubClientConnection(),
+      CallToolRequest(CallToolRequestParams(name = "get_context")),
+    )
+
+    val text = (result.content.first() as TextContent).text
+    assertThat(result.isError).isEqualTo(true)
+    assertThat(text)
+      .contains("Required project context directory does not exist or is not a directory: /nonexistent/context")
   }
 }

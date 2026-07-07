@@ -1,9 +1,12 @@
 package me.chrisbanes.verity.cli
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
+import com.github.ajalt.clikt.core.subcommands
+import com.github.ajalt.clikt.testing.test
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.agent.FakeTextAgent
@@ -16,6 +19,29 @@ import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.FakeDeviceSession
 
 class RunCommandSmokeTest {
+
+  @Test
+  fun `run command fails before device connection when required context is missing`() {
+    val journeyUrl = javaClass.classLoader.getResource("smoke/minimal.journey.yaml")!!
+
+    val result = Verity()
+      .subcommands(RunCommand(), ListCommand(), McpCommand())
+      .test(
+        listOf(
+          "--provider",
+          "ollama",
+          "--context-path",
+          "/nonexistent/context",
+          "--require-context",
+          "run",
+          java.io.File(journeyUrl.toURI()).absolutePath,
+        ),
+      )
+
+    assertThat(result.statusCode).isEqualTo(1)
+    assertThat(result.output)
+      .contains("Required project context directory does not exist or is not a directory: /nonexistent/context")
+  }
 
   @Test
   fun `smoke journey loads and passes with visible text`() = runTest {

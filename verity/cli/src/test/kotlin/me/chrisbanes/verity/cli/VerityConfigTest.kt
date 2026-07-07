@@ -13,11 +13,13 @@ class VerityConfigTest {
       provider: openai
       navigator-model: gpt-4o-mini
       inspector-model: gpt-4o
+      require-context: true
       """.trimIndent()
     val config = VerityConfig.fromYaml(yaml)
     assertThat(config.provider).isEqualTo("openai")
     assertThat(config.navigatorModel).isEqualTo("gpt-4o-mini")
     assertThat(config.inspectorModel).isEqualTo("gpt-4o")
+    assertThat(config.requireContext).isEqualTo(true)
   }
 
   @Test
@@ -27,6 +29,7 @@ class VerityConfigTest {
     assertThat(config.provider).isEqualTo("google")
     assertThat(config.navigatorModel).isNull()
     assertThat(config.inspectorModel).isNull()
+    assertThat(config.requireContext).isNull()
   }
 
   @Test
@@ -35,6 +38,7 @@ class VerityConfigTest {
     assertThat(config.provider).isNull()
     assertThat(config.navigatorModel).isNull()
     assertThat(config.inspectorModel).isNull()
+    assertThat(config.requireContext).isNull()
   }
 
   @Test
@@ -53,5 +57,35 @@ class VerityConfigTest {
     } finally {
       tempFile.delete()
     }
+  }
+
+  @Test
+  fun `parses require context config`() {
+    val yaml =
+      """
+      require-context: true
+      """.trimIndent()
+
+    val config = VerityConfig.fromYaml(yaml)
+
+    assertThat(config.requireContext).isEqualTo(true)
+  }
+
+  @Test
+  fun `resolveRequiredContext uses cli flag before config`() {
+    assertThat(resolveRequiredContext(cliRequireContext = true, config = VerityConfig(requireContext = false)))
+      .isEqualTo(true)
+  }
+
+  @Test
+  fun `resolveRequiredContext uses config when cli flag is false`() {
+    assertThat(resolveRequiredContext(cliRequireContext = false, config = VerityConfig(requireContext = true)))
+      .isEqualTo(true)
+  }
+
+  @Test
+  fun `resolveRequiredContext defaults to false`() {
+    assertThat(resolveRequiredContext(cliRequireContext = false, config = VerityConfig()))
+      .isEqualTo(false)
   }
 }

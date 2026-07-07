@@ -36,7 +36,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import me.chrisbanes.verity.core.context.ContextBundle
 import me.chrisbanes.verity.core.context.ContextLoader
+import me.chrisbanes.verity.core.context.ContextStatus
+import me.chrisbanes.verity.core.context.ContextValidationException
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.journey.JourneyLoader
@@ -54,6 +57,7 @@ class VerityMcpServer(
   private val skipBundledContext: Boolean = false,
   private val devicePreflightChecker: DevicePreflightChecker = PlatformDevicePreflightChecker(),
   private val pathPreflightChecker: PathPreflightChecker = PathPreflightChecker(),
+  private val requireContext: Boolean = false,
 ) {
 
   fun create(): Server {
@@ -550,35 +554,46 @@ class VerityMcpServer(
       ),
     ) { args ->
       val pathArg = args.string("path")
-      val contextDir = when {
-        pathArg != null -> File(pathArg)
-
-        contextPath != null -> contextPath
-
-        else -> {
-          if (skipBundledContext) {
-            return@addSafeTool error(
-              "No context path configured. Use the 'path' parameter or start the server with --context-path.",
-            )
-          }
-          val bundled = ContextLoader.loadBundled()
-          return@addSafeTool if (bundled.isNotBlank()) {
-            success(bundled)
-          } else {
-            error("No context path configured and no bundled defaults found.")
-          }
+      val contextDir = pathArg?.let { File(it) } ?: contextPath
+      val projectContext = try {
+        withContext(Dispatchers.IO) {
+          ContextLoader.loadProject(directory = contextDir, required = requireContext)
         }
-      }
-      val appContext = withContext(Dispatchers.IO) {
-        ContextLoader.load(contextDir)
+      } catch (e: ContextValidationException) {
+        return@addSafeTool error(e.message ?: "Project context validation failed")
       }
       val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
-      val combined = listOf(bundled, appContext).filter { it.isNotBlank() }.joinToString("\n\n")
-      if (combined.isBlank()) {
-        success("No context files found in: ${contextDir.absolutePath}")
+      val metadata = projectContext.describeForMcp(contextDir, requireContext)
+      val usableContext = listOf(bundled, projectContext.text)
+        .filter { it.isNotBlank() }
+        .joinToString("\n\n")
+
+      if (usableContext.isBlank()) {
+        error("No context path configured and no bundled defaults found.")
       } else {
-        success(combined)
+        val content = listOf(metadata, usableContext)
+          .filter { it.isNotBlank() }
+          .joinToString("\n\n")
+        success(content)
       }
+    }
+  }
+
+  private fun ContextBundle.describeForMcp(contextDir: File?, required: Boolean): String {
+    val mode = if (required) "required" else "optional"
+    return when (status) {
+      ContextStatus.LOADED -> buildString {
+        appendLine("Project context: loaded ${loadedFiles.size} file(s)")
+        loadedFiles.forEach { appendLine("- ${it.absolutePath}") }
+      }.trim()
+
+      ContextStatus.NOT_CONFIGURED -> "Project context: $mode, not configured"
+
+      ContextStatus.MISSING_DIRECTORY ->
+        "Project context: $mode, missing directory: ${contextDir!!.absolutePath}"
+
+      ContextStatus.EMPTY_DIRECTORY ->
+        "Project context: $mode, no markdown files found in: ${contextDir!!.absolutePath}"
     }
   }
 

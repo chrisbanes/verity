@@ -1,8 +1,12 @@
 package me.chrisbanes.verity.core.context
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.containsExactly
+import assertk.assertions.hasMessage
 import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNotEmpty
 import java.io.File
@@ -65,6 +69,92 @@ class ContextLoaderTest {
       val context = ContextLoader.load(dir)
       assertThat(context).contains("# App context")
       assertThat(context).contains("# Extra context")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `loadProject returns not configured for optional null directory`() {
+    val bundle = ContextLoader.loadProject(directory = null, required = false)
+
+    assertThat(bundle.status).isEqualTo(ContextStatus.NOT_CONFIGURED)
+    assertThat(bundle.text).isEmpty()
+    assertThat(bundle.loadedFiles).isEmpty()
+  }
+
+  @Test
+  fun `loadProject returns missing directory for optional nonexistent path`() {
+    val directory = File("/nonexistent/path")
+
+    val bundle = ContextLoader.loadProject(directory = directory, required = false)
+
+    assertThat(bundle.status).isEqualTo(ContextStatus.MISSING_DIRECTORY)
+    assertThat(bundle.text).isEmpty()
+    assertThat(bundle.loadedFiles).isEmpty()
+  }
+
+  @Test
+  fun `loadProject returns empty directory for optional directory without markdown files`() {
+    val dir = kotlin.io.path.createTempDirectory("empty-context").toFile()
+    try {
+      File(dir, "notes.txt").writeText("ignored")
+
+      val bundle = ContextLoader.loadProject(directory = dir, required = false)
+
+      assertThat(bundle.status).isEqualTo(ContextStatus.EMPTY_DIRECTORY)
+      assertThat(bundle.text).isEmpty()
+      assertThat(bundle.loadedFiles).isEmpty()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `loadProject reports loaded markdown files in deterministic order`() {
+    val dir = createTempContextDir(
+      "b.markdown" to "Section B",
+      "a.md" to "Section A",
+      "notes.txt" to "ignored",
+    )
+    try {
+      val bundle = ContextLoader.loadProject(directory = dir, required = true)
+
+      assertThat(bundle.status).isEqualTo(ContextStatus.LOADED)
+      assertThat(bundle.text).isEqualTo("Section A\n\nSection B")
+      assertThat(bundle.loadedFiles.map { it.name }).containsExactly("a.md", "b.markdown")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `loadProject throws clear error when required context is not configured`() {
+    assertFailure {
+      ContextLoader.loadProject(directory = null, required = true)
+    }.hasMessage("Required project context is not configured. Set --context-path before using --require-context.")
+  }
+
+  @Test
+  fun `loadProject throws clear error when required context directory is missing`() {
+    val directory = File("/nonexistent/path")
+
+    assertFailure {
+      ContextLoader.loadProject(directory = directory, required = true)
+    }.hasMessage(
+      "Required project context directory does not exist or is not a directory: ${directory.absolutePath}",
+    )
+  }
+
+  @Test
+  fun `loadProject throws clear error when required context directory is empty`() {
+    val dir = kotlin.io.path.createTempDirectory("required-empty-context").toFile()
+    try {
+      assertFailure {
+        ContextLoader.loadProject(directory = dir, required = true)
+      }.hasMessage(
+        "Required project context directory contains no markdown files: ${dir.absolutePath}",
+      )
     } finally {
       dir.deleteRecursively()
     }
