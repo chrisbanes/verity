@@ -195,6 +195,19 @@ object DeviceSessionFactory {
 
 Auto-discovers the device if no ID is given. When `disableAnimations` is true, wraps the session in an `AnimationRestoringSession` decorator that saves scales on connect and restores on close.
 
+### Preflight Checks
+
+Verity validates the local environment before opening device sessions or constructing LLM clients.
+
+| Module | Responsibility |
+|--------|----------------|
+| `:verity:core` | `PreflightReport`, `PreflightIssue`, issue codes, and path/temp filesystem checks |
+| `:verity:device` | Android ADB checks, iOS `xcrun simctl` checks, and platform routing |
+| `:verity:cli` | CLI-only provider, model, credential, journey path, context path, and selected platform composition |
+| `:verity:mcp` | Device/session preflight for `open_session` and output path checks for screenshot files |
+
+MCP intentionally does not validate LLM provider, model, or credential configuration. The MCP server exposes raw device tools; LLM execution belongs to the external MCP caller.
+
 ### Hierarchy Rendering
 
 The accessibility tree renders to indented text with configurable attribute filtering:
