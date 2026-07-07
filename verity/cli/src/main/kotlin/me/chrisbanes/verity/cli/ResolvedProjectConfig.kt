@@ -76,3 +76,10 @@ fun resolvePlatform(value: String?): Platform? = when (value) {
 
 fun resolveAssertionStrategy(value: String?): AssertionStrategy =
   value?.let(AssertionStrategy::fromConfig) ?: AssertionStrategy.INFER
+
+val Platform.serialName: String
+  get() = when (this) {
+    Platform.ANDROID_TV -> "android-tv"
+    Platform.ANDROID_MOBILE -> "android"
+    Platform.IOS -> "ios"
+  }

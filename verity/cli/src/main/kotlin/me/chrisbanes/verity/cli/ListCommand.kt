@@ -2,7 +2,6 @@ package me.chrisbanes.verity.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.Context
-import com.github.ajalt.clikt.parameters.options.default
 import com.github.ajalt.clikt.parameters.options.option
 import java.io.File
 import me.chrisbanes.verity.core.journey.JourneyLoader
@@ -11,15 +10,20 @@ class ListCommand : CliktCommand(name = "list") {
   override fun help(context: Context): String = "List available journey files"
 
   private val path by option("--path", help = "Directory to search for journeys")
-    .default(".")
 
   override fun run() {
-    val dir = File(path)
-    require(dir.isDirectory) { "Not a directory: $path" }
+    val parent = currentContext.parent?.command as Verity
+    val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
+    val resolved = ResolvedProjectConfig.resolve(
+      config = config,
+      cli = parent.projectCliOptions().copy(journeysPath = path ?: parent.journeysPath),
+    )
+    val dir = resolved.journeysPath
+    require(dir.isDirectory) { "Not a directory: ${dir.path}" }
 
     val journeys = JourneyLoader.listJourneyFiles(dir)
     if (journeys.isEmpty()) {
-      echo("No journey files found in $path")
+      echo("No journey files found in ${dir.path}")
       return
     }
 
