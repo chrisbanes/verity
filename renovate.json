@@ -3,6 +3,11 @@
   "extends": ["config:recommended"],
   "packageRules": [
     {
+      "matchFileNames": ["verity/smoke-tests/build.gradle.kts"],
+      "matchPackagePrefixes": ["io.grpc:grpc"],
+      "enabled": false
+    },
+    {
       "matchPackagePrefixes": ["io.grpc:grpc"],
       "groupName": "gRPC"
     },
