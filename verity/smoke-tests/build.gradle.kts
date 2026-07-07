@@ -8,8 +8,8 @@ dependencies {
   testImplementation(libs.koog.agents)
 }
 
-// Maestro 2.3.0 requires gRPC <=1.56 (uses AbstractManagedChannelImplBuilder removed in 1.57).
-// Override the forced 1.79.0 from :verity:device to restore Maestro-compatible versions.
+// Maestro 2.6.1 requires gRPC <=1.56 (uses AbstractManagedChannelImplBuilder removed in 1.57).
+// Override the main gRPC version from :verity:device to restore Maestro-compatible versions.
 val maestroGrpcVersion = "1.50.2"
 configurations.all {
   resolutionStrategy {
