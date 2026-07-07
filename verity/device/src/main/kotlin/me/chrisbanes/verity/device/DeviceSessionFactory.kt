@@ -5,6 +5,7 @@ import dadb.adbserver.AdbServer
 import device.SimctlIOSDevice
 import ios.LocalIOSDevice
 import ios.xctest.XCTestIOSDevice
+import java.io.File
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -109,6 +110,7 @@ object DeviceSessionFactory {
 
     val installer = LocalXCTestInstaller(
       deviceId = resolvedId,
+      logsDir = File(System.getProperty("java.io.tmpdir")),
       deviceType = IOSDeviceType.SIMULATOR,
       defaultPort = 22087,
       iOSDriverConfig = LocalXCTestInstaller.IOSDriverConfig(
