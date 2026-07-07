@@ -1,7 +1,7 @@
 package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
-import ai.koog.agents.core.agent.config.AIAgentConfigBase
+import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
@@ -12,14 +12,15 @@ import ai.koog.prompt.llm.LLModel
  */
 class FakeTextAgent(
   private val responder: suspend (String) -> String,
-) : AIAgent<String, String> {
+) : AIAgent<String, String>() {
   override val id: String = "fake-agent"
-  override val agentConfig: AIAgentConfigBase = object : AIAgentConfigBase {
-    override val prompt: Prompt = Prompt.Empty
-    override val model: LLModel = LLModel(provider = LLMProvider.OpenAI, id = "fake")
-  }
+  override val agentConfig: AIAgentConfig = AIAgentConfig(
+    prompt = Prompt.Empty,
+    model = LLModel(provider = LLMProvider.OpenAI, id = "fake"),
+    maxAgentIterations = 1,
+  )
 
-  override suspend fun getState(): AIAgent.Companion.State<String> = AIAgent.Companion.State.NotStarted()
-  override suspend fun run(agentInput: String): String = responder(agentInput)
+  override suspend fun run(agentInput: String, sessionId: String?): String = responder(agentInput)
+  override fun createSession(sessionId: String?) = error("FakeTextAgent does not support sessions")
   override suspend fun close() = Unit
 }
