@@ -24,8 +24,7 @@ data class VerityConfig(
   }
 }
 
-fun resolveRequiredContext(cliRequireContext: Boolean, config: VerityConfig): Boolean =
-  cliRequireContext || config.requireContext == true
+fun resolveRequiredContext(cliRequireContext: Boolean, config: VerityConfig): Boolean = cliRequireContext || config.requireContext == true
 
 fun resolveProvider(cliProvider: String?, config: VerityConfig): VerityProvider {
   val name = cliProvider ?: config.provider ?: "anthropic"

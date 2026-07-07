@@ -82,6 +82,7 @@ object ContextLoader {
 
   private fun ContextBundle.requiredFailureMessage(directory: File?): String = when (status) {
     ContextStatus.LOADED -> error("Loaded context is not a validation failure")
+
     ContextStatus.NOT_CONFIGURED ->
       "Required project context is not configured. Set --context-path before using --require-context."
 

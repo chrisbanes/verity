@@ -1,7 +1,7 @@
 package me.chrisbanes.verity.core.context
 
-import assertk.assertThat
 import assertk.assertFailure
+import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.hasMessage
