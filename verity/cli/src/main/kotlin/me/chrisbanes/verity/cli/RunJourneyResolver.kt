@@ -1,30 +1,27 @@
 package me.chrisbanes.verity.cli
 
 import java.io.File
-import me.chrisbanes.verity.core.journey.JourneyLoader
+import me.chrisbanes.verity.core.model.Journey
+import me.chrisbanes.verity.core.model.Platform
 
 fun resolveRunJourneyFile(
   cliJourneyPath: String?,
-  configuredJourneysPath: File,
+  configuredJourneysPath: File?,
 ): File {
   cliJourneyPath?.let { return File(it) }
 
-  if (configuredJourneysPath.isFile) return configuredJourneysPath
+  requireNotNull(configuredJourneysPath) {
+    "Journey path required. Use: verity run <path.journey.yaml> or configure paths.journeys."
+  }
 
-  require(configuredJourneysPath.isDirectory) {
+  require(configuredJourneysPath.isFile || configuredJourneysPath.isDirectory) {
     "Journey path is not a file or directory: $configuredJourneysPath"
   }
 
-  val journeyFiles = JourneyLoader.listJourneyFiles(configuredJourneysPath)
-  return when (journeyFiles.size) {
-    1 -> journeyFiles.single()
-
-    0 -> throw IllegalArgumentException(
-      "No journey files found in ${configuredJourneysPath.path}. Provide a journey path.",
-    )
-
-    else -> throw IllegalArgumentException(
-      "Multiple journey files found in ${configuredJourneysPath.path}. Provide a journey path.",
-    )
-  }
+  return configuredJourneysPath
 }
+
+fun applyResolvedPlatform(
+  journey: Journey,
+  platform: Platform?,
+): Journey = platform?.let { journey.copy(platform = it) } ?: journey

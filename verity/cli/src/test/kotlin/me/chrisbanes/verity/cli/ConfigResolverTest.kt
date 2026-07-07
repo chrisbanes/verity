@@ -112,6 +112,7 @@ class ConfigResolverTest {
     )
 
     assertThat(resolved.journeysPath.path).isEqualTo("cli-journeys")
+    assertThat(resolved.configuredJourneysPath?.path).isEqualTo("cli-journeys")
     assertThat(resolved.contextPath?.path).isEqualTo("cli-context")
     assertThat(resolved.outputPath.path).isEqualTo("cli-output")
     assertThat(resolved.platform).isEqualTo(Platform.IOS)
@@ -131,6 +132,7 @@ class ConfigResolverTest {
     )
 
     assertThat(resolved.journeysPath.path).isEqualTo(".")
+    assertThat(resolved.configuredJourneysPath).isNull()
     assertThat(resolved.contextPath).isNull()
     assertThat(resolved.outputPath.path).isEqualTo("build/verity")
     assertThat(resolved.platform).isNull()

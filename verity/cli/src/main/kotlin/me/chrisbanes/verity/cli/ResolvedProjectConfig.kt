@@ -20,6 +20,7 @@ data class ProjectCliOptions(
 
 data class ResolvedProjectConfig(
   val journeysPath: File,
+  val configuredJourneysPath: File?,
   val contextPath: File?,
   val outputPath: File,
   val platform: Platform?,
@@ -36,8 +37,10 @@ data class ResolvedProjectConfig(
       cli: ProjectCliOptions,
     ): ResolvedProjectConfig {
       val provider = resolveProvider(cli.provider, config)
+      val configuredJourneysPath = cli.journeysPath ?: config.paths?.journeys
       return ResolvedProjectConfig(
-        journeysPath = File(cli.journeysPath ?: config.paths?.journeys ?: "."),
+        journeysPath = File(configuredJourneysPath ?: "."),
+        configuredJourneysPath = configuredJourneysPath?.let(::File),
         contextPath = (cli.contextPath ?: config.paths?.context)?.let(::File),
         outputPath = File(cli.outputPath ?: config.paths?.output ?: "build/verity"),
         platform = resolvePlatform(cli.platform ?: config.device?.platform),

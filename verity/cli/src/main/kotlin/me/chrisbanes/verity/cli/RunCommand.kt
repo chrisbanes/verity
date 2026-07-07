@@ -87,7 +87,7 @@ class RunCommand(
     val journey = loadJourney(file, assertionStrategy)
     return ResolvedJourney(
       file = file,
-      journey = platformOverride?.let { journey.copy(platform = it) } ?: journey,
+      journey = applyResolvedPlatform(journey, platformOverride),
     )
   }
 
@@ -114,7 +114,7 @@ class RunCommand(
     validateOutputDirectory(resolved.outputPath)
 
     val path = try {
-      resolveRunJourneyFile(journeyPath, resolved.journeysPath)
+      resolveRunJourneyFile(journeyPath, resolved.configuredJourneysPath)
     } catch (e: IllegalArgumentException) {
       throw UsageError(e.message ?: "Invalid journey path")
     }
