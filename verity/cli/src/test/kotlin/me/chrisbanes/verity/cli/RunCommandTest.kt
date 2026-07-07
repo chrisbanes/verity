@@ -96,6 +96,26 @@ class RunCommandTest {
   }
 
   @Test
+  fun `directory input rejects mixed journey platforms`() {
+    val dir = createTempDirectory("verity-run-mixed-platforms").toFile()
+    try {
+      writeJourney(dir, "android.journey.yaml", "Android journey", platform = "android-tv")
+      writeJourney(dir, "ios.journey.yaml", "iOS journey", platform = "ios")
+
+      val result = Verity()
+        .subcommands(runCommand { error("Suite runner should not be called") })
+        .test("run ${dir.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.output).contains("Directory suites must use a single platform")
+      assertThat(result.output).contains("android.journey.yaml: ANDROID_TV")
+      assertThat(result.output).contains("ios.journey.yaml: IOS")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `failing journey output includes file name journey name and failed segment`() {
     val dir = createTempDirectory("verity-run-failure").toFile()
     try {
@@ -174,13 +194,18 @@ class RunCommandTest {
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
   ): RunCommand = RunCommand(suiteRunner = runner)
 
-  private fun writeJourney(dir: File, name: String, journeyName: String): File {
+  private fun writeJourney(
+    dir: File,
+    name: String,
+    journeyName: String,
+    platform: String = "android-tv",
+  ): File {
     val file = File(dir, name)
     file.writeText(
       """
       name: $journeyName
       app: com.example.app
-      platform: android-tv
+      platform: $platform
 
       steps:
         - "[?] Home"

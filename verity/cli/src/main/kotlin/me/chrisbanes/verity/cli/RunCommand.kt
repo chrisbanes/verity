@@ -59,12 +59,25 @@ class RunCommand(
           throw CliktError("No journey files found in: ${path.absolutePath}")
         }
         files.map { file -> ResolvedJourney(file = file, journey = loadJourney(file)) }
+          .also(::requireSinglePlatform)
       }
 
       path.isFile -> listOf(ResolvedJourney(file = path, journey = loadJourney(path)))
 
       else -> throw CliktError("Journey path is not a file or directory: ${path.absolutePath}")
     }
+  }
+
+  private fun requireSinglePlatform(journeys: List<ResolvedJourney>) {
+    val platforms = journeys.map { it.journey.platform }.distinct()
+    if (platforms.size <= 1) return
+
+    val platformDetails = journeys.joinToString(separator = ", ") { resolved ->
+      "${resolved.file.name}: ${resolved.journey.platform}"
+    }
+    throw CliktError(
+      "Directory suites must use a single platform. Found: $platformDetails",
+    )
   }
 
   override fun run() = runBlocking {
