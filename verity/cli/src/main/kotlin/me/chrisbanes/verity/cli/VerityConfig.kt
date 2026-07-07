@@ -11,6 +11,7 @@ data class VerityConfig(
   val provider: String? = null,
   @SerialName("navigator-model") val navigatorModel: String? = null,
   @SerialName("inspector-model") val inspectorModel: String? = null,
+  @SerialName("require-context") val requireContext: Boolean? = null,
 ) {
   companion object {
     fun fromYaml(yaml: String): VerityConfig = Yaml.default.decodeFromString(serializer(), yaml)
@@ -22,6 +23,9 @@ data class VerityConfig(
     }
   }
 }
+
+fun resolveRequiredContext(cliRequireContext: Boolean, config: VerityConfig): Boolean =
+  cliRequireContext || config.requireContext == true
 
 fun resolveProvider(cliProvider: String?, config: VerityConfig): VerityProvider {
   val name = cliProvider ?: config.provider ?: "anthropic"

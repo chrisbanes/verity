@@ -23,6 +23,10 @@ class Verity : CliktCommand(name = "verity") {
     "--context-path",
     help = "Optional path to additional context markdown files",
   )
+  val requireContext: Boolean by option(
+    "--require-context",
+    help = "Fail when project context is not configured or contains no markdown files",
+  ).flag()
   val noAnimations: Boolean by option("--no-animations", help = "Disable device animations")
     .flag()
   val noBundledContext: Boolean by option(
