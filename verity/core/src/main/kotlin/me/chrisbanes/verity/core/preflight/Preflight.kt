@@ -33,8 +33,7 @@ data class PreflightReport(
   val passed: Boolean
     get() = !hasErrors
 
-  operator fun plus(other: PreflightReport): PreflightReport =
-    PreflightReport(issues = issues + other.issues)
+  operator fun plus(other: PreflightReport): PreflightReport = PreflightReport(issues = issues + other.issues)
 
   fun renderPlainText(): String {
     if (issues.isEmpty()) return "Preflight passed."

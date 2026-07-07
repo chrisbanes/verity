@@ -66,6 +66,5 @@ class AndroidPreflightCheckerTest {
 private class FakeProcessRunner(
   private val results: Map<List<String>, ProcessResult>,
 ) : ProcessRunner {
-  override suspend fun run(command: List<String>): ProcessResult =
-    results[command] ?: error("Unexpected command: $command")
+  override suspend fun run(command: List<String>): ProcessResult = results[command] ?: error("Unexpected command: $command")
 }

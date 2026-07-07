@@ -104,15 +104,13 @@ class AndroidPreflightChecker(
     }
   }
 
-  private suspend fun runAdb(command: List<String>): ProcessResult? =
-    try {
-      processRunner.run(command)
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: IOException) {
-      null
-    }
+  private suspend fun runAdb(command: List<String>): ProcessResult? = try {
+    processRunner.run(command)
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: IOException) {
+    null
+  }
 
-  private fun isIpAddress(value: String): Boolean =
-    Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""").matches(value)
+  private fun isIpAddress(value: String): Boolean = Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""").matches(value)
 }
