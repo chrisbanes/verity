@@ -3,6 +3,8 @@ package me.chrisbanes.verity.cli
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.doesNotContain
+import assertk.assertions.exists
 import assertk.assertions.isEqualTo
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
@@ -190,9 +192,253 @@ class RunCommandTest {
     }
   }
 
+  @Test
+  fun `dry run uses dry-run runner and does not call normal suite runner`() {
+    val dir = createTempDirectory("verity-run-dry").toFile()
+    try {
+      val output = File(dir, "out")
+      val file = writeJourney(dir, "dry.journey.yaml", "Dry journey")
+      var dryRunCalled = false
+      val command = RunCommand(
+        suiteRunner = { error("normal suite runner should not be called") },
+        dryRunSuiteRunner = { journeys, outputPath ->
+          dryRunCalled = true
+          assertThat(journeys.map { it.file.name }).containsExactly("dry.journey.yaml")
+          assertThat(outputPath).isEqualTo(output)
+          DryRunSuiteReport(
+            journeys = listOf(
+              DryRunJourneyReport(
+                resolvedJourney = journeys.single(),
+                launchYaml = "appId: com.example.app\n---\n- launchApp",
+                segments = emptyList(),
+                artifactFile = File(output, "dry-run/dry.md"),
+              ),
+            ),
+          )
+        },
+      )
+
+      val result = Verity()
+        .subcommands(command)
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
+
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(dryRunCalled).isEqualTo(true)
+      assertThat(result.output).contains("# Dry Run: Dry journey")
+      assertThat(result.output).contains("Artifact: ${File(output, "dry-run/dry.md").path}")
+      assertThat(result.output).doesNotContain("Suite result:")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `dry run invalid journey fails before dry-run runner`() {
+    val dir = createTempDirectory("verity-run-dry-invalid").toFile()
+    try {
+      val file = File(dir, "invalid.journey.yaml")
+      file.writeText("name: Invalid\nsteps: not-a-list")
+
+      val result = Verity()
+        .subcommands(dryRunCommand { _, _ -> error("dry-run runner should not be called") })
+        .test("run --dry-run ${file.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.output).contains("invalid.journey.yaml")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `directory dry run resolves files in sorted order`() {
+    val dir = createTempDirectory("verity-run-dry-directory").toFile()
+    try {
+      writeJourney(dir, "b.journey.yaml", "Second")
+      writeJourney(dir, "a.journey.yaml", "First")
+      val seen = mutableListOf<String>()
+
+      val result = Verity()
+        .subcommands(
+          dryRunCommand { journeys, _ ->
+            seen += journeys.map { it.file.name }
+            DryRunSuiteReport(
+              journeys.map { resolved ->
+                DryRunJourneyReport(
+                  resolvedJourney = resolved,
+                  launchYaml = "appId: ${resolved.journey.app}\n---\n- launchApp",
+                  segments = emptyList(),
+                )
+              },
+            )
+          },
+        )
+        .test("run --dry-run ${dir.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(seen).containsExactly("a.journey.yaml", "b.journey.yaml")
+      assertThat(result.output).contains("# Dry Run: First")
+      assertThat(result.output).contains("# Dry Run: Second")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `directory dry run rejects mixed platforms`() {
+    val dir = createTempDirectory("verity-run-dry-mixed").toFile()
+    try {
+      writeJourney(dir, "android.journey.yaml", "Android journey", platform = "android-tv")
+      writeJourney(dir, "ios.journey.yaml", "iOS journey", platform = "ios")
+
+      val result = Verity()
+        .subcommands(dryRunCommand { _, _ -> error("dry-run runner should not be called") })
+        .test("run --dry-run ${dir.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.output).contains("Directory suites must use a single platform")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `dry run writes artifacts with production dry-run runner`() {
+    val dir = createTempDirectory("verity-run-dry-artifact").toFile()
+    try {
+      val output = File(dir, "out")
+      val file = writeJourneyWithSteps(
+        dir = dir,
+        name = "fast.journey.yaml",
+        journeyName = "Fast dry journey",
+        steps = listOf("press d-pad down", "[?] Home"),
+      )
+
+      val result = Verity()
+        .subcommands(RunCommand())
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
+
+      val artifact = File(output, "dry-run/fast.md")
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(artifact).exists()
+      assertThat(artifact.readText()).contains("# Dry Run: Fast dry journey")
+      assertThat(result.output).contains("KeyPress(DPAD_DOWN)")
+      assertThat(result.output).contains("Assertion: [VISIBLE] Home")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `fast path dry run does not require valid provider config`() {
+    val dir = createTempDirectory("verity-run-dry-invalid-provider").toFile()
+    val configFile = File("verity/config.yaml")
+    val originalConfig = configFile.takeIf { it.exists() }?.readText()
+    try {
+      configFile.parentFile.mkdirs()
+      configFile.writeText("provider: definitely-not-real")
+      val output = File(dir, "out")
+      val file = writeJourneyWithSteps(
+        dir = dir,
+        name = "fast-invalid-provider.journey.yaml",
+        journeyName = "Fast invalid provider dry run",
+        steps = listOf("press d-pad down", "[?] Home"),
+      )
+
+      val result = Verity()
+        .subcommands(RunCommand())
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
+
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(result.output).contains("KeyPress(DPAD_DOWN)")
+    } finally {
+      if (originalConfig == null) {
+        configFile.delete()
+      } else {
+        configFile.writeText(originalConfig)
+      }
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `slow path dry run validates provider when navigator is needed`() {
+    val dir = createTempDirectory("verity-run-dry-slow-invalid-provider").toFile()
+    val configFile = File("verity/config.yaml")
+    val originalConfig = configFile.takeIf { it.exists() }?.readText()
+    try {
+      configFile.parentFile.mkdirs()
+      configFile.writeText("provider: definitely-not-real")
+      val output = File(dir, "out")
+      val file = writeJourneyWithSteps(
+        dir = dir,
+        name = "slow-invalid-provider.journey.yaml",
+        journeyName = "Slow invalid provider dry run",
+        steps = listOf("open the profile drawer", "[?] Home"),
+      )
+
+      val result = Verity()
+        .subcommands(RunCommand())
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
+
+      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.output).contains("Unknown provider")
+      assertThat(result.output).doesNotContain("KeyPress(DPAD_DOWN)")
+    } finally {
+      if (originalConfig == null) {
+        configFile.delete()
+      } else {
+        configFile.writeText(originalConfig)
+      }
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `slow path dry run validates nested llm navigator model when navigator is needed`() {
+    val dir = createTempDirectory("verity-run-dry-slow-invalid-nested-model").toFile()
+    val configFile = File("verity/config.yaml")
+    val originalConfig = configFile.takeIf { it.exists() }?.readText()
+    try {
+      configFile.parentFile.mkdirs()
+      configFile.writeText(
+        """
+        llm:
+          provider: ollama
+          navigator-model: definitely-not-real
+        """.trimIndent(),
+      )
+      val output = File(dir, "out")
+      val file = writeJourneyWithSteps(
+        dir = dir,
+        name = "slow-invalid-nested-model.journey.yaml",
+        journeyName = "Slow invalid nested model dry run",
+        steps = listOf("open the profile drawer", "[?] Home"),
+      )
+
+      val result = Verity()
+        .subcommands(RunCommand())
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
+
+      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.output).contains("Unknown model 'definitely-not-real'")
+    } finally {
+      if (originalConfig == null) {
+        configFile.delete()
+      } else {
+        configFile.writeText(originalConfig)
+      }
+      dir.deleteRecursively()
+    }
+  }
+
   private fun runCommand(
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
   ): RunCommand = RunCommand(suiteRunner = runner)
+
+  private fun dryRunCommand(
+    runner: suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport,
+  ): RunCommand = RunCommand(dryRunSuiteRunner = runner)
 
   private fun writeJourney(
     dir: File,
@@ -210,6 +456,27 @@ class RunCommandTest {
       steps:
         - "[?] Home"
       """.trimIndent(),
+    )
+    return file
+  }
+
+  private fun writeJourneyWithSteps(
+    dir: File,
+    name: String,
+    journeyName: String,
+    platform: String = "android-tv",
+    steps: List<String>,
+  ): File {
+    val file = File(dir, name)
+    file.writeText(
+      buildString {
+        appendLine("name: $journeyName")
+        appendLine("app: com.example.app")
+        appendLine("platform: $platform")
+        appendLine()
+        appendLine("steps:")
+        steps.forEach { step -> appendLine("  - \"${step.replace("\\", "\\\\").replace("\"", "\\\"")}\"") }
+      },
     )
     return file
   }
