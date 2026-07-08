@@ -345,23 +345,36 @@ class Orchestrator(
         null
       }
       if (artifact != null) {
-        session.captureScreenshot(artifact.path)
-        AssertionEvaluation(
-          verdict = inspector.evaluateVisual(artifact.path, description),
-          evidence = listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)),
-        )
-      } else {
-        val tempFile = withContext(Dispatchers.IO) {
-          Files.createTempFile("verity-screenshot-", ".png")
-        }
         try {
-          session.captureScreenshot(tempFile)
-          AssertionEvaluation(inspector.evaluateVisual(tempFile, description))
-        } finally {
-          withContext(NonCancellable + Dispatchers.IO) {
-            Files.deleteIfExists(tempFile)
-          }
+          session.captureScreenshot(artifact.path)
+          AssertionEvaluation(
+            verdict = inspector.evaluateVisual(artifact.path, description),
+            evidence = listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)),
+          )
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: Exception) {
+          evaluateVisualWithTempFile(inspector, description)
         }
+      } else {
+        evaluateVisualWithTempFile(inspector, description)
+      }
+    }
+  }
+
+  private suspend fun evaluateVisualWithTempFile(
+    inspector: InspectorAgent,
+    description: String,
+  ): AssertionEvaluation {
+    val tempFile = withContext(Dispatchers.IO) {
+      Files.createTempFile("verity-screenshot-", ".png")
+    }
+    try {
+      session.captureScreenshot(tempFile)
+      return AssertionEvaluation(inspector.evaluateVisual(tempFile, description))
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) {
+        Files.deleteIfExists(tempFile)
       }
     }
   }

@@ -5,6 +5,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNotEqualTo
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import java.nio.file.Files
@@ -513,6 +514,48 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `visual artifact capture failure falls back to temp screenshot without evidence`() = runTest {
+    val artifactPath = Files.createTempDirectory("verity-unwritable-artifact").resolve("artifact.png")
+    val captureAttempts = mutableListOf<Path>()
+    val session = FakeDeviceSession(
+      onCaptureScreenshot = { path ->
+        captureAttempts.add(path)
+        if (path == artifactPath) error("artifact path unavailable")
+      },
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, screenshotPath ->
+            assertThat(screenshotPath).isNotEqualTo(artifactPath)
+            """{"passed": true, "reasoning": "Looks right"}"""
+          },
+        )
+      },
+      artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "visual-artifact-capture-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.evidence).isEmpty()
+    assertThat(captureAttempts.size).isEqualTo(2)
+    assertThat(captureAttempts.first()).isEqualTo(artifactPath)
+    assertThat(session.capturedScreenshotPaths).containsExactly(captureAttempts.last())
+  }
+
+  @Test
   fun `fast path scrolls to find off-screen target then taps`() = runTest {
     // First containsText: not visible. After scroll: visible.
     val session = FakeDeviceSession(
@@ -771,6 +814,7 @@ class OrchestratorTest {
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
     private val onExecuteFlow: (String) -> Unit = {},
+    private val onCaptureScreenshot: (Path) -> Unit = {},
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val executedFlows = mutableListOf<String>()
@@ -784,6 +828,7 @@ class OrchestratorTest {
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
     override suspend fun captureScreenshot(output: Path) {
+      onCaptureScreenshot(output)
       capturedScreenshotPaths.add(output)
       Files.write(output, byteArrayOf(1, 2, 3))
     }
@@ -833,6 +878,15 @@ class OrchestratorTest {
     override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String = error("artifact unavailable")
 
     override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = error("artifact unavailable")
+  }
+
+  private class StaticScreenshotArtifactRecorder(
+    private val path: Path,
+  ) : JourneyArtifactRecorder {
+    override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = JourneyScreenshotArtifact(
+      path = path,
+      relativePath = "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png",
+    )
   }
 
   private companion object {
