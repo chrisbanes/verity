@@ -598,9 +598,16 @@ class RunCommandTest {
     try {
       val missing = File(dir, "missing.journey.yaml")
       val outputDir = File(dir, "output")
+      var summaryWrites = 0
       val command = runCommand(
         clock = fixedClock(),
-        writeSummary = { _, _ -> error("summary disk full") },
+        writeSummary = { runArtifacts, summary ->
+          summaryWrites += 1
+          if (summaryWrites == 1) {
+            error("summary disk full")
+          }
+          runArtifacts.writeSummary(summary)
+        },
       ) { error("Suite runner should not be called") }
 
       val result = Verity()
@@ -609,7 +616,11 @@ class RunCommandTest {
 
       assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("summary disk full")
-      assertThat(File(outputDir, "runs/20260708-143512-missing-journey").exists()).isEqualTo(true)
+      assertThat(summaryWrites).isEqualTo(2)
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-missing-journey/summary.json"))
+      assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
+      assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+      assertThat(summary.error?.message).isEqualTo("summary disk full")
     } finally {
       dir.deleteRecursively()
     }

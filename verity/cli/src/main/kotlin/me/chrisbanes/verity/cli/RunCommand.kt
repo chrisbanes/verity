@@ -389,7 +389,9 @@ class RunCommand(
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
-      throw CliktError(e.message ?: "Failed to write parser failure summary", statusCode = EXIT_SETUP)
+      val artifactMessage = e.message ?: "Failed to write parser failure summary"
+      writeSetupFailureSummary(runArtifacts, inputPath, artifactMessage, metadata = metadata)
+      throw CliktError(artifactMessage, statusCode = EXIT_SETUP)
     }
   }
 
