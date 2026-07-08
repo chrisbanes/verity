@@ -73,6 +73,7 @@ data class SuiteRunResult(
 class RunCommand(
   private val loadJourney: (File, AssertionStrategy) -> Journey = JourneyLoader::fromFile,
   private val listJourneyFiles: (File) -> List<File> = JourneyLoader::listJourneyFiles,
+  private val loadConfig: (File) -> VerityConfig = VerityConfig::loadOrDefault,
   private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
   private val dryRunSuiteRunner: (suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport)? = null,
   private val clock: Clock = Clock.systemUTC(),
@@ -144,15 +145,19 @@ class RunCommand(
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
 
-    val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
+    val config = loadConfig(File("verity/config.yaml"))
     val cliOptions = parent.projectCliOptions()
-    val resolved = if (dryRun) {
-      resolveDryRunProjectConfig(config, cliOptions)
-    } else {
-      ResolvedProjectConfig.resolve(
-        config = config,
-        cli = cliOptions,
-      )
+    val resolved = try {
+      if (dryRun) {
+        resolveDryRunProjectConfig(config, cliOptions)
+      } else {
+        ResolvedProjectConfig.resolve(
+          config = config,
+          cli = cliOptions,
+        )
+      }
+    } catch (e: IllegalArgumentException) {
+      throw CliktError(e.message ?: "Invalid project configuration", statusCode = EXIT_SETUP)
     }
     val metadata = resolved.toRunArtifactMetadata()
     try {
