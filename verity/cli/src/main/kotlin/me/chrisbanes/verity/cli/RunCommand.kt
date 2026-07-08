@@ -2,7 +2,7 @@ package me.chrisbanes.verity.cli
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.dsl.prompt
-import ai.koog.prompt.executor.llms.SingleLLMPromptExecutor
+import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
@@ -179,7 +179,7 @@ class RunCommand(
       disableAnimations = parent.noAnimations,
     )
 
-    val executor = SingleLLMPromptExecutor(provider.createClient(apiKey))
+    val executor = MultiLLMPromptExecutor(provider.createClient(apiKey))
 
     session.use {
       val orchestrator = Orchestrator(
@@ -213,8 +213,8 @@ class RunCommand(
                   image(kotlinx.io.files.Path(screenshotPath.toString()))
                 }
               }
-              val responses = executor.execute(p, inspectorModel)
-              responses.last().content
+              val response = executor.execute(p, inspectorModel)
+              response.textContent()
             },
           )
         },

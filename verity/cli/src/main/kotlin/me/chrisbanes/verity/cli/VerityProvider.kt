@@ -65,12 +65,12 @@ sealed class VerityProvider {
     override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
-      AnthropicModels.Haiku_3,
       AnthropicModels.Sonnet_4,
       AnthropicModels.Opus_4,
       AnthropicModels.Opus_4_1,
       AnthropicModels.Opus_4_5,
       AnthropicModels.Opus_4_6,
+      AnthropicModels.Opus_4_7,
       AnthropicModels.Sonnet_4_5,
       AnthropicModels.Sonnet_4_6,
       AnthropicModels.Haiku_4_5,
@@ -112,19 +112,17 @@ sealed class VerityProvider {
 
   object Google : VerityProvider() {
     override val name = "google"
-    override val defaultNavigatorModel: LLModel = GoogleModels.Gemini2_0FlashLite
+    override val defaultNavigatorModel: LLModel = GoogleModels.Gemini2_5FlashLite
     override val defaultInspectorModel: LLModel = GoogleModels.Gemini2_5Pro
     override val envVar = "GOOGLE_API_KEY"
     override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
-      GoogleModels.Gemini2_0Flash,
-      GoogleModels.Gemini2_0Flash001,
-      GoogleModels.Gemini2_0FlashLite,
       GoogleModels.Gemini2_0FlashLite001,
       GoogleModels.Gemini2_5Pro,
       GoogleModels.Gemini2_5Flash,
       GoogleModels.Gemini2_5FlashLite,
+      GoogleModels.Gemini3_Flash_Preview,
       GoogleModels.Gemini3_Pro_Preview,
     )
 
@@ -188,11 +186,11 @@ sealed class VerityProvider {
     override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
-      BedrockModels.AnthropicClaude3Haiku,
       BedrockModels.AnthropicClaude4Opus,
       BedrockModels.AnthropicClaude41Opus,
       BedrockModels.AnthropicClaude45Opus,
       BedrockModels.AnthropicClaude46Opus,
+      BedrockModels.AnthropicClaude47Opus,
       BedrockModels.AnthropicClaude4Sonnet,
       BedrockModels.AnthropicClaude4_5Sonnet,
       BedrockModels.AnthropicClaude4_6Sonnet,
@@ -212,6 +210,13 @@ sealed class VerityProvider {
       BedrockModels.MetaLlama3_2_90BInstruct,
       BedrockModels.MetaLlama3_3_70BInstruct,
       BedrockModels.MoonshotKimiK2Thinking,
+      BedrockModels.MoonshotKimiK2_5,
+      BedrockModels.MiniMaxM2_5,
+      BedrockModels.OpenAIGptOss120B,
+      BedrockModels.OpenAIGptOss20B,
+      BedrockModels.GoogleGemma3_4BIt,
+      BedrockModels.GoogleGemma3_12BIt,
+      BedrockModels.GoogleGemma3_27BIt,
     )
 
     override fun createClient(apiKey: String): BedrockLLMClient = createClient(apiKey, System.getenv("AWS_SECRET_ACCESS_KEY"))
@@ -230,14 +235,14 @@ sealed class VerityProvider {
 
   object DeepSeek : VerityProvider() {
     override val name = "deepseek"
-    override val defaultNavigatorModel: LLModel = DeepSeekModels.DeepSeekChat
-    override val defaultInspectorModel: LLModel = DeepSeekModels.DeepSeekReasoner
+    override val defaultNavigatorModel: LLModel = DeepSeekModels.DeepSeekV4Flash
+    override val defaultInspectorModel: LLModel = DeepSeekModels.DeepSeekV4Pro
     override val envVar = "DEEPSEEK_API_KEY"
     override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
-      DeepSeekModels.DeepSeekChat,
-      DeepSeekModels.DeepSeekReasoner,
+      DeepSeekModels.DeepSeekV4Flash,
+      DeepSeekModels.DeepSeekV4Pro,
     )
 
     override fun createClient(apiKey: String): DeepSeekLLMClient = DeepSeekLLMClient(apiKey)
