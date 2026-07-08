@@ -17,6 +17,7 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.device.DeviceSession
@@ -230,7 +231,10 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
 
     assertThat(result.passed).isFalse()
-    assertThat(result.segments.single().reasoning).isEqualTo("Text 'Home' is not visible")
+    val segment = result.segments.single()
+    assertThat(segment.reasoning).isEqualTo("Text 'Home' is not visible")
+    assertThat(segment.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+    assertThat(segment.error?.message).isEqualTo("Text 'Home' is not visible")
   }
 
   @Test
@@ -266,34 +270,39 @@ class OrchestratorTest {
 
   @Test
   fun `visual assertion records screenshot evidence`() = runTest {
-    val session = FakeDeviceSession()
-    val recorder = RecordingArtifactRecorder()
-    val orchestrator = Orchestrator(
-      session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
-      inspectorFactory = {
-        InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
-        )
-      },
-      artifactRecorder = recorder,
-    )
+    val screenshotDirectory = Files.createTempDirectory("verity-visual-test")
+    try {
+      val session = FakeDeviceSession()
+      val recorder = RecordingArtifactRecorder(screenshotDirectory)
+      val orchestrator = Orchestrator(
+        session = session,
+        navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+        inspectorFactory = {
+          InspectorAgent(
+            treeAgentFactory = { FakeTextAgent { error("unused") } },
+            evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+          )
+        },
+        artifactRecorder = recorder,
+      )
 
-    val result = orchestrator.run(
-      Journey(
-        name = "visual-evidence",
-        app = APP_ID,
-        platform = Platform.ANDROID_MOBILE,
-        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
-      ),
-    )
+      val result = orchestrator.run(
+        Journey(
+          name = "visual-evidence",
+          app = APP_ID,
+          platform = Platform.ANDROID_MOBILE,
+          steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+        ),
+      )
 
-    val segment = result.segments.single()
-    assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.SCREENSHOT)
-    assertThat(segment.evidence.single().path).isEqualTo("evidence/segment-000-visual.png")
-    assertThat(recorder.screenshotRequests).containsExactly(0)
-    assertThat(session.capturedScreenshotPaths).containsExactly(recorder.screenshotPaths.single())
+      val segment = result.segments.single()
+      assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.SCREENSHOT)
+      assertThat(segment.evidence.single().path).isEqualTo("evidence/segment-000-visual.png")
+      assertThat(recorder.screenshotRequests).containsExactly(0)
+      assertThat(session.capturedScreenshotPaths).containsExactly(recorder.screenshotPaths.single())
+    } finally {
+      deleteRecursively(screenshotDirectory)
+    }
   }
 
   @Test
@@ -670,12 +679,6 @@ class OrchestratorTest {
     assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: UP"))
   }
 
-  private companion object {
-    const val APP_ID = "com.example.app"
-    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp"
-    fun flow(command: String) = "appId: $APP_ID\n---\n$command"
-  }
-
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
     private val onExecuteFlow: (String) -> Unit = {},
@@ -702,7 +705,9 @@ class OrchestratorTest {
     override fun close() = Unit
   }
 
-  private class RecordingArtifactRecorder : JourneyArtifactRecorder {
+  private class RecordingArtifactRecorder(
+    private val screenshotDirectory: Path? = null,
+  ) : JourneyArtifactRecorder {
     val generatedFlows = mutableListOf<String>()
     val hierarchies = mutableListOf<String>()
     val screenshotRequests = mutableListOf<Int>()
@@ -720,12 +725,29 @@ class OrchestratorTest {
 
     override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact {
       screenshotRequests += segmentIndex
-      val path = Files.createTempFile("verity-visual-test", ".png")
+      val path = if (screenshotDirectory != null) {
+        Files.createTempFile(screenshotDirectory, "verity-visual-test", ".png")
+      } else {
+        Files.createTempFile("verity-visual-test", ".png")
+      }
       screenshotPaths.add(path)
       return JourneyScreenshotArtifact(
         path = path,
         relativePath = "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png",
       )
+    }
+  }
+
+  private companion object {
+    const val APP_ID = "com.example.app"
+    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp"
+    fun flow(command: String) = "appId: $APP_ID\n---\n$command"
+
+    fun deleteRecursively(path: Path) {
+      if (!Files.exists(path)) return
+      Files.walk(path).use { paths ->
+        paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+      }
     }
   }
 }

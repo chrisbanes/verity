@@ -130,6 +130,11 @@ class Orchestrator(
         actions = actions,
         generatedFlows = generatedFlows,
         evidence = evaluation.evidence,
+        error = if (evaluation.verdict.passed) {
+          null
+        } else {
+          ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, evaluation.verdict.reasoning)
+        },
       )
     }
 
