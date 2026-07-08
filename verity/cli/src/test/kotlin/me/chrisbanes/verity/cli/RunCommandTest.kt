@@ -453,9 +453,10 @@ class RunCommandTest {
       val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
       assertThat(result.statusCode).isEqualTo(3)
       assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
-      assertThat(summary.total).isEqualTo(1)
-      assertThat(summary.passed).isEqualTo(1)
+      assertThat(summary.total).isEqualTo(0)
+      assertThat(summary.passed).isEqualTo(0)
       assertThat(summary.failed).isEqualTo(0)
+      assertThat(summary.journeys).containsExactly()
       assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
     } finally {
       dir.deleteRecursively()
@@ -547,6 +548,29 @@ class RunCommandTest {
   }
 
   @Test
+  fun `config load failure exits 3 before run artifacts`() {
+    val dir = createTempDirectory("verity-run-config-load-failure").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(
+        clock = fixedClock(),
+        loadConfig = { error("config is malformed") },
+      ) { error("Suite runner should not be called") }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("config is malformed")
+      assertThat(File(outputDir, "runs").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `journey execution exception exits 4 and writes journey failure artifacts`() {
     val dir = createTempDirectory("verity-run-execution-failure").toFile()
     try {
@@ -587,6 +611,53 @@ class RunCommandTest {
       assertThat(journey.failedAt).isEqualTo(null)
       assertThat(journey.segments).containsExactly()
       assertThat(journey.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "visual evaluator failed"))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `multi journey execution exception preserves completed artifacts`() {
+    val dir = createTempDirectory("verity-run-partial-execution-failure").toFile()
+    try {
+      writeJourney(dir, "a.journey.yaml", "First journey")
+      writeJourney(dir, "b.journey.yaml", "Second journey")
+      writeJourney(dir, "c.journey.yaml", "Third journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(
+        clock = fixedClock(),
+        journeyRunner = { resolved, _ ->
+          if (resolved.journey.name == "Second journey") {
+            throw IllegalStateException("second journey crashed")
+          }
+          JourneyResult(resolved.journey.name, listOf(SegmentResult(index = 0, passed = true)))
+        },
+      ) { error("Suite runner should not be called") }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+
+      val runDir = File(outputDir, "runs").listFiles().orEmpty().single()
+      val firstFile = File(runDir, "journeys/001-first-journey.json")
+      val secondFile = File(runDir, "journeys/002-second-journey.json")
+      val thirdFile = File(runDir, "journeys/003-third-journey.json")
+      val summary = readSummary(File(runDir, "summary.json"))
+      assertThat(result.statusCode).isEqualTo(4)
+      assertThat(firstFile.exists()).isEqualTo(true)
+      assertThat(secondFile.exists()).isEqualTo(true)
+      assertThat(thirdFile.exists()).isFalse()
+      assertThat(summary.total).isEqualTo(2)
+      assertThat(summary.passed).isEqualTo(1)
+      assertThat(summary.failed).isEqualTo(1)
+      assertThat(summary.journeys).containsExactly(
+        SuiteJourneyArtifact("journeys/001-first-journey.json", "First journey", ArtifactStatus.PASSED),
+        SuiteJourneyArtifact("journeys/002-second-journey.json", "Second journey", ArtifactStatus.FAILED),
+      )
+      assertThat(readJourney(firstFile).passed).isEqualTo(true)
+      val failedJourney = readJourney(secondFile)
+      assertThat(failedJourney.passed).isEqualTo(false)
+      assertThat(failedJourney.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "second journey crashed"))
     } finally {
       dir.deleteRecursively()
     }
@@ -645,7 +716,11 @@ class RunCommandTest {
 
       assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("journey result disk full")
-      assertThat(File(outputDir, "runs/20260708-143512-single-journey").exists()).isEqualTo(true)
+      val runDir = File(outputDir, "runs/20260708-143512-single-journey")
+      val summary = readSummary(File(runDir, "summary.json"))
+      assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+      assertThat(summary.journeys).containsExactly()
+      assertThat(File(runDir, "journeys/001-single-journey.json").exists()).isFalse()
     } finally {
       dir.deleteRecursively()
     }
@@ -1031,6 +1106,7 @@ class RunCommandTest {
   private fun runCommand(
     clock: Clock = Clock.systemUTC(),
     config: VerityConfig = VerityConfig(),
+    loadConfig: ((File) -> VerityConfig)? = null,
     createRunArtifacts: suspend (File, Clock, String) -> RunArtifactDirectory = { outputRoot, runClock, suiteSlugSource ->
       RunArtifactWriter(outputRoot, runClock).createRun(suiteSlugSource)
     },
@@ -1040,9 +1116,11 @@ class RunCommandTest {
     writeJourneyResult: suspend (RunArtifactDirectory, String, JourneyArtifactResult) -> Unit = { runArtifacts, path, result ->
       runArtifacts.writeJourneyResult(path, result)
     },
+    journeyRunner: (suspend (ResolvedJourney, JourneyRunArtifactRecorder) -> JourneyResult)? = null,
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
   ): RunCommand = RunCommand(
-    loadConfig = { config },
+    loadConfig = loadConfig ?: { config },
+    journeyRunner = journeyRunner,
     suiteRunner = runner,
     clock = clock,
     createRunArtifacts = createRunArtifacts,

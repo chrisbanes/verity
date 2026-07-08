@@ -422,7 +422,7 @@ require-context: true
 
 ### Run Artifacts And CI Results
 
-`verity run` writes one timestamped artifact directory under `paths.output/runs/` for every invocation after configuration resolution. The directory name is stable and slugged from the input suite, for example `20260708-143512-login-suite`.
+`verity run` writes one timestamped artifact directory under `paths.output/runs/` after configuration resolution and output-path validation. The directory name is stable and slugged from the input suite, for example `20260708-143512-login-suite`.
 
 Each run contains:
 

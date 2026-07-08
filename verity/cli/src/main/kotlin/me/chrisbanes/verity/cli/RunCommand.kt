@@ -74,6 +74,7 @@ class RunCommand(
   private val loadJourney: (File, AssertionStrategy) -> Journey = JourneyLoader::fromFile,
   private val listJourneyFiles: (File) -> List<File> = JourneyLoader::listJourneyFiles,
   private val loadConfig: (File) -> VerityConfig = VerityConfig::loadOrDefault,
+  private val journeyRunner: (suspend (ResolvedJourney, JourneyRunArtifactRecorder) -> JourneyResult)? = null,
   private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
   private val dryRunSuiteRunner: (suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport)? = null,
   private val clock: Clock = Clock.systemUTC(),
@@ -151,7 +152,13 @@ class RunCommand(
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
 
-    val config = loadConfig(File("verity/config.yaml"))
+    val config = try {
+      loadConfig(File("verity/config.yaml"))
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      throw CliktError(e.message ?: "Failed to load project configuration", statusCode = EXIT_SETUP)
+    }
     val cliOptions = parent.projectCliOptions()
     val resolved = try {
       if (dryRun) {
@@ -210,7 +217,9 @@ class RunCommand(
     }
 
     val suiteResult = try {
-      if (suiteRunner != null) {
+      if (journeyRunner != null) {
+        runResolvedJourneysWithArtifacts(journeys, runArtifacts, journeyRunner)
+      } else if (suiteRunner != null) {
         try {
           suiteRunner.invoke(journeys)
         } catch (e: CancellationException) {
@@ -241,6 +250,7 @@ class RunCommand(
           metadata = metadata,
           failedJourney = e.resolvedJourney ?: journeys.singleOrNull(),
           failedAt = e.failedAt,
+          completedResults = e.completedResults,
         )
       } catch (artifactError: CancellationException) {
         throw artifactError
@@ -263,7 +273,7 @@ class RunCommand(
       throw e
     } catch (e: Exception) {
       val message = e.message ?: "Failed to write run artifacts"
-      writeSetupFailureSummary(runArtifacts, path.path, message, suiteResult, metadata)
+      writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
       throw CliktError(message, statusCode = EXIT_SETUP)
     }
 
@@ -468,8 +478,19 @@ class RunCommand(
     metadata: RunArtifactMetadata? = null,
     failedJourney: ResolvedJourney? = null,
     failedAt: Int? = null,
+    completedResults: List<ResolvedJourneyResult> = emptyList(),
   ) {
-    val journeyRefs = failedJourney?.let { item ->
+    val completedRefs = completedResults.map { item ->
+      val index = journeys.indexOf(item.resolvedJourney).takeIf { it >= 0 }?.plus(1) ?: 1
+      val recorder = runArtifacts.journey(index, item.resolvedJourney.journey.name)
+      writeJourneyResult(runArtifacts, recorder.resultPath, item.toArtifactResult())
+      SuiteJourneyArtifact(
+        path = recorder.resultPath,
+        name = item.resolvedJourney.journey.name,
+        status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
+      )
+    }
+    val failedRef = failedJourney?.let { item ->
       val index = journeys.indexOf(item).takeIf { it >= 0 }?.plus(1) ?: 1
       val recorder = runArtifacts.journey(index, item.journey.name)
       writeJourneyResult(
@@ -477,14 +498,13 @@ class RunCommand(
         recorder.resultPath,
         item.toFailureArtifactResult(message, failedAt),
       )
-      listOf(
-        SuiteJourneyArtifact(
-          path = recorder.resultPath,
-          name = item.journey.name,
-          status = ArtifactStatus.FAILED,
-        ),
+      SuiteJourneyArtifact(
+        path = recorder.resultPath,
+        name = item.journey.name,
+        status = ArtifactStatus.FAILED,
       )
-    } ?: emptyList()
+    }
+    val journeyRefs = completedRefs + listOfNotNull(failedRef)
     writeSummary(
       runArtifacts,
       SuiteArtifactSummary(
@@ -492,9 +512,9 @@ class RunCommand(
         timestamp = Instant.now(clock).toString(),
         inputPath = inputPath,
         status = ArtifactStatus.FAILED,
-        total = journeys.size,
-        passed = 0,
-        failed = journeys.size,
+        total = journeyRefs.size,
+        passed = journeyRefs.count { it.status == ArtifactStatus.PASSED },
+        failed = journeyRefs.count { it.status == ArtifactStatus.FAILED },
         journeys = journeyRefs,
         error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
         platform = journeys.firstOrNull()?.journey?.platform,
@@ -731,14 +751,16 @@ private class JourneyExecutionFailure(
   cause: Throwable,
   val resolvedJourney: ResolvedJourney? = null,
   val failedAt: Int? = null,
+  val completedResults: List<ResolvedJourneyResult> = emptyList(),
 ) : Exception(message, cause)
 
 internal suspend fun runResolvedJourneysWithArtifacts(
   journeys: List<ResolvedJourney>,
   runArtifacts: RunArtifactDirectory,
   runner: suspend (ResolvedJourney, JourneyRunArtifactRecorder) -> JourneyResult,
-): SuiteRunResult = SuiteRunResult(
-  results = journeys.mapIndexed { index, resolved ->
+): SuiteRunResult {
+  val results = mutableListOf<ResolvedJourneyResult>()
+  journeys.forEachIndexed { index, resolved ->
     val result = try {
       runner(resolved, runArtifacts.journey(index + 1, resolved.journey.name))
     } catch (e: CancellationException) {
@@ -746,14 +768,15 @@ internal suspend fun runResolvedJourneysWithArtifacts(
     } catch (e: JourneyExecutionFailure) {
       throw e
     } catch (e: Exception) {
-      throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e, resolved)
+      throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e, resolved, completedResults = results.toList())
     }
-    ResolvedJourneyResult(
+    results += ResolvedJourneyResult(
       resolvedJourney = resolved,
       result = result,
     )
-  },
-)
+  }
+  return SuiteRunResult(results = results)
+}
 
 private fun ContextBundle.describeForCli(contextDir: File?, required: Boolean): List<String> {
   val mode = if (required) "required" else "optional"
