@@ -40,6 +40,7 @@ class CliPreflightChecker(
     request: CliPreflightRequest,
     config: VerityConfig,
     includeDevicePreflight: Boolean = true,
+    includeInspectorModelPreflight: Boolean = true,
   ): CliPreflightResult {
     var report = PreflightReport()
     val provider = runCatching { resolveProvider(request.cliProvider, config) }
@@ -67,7 +68,7 @@ class CliPreflightChecker(
         role = "navigator",
       ) { modelReport -> report += modelReport }
     }
-    val inspectorModel = provider?.let {
+    val inspectorModel = provider?.takeIf { includeInspectorModelPreflight }?.let {
       resolveModelSafely(
         provider = it,
         cliModel = request.cliInspectorModel,

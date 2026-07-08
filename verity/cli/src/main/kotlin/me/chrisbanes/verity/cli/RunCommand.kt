@@ -241,6 +241,7 @@ class RunCommand(
       ),
       config = config,
       includeDevicePreflight = false,
+      includeInspectorModelPreflight = false,
     )
     if (!preflight.report.passed) {
       throw CliktError(preflight.report.renderPlainText())

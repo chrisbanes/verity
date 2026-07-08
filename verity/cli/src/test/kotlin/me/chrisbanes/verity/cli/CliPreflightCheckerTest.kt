@@ -190,6 +190,35 @@ class CliPreflightCheckerTest {
   }
 
   @Test
+  fun `can skip inspector model validation for dry run navigator preflight`() = runTest {
+    val journey = Files.createTempFile("journey-", ".journey.yaml")
+    val checker = CliPreflightChecker(
+      environment = { name -> if (name == "ANTHROPIC_API_KEY") "secret" else null },
+      devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = "anthropic",
+        cliNavigatorModel = "claude-haiku-4-5",
+        cliInspectorModel = "definitely-not-real",
+        apiKey = null,
+        journeyPath = journey.toString(),
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(),
+      includeDevicePreflight = false,
+      includeInspectorModelPreflight = false,
+    )
+
+    assertThat(result.report.passed).isTrue()
+    assertThat(result.navigatorModel?.id).isEqualTo("claude-haiku-4-5")
+    assertThat(result.inspectorModel).isEqualTo(null)
+  }
+
+  @Test
   fun `plain text render contains remediation for cli error`() = runTest {
     val checker = CliPreflightChecker(
       environment = { null },
