@@ -325,6 +325,25 @@ class RunCommandTest {
   }
 
   @Test
+  fun `unresolved input failure exits 2 and writes summary`() {
+    val dir = createTempDirectory("verity-run-unresolved-artifacts").toFile()
+    try {
+      val outputDir = File(dir, "output")
+
+      val result = Verity()
+        .subcommands(runCommand(clock = fixedClock()) { error("Suite runner should not be called") })
+        .test("--output-path ${outputDir.absolutePath} run")
+
+      val summary = File(outputDir, "runs/20260708-143512-run/summary.json")
+      assertThat(result.statusCode).isEqualTo(2)
+      assertThat(summary.exists()).isEqualTo(true)
+      assertThat(summary.readText()).contains("\"kind\": \"parser_failure\"")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `run artifacts create stable directories and relative references`() = kotlinx.coroutines.test.runTest {
     val dir = createTempDirectory("verity-artifacts").toFile()
     try {

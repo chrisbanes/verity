@@ -6,7 +6,6 @@ import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
-import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.flag
@@ -147,12 +146,18 @@ class RunCommand(
     }
     validateOutputDirectory(resolved.outputPath)
 
+    val artifactWriter = RunArtifactWriter(resolved.outputPath, clock)
     val path = try {
       resolveRunJourneyFile(journeyPath, resolved.configuredJourneysPath)
     } catch (e: IllegalArgumentException) {
-      throw UsageError(e.message ?: "Invalid journey path")
+      val message = e.message ?: "Invalid journey path"
+      val inputPath = journeyPath ?: resolved.configuredJourneysPath?.path ?: ""
+      val runArtifacts = artifactWriter.createRun(
+        suiteSlugSource = journeyPath ?: resolved.configuredJourneysPath?.path ?: "run",
+      )
+      writeParserFailureSummary(runArtifacts, inputPath, message)
+      throw CliktError(message, statusCode = EXIT_INPUT)
     }
-    val artifactWriter = RunArtifactWriter(resolved.outputPath, clock)
     val runArtifacts = artifactWriter.createRun(suiteSlugSource = path.nameWithoutExtension.ifEmpty { path.name })
     val journeys = try {
       resolveJourneys(
@@ -164,18 +169,7 @@ class RunCommand(
       throw e
     } catch (e: Exception) {
       val message = e.message ?: "Failed to resolve journeys"
-      runArtifacts.writeSummary(
-        SuiteArtifactSummary(
-          formatVersion = 1,
-          timestamp = Instant.now(clock).toString(),
-          inputPath = path.path,
-          status = ArtifactStatus.FAILED,
-          total = 0,
-          passed = 0,
-          failed = 0,
-          error = ArtifactError(ArtifactErrorKind.PARSER_FAILURE, message),
-        ),
-      )
+      writeParserFailureSummary(runArtifacts, path.path, message)
       throw CliktError(message, statusCode = EXIT_INPUT)
     }
 
@@ -303,6 +297,25 @@ class RunCommand(
     return DryRunNavigator { actions, appId, targetPlatform, context ->
       navigatorAgent.generate(actions, appId, targetPlatform, context)
     }
+  }
+
+  private suspend fun writeParserFailureSummary(
+    runArtifacts: RunArtifactDirectory,
+    inputPath: String,
+    message: String,
+  ) {
+    runArtifacts.writeSummary(
+      SuiteArtifactSummary(
+        formatVersion = 1,
+        timestamp = Instant.now(clock).toString(),
+        inputPath = inputPath,
+        status = ArtifactStatus.FAILED,
+        total = 0,
+        passed = 0,
+        failed = 0,
+        error = ArtifactError(ArtifactErrorKind.PARSER_FAILURE, message),
+      ),
+    )
   }
 
   private suspend fun writeSuiteArtifacts(
