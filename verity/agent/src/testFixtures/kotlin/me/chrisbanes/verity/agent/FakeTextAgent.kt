@@ -2,7 +2,7 @@ package me.chrisbanes.verity.agent
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.config.AIAgentConfig
-import ai.koog.prompt.dsl.Prompt
+import ai.koog.prompt.Prompt
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 
