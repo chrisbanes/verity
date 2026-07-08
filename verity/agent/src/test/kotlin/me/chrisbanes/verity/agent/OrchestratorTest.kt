@@ -8,6 +8,7 @@ import assertk.assertions.isFalse
 import assertk.assertions.isNotEqualTo
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -515,13 +516,13 @@ class OrchestratorTest {
   }
 
   @Test
-  fun `visual artifact capture failure falls back to temp screenshot without evidence`() = runTest {
+  fun `visual artifact capture IOException falls back to temp screenshot without evidence`() = runTest {
     val artifactPath = Files.createTempDirectory("verity-unwritable-artifact").resolve("artifact.png")
     val captureAttempts = mutableListOf<Path>()
     val session = FakeDeviceSession(
       onCaptureScreenshot = { path ->
         captureAttempts.add(path)
-        if (path == artifactPath) error("artifact path unavailable")
+        if (path == artifactPath) throw IOException("artifact path unavailable")
       },
     )
     val orchestrator = Orchestrator(
@@ -554,6 +555,41 @@ class OrchestratorTest {
     assertThat(captureAttempts.size).isEqualTo(2)
     assertThat(captureAttempts.first()).isEqualTo(artifactPath)
     assertThat(session.capturedScreenshotPaths).containsExactly(captureAttempts.last())
+  }
+
+  @Test
+  fun `visual artifact capture device failure is not retried with temp screenshot`() = runTest {
+    val artifactPath = Files.createTempDirectory("verity-visual-device-failure").resolve("artifact.png")
+    val captureAttempts = mutableListOf<Path>()
+    val orchestrator = Orchestrator(
+      session = FakeDeviceSession(
+        onCaptureScreenshot = { path ->
+          captureAttempts.add(path)
+          if (path == artifactPath) error("device screenshot failed")
+        },
+      ),
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("visual evaluator should not run") },
+        )
+      },
+      artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
+    )
+
+    assertFailsWith<IllegalStateException> {
+      orchestrator.run(
+        Journey(
+          name = "visual-device-failure",
+          app = APP_ID,
+          platform = Platform.ANDROID_MOBILE,
+          steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+        ),
+      )
+    }
+
+    assertThat(captureAttempts).containsExactly(artifactPath)
   }
 
   @Test

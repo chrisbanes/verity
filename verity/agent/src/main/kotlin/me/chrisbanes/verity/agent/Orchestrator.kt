@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.agent
 
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -350,7 +351,9 @@ class Orchestrator(
           true
         } catch (e: CancellationException) {
           throw e
-        } catch (_: Exception) {
+        } catch (_: IOException) {
+          false
+        } catch (_: SecurityException) {
           false
         }
         if (captured) {
