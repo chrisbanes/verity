@@ -11,6 +11,7 @@ import assertk.assertions.isTrue
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.AssertMode
@@ -553,6 +554,39 @@ class OrchestratorTest {
     assertThat(captureAttempts.size).isEqualTo(2)
     assertThat(captureAttempts.first()).isEqualTo(artifactPath)
     assertThat(session.capturedScreenshotPaths).containsExactly(captureAttempts.last())
+  }
+
+  @Test
+  fun `visual evaluator failure after artifact capture is not retried with temp screenshot`() = runTest {
+    val artifactPath = Files.createTempDirectory("verity-visual-evaluator-failure").resolve("artifact.png")
+    val evaluatedPaths = mutableListOf<Path>()
+    val orchestrator = Orchestrator(
+      session = FakeDeviceSession(),
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, screenshotPath ->
+            evaluatedPaths.add(screenshotPath)
+            error("visual evaluator failed")
+          },
+        )
+      },
+      artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
+    )
+
+    assertFailsWith<IllegalStateException> {
+      orchestrator.run(
+        Journey(
+          name = "visual-evaluator-failure",
+          app = APP_ID,
+          platform = Platform.ANDROID_MOBILE,
+          steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+        ),
+      )
+    }
+
+    assertThat(evaluatedPaths).containsExactly(artifactPath)
   }
 
   @Test

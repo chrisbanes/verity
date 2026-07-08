@@ -345,15 +345,20 @@ class Orchestrator(
         null
       }
       if (artifact != null) {
-        try {
+        val captured = try {
           session.captureScreenshot(artifact.path)
+          true
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: Exception) {
+          false
+        }
+        if (captured) {
           AssertionEvaluation(
             verdict = inspector.evaluateVisual(artifact.path, description),
             evidence = listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)),
           )
-        } catch (e: CancellationException) {
-          throw e
-        } catch (_: Exception) {
+        } else {
           evaluateVisualWithTempFile(inspector, description)
         }
       } else {
