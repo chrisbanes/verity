@@ -233,6 +233,32 @@ class RunCommandTest {
   }
 
   @Test
+  fun `run artifacts create stable directories and relative references`() = kotlinx.coroutines.test.runTest {
+    val dir = createTempDirectory("verity-artifacts").toFile()
+    try {
+      val writer = RunArtifactWriter(
+        outputRoot = dir,
+        clock = java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T14:35:12Z"), java.time.ZoneOffset.UTC),
+      )
+      val run = writer.createRun(suiteSlugSource = "My Suite")
+      val journey = run.journey(index = 1, name = "Login")
+
+      val flow = journey.saveGeneratedFlow(segmentIndex = 2, label = "actions", yaml = "appId: com.example\n---\n- tapOn: Settings")
+      val tree = journey.saveHierarchy(segmentIndex = 2, hierarchy = "[text=Home]")
+      val screenshot = journey.screenshotPath(segmentIndex = 3)
+
+      assertThat(run.directory.toFile().name).isEqualTo("20260708-143512-my-suite")
+      assertThat(flow).isEqualTo("flows/001-login/segment-002-actions.yaml")
+      assertThat(tree).isEqualTo("evidence/001-login/segment-002-tree.txt")
+      assertThat(screenshot.relativePath).isEqualTo("evidence/001-login/segment-003-visual.png")
+      assertThat(File(run.directory.toFile(), flow).readText()).contains("tapOn: Settings")
+      assertThat(File(run.directory.toFile(), tree).readText()).isEqualTo("[text=Home]")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `dry run invalid journey fails before dry-run runner`() {
     val dir = createTempDirectory("verity-run-dry-invalid").toFile()
     try {
