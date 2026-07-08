@@ -593,6 +593,54 @@ class RunCommandTest {
   }
 
   @Test
+  fun `parser failure summary write failure exits 3`() {
+    val dir = createTempDirectory("verity-run-parser-summary-write-failure").toFile()
+    try {
+      val missing = File(dir, "missing.journey.yaml")
+      val outputDir = File(dir, "output")
+      val command = runCommand(
+        clock = fixedClock(),
+        writeSummary = { _, _ -> error("summary disk full") },
+      ) { error("Suite runner should not be called") }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${missing.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("summary disk full")
+      assertThat(File(outputDir, "runs/20260708-143512-missing-journey").exists()).isEqualTo(true)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `journey failure artifact write failure exits 3`() {
+    val dir = createTempDirectory("verity-run-journey-failure-write-failure").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(
+        clock = fixedClock(),
+        writeJourneyResult = { _, _, _ -> error("journey result disk full") },
+      ) {
+        throw IllegalStateException("visual evaluator failed")
+      }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("journey result disk full")
+      assertThat(File(outputDir, "runs/20260708-143512-single-journey").exists()).isEqualTo(true)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `parser input failure exits 2 and writes summary`() {
     val dir = createTempDirectory("verity-run-parser-artifacts").toFile()
     try {
@@ -975,12 +1023,20 @@ class RunCommandTest {
     createRunArtifacts: suspend (File, Clock, String) -> RunArtifactDirectory = { outputRoot, runClock, suiteSlugSource ->
       RunArtifactWriter(outputRoot, runClock).createRun(suiteSlugSource)
     },
+    writeSummary: suspend (RunArtifactDirectory, me.chrisbanes.verity.core.result.SuiteArtifactSummary) -> Unit = { runArtifacts, summary ->
+      runArtifacts.writeSummary(summary)
+    },
+    writeJourneyResult: suspend (RunArtifactDirectory, String, JourneyArtifactResult) -> Unit = { runArtifacts, path, result ->
+      runArtifacts.writeJourneyResult(path, result)
+    },
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
   ): RunCommand = RunCommand(
     loadConfig = { config },
     suiteRunner = runner,
     clock = clock,
     createRunArtifacts = createRunArtifacts,
+    writeSummary = writeSummary,
+    writeJourneyResult = writeJourneyResult,
   )
 
   private fun fixedClock(): Clock = Clock.fixed(Instant.parse("2026-07-08T14:35:12Z"), ZoneOffset.UTC)
