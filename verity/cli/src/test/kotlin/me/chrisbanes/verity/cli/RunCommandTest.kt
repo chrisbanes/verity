@@ -818,7 +818,7 @@ class RunCommandTest {
         .subcommands(dryRunCommand { _, _ -> error("dry-run runner should not be called") })
         .test("run --dry-run ${file.absolutePath}")
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(2)
       assertThat(result.output).contains("invalid.journey.yaml")
     } finally {
       dir.deleteRecursively()
@@ -870,7 +870,7 @@ class RunCommandTest {
         .subcommands(dryRunCommand { _, _ -> error("dry-run runner should not be called") })
         .test("run --dry-run ${dir.absolutePath}")
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(2)
       assertThat(result.output).contains("Directory suites must use a single platform")
     } finally {
       dir.deleteRecursively()
