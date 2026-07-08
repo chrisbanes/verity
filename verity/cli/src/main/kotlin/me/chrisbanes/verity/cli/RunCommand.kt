@@ -12,6 +12,9 @@ import com.github.ajalt.clikt.parameters.arguments.optional
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import java.io.File
+import java.time.Clock
+import java.time.Instant
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -28,7 +31,20 @@ import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.ArtifactError
+import me.chrisbanes.verity.core.result.ArtifactErrorKind
+import me.chrisbanes.verity.core.result.ArtifactStatus
+import me.chrisbanes.verity.core.result.AssertionArtifact
+import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
+import me.chrisbanes.verity.core.result.JourneyArtifactResult
+import me.chrisbanes.verity.core.result.SegmentArtifactResult
+import me.chrisbanes.verity.core.result.SuiteArtifactSummary
+import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.DeviceSessionFactory
+
+private const val EXIT_INPUT = 2
+private const val EXIT_SETUP = 3
+private const val EXIT_JOURNEY = 4
 
 data class ResolvedJourney(
   val file: File,
@@ -53,6 +69,7 @@ class RunCommand(
   private val listJourneyFiles: (File) -> List<File> = JourneyLoader::listJourneyFiles,
   private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
   private val dryRunSuiteRunner: (suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport)? = null,
+  private val clock: Clock = Clock.systemUTC(),
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -135,11 +152,32 @@ class RunCommand(
     } catch (e: IllegalArgumentException) {
       throw UsageError(e.message ?: "Invalid journey path")
     }
-    val journeys = resolveJourneys(
-      path = path,
-      assertionStrategy = resolved.assertionStrategy,
-      platformOverride = resolved.platform,
-    )
+    val artifactWriter = RunArtifactWriter(resolved.outputPath, clock)
+    val runArtifacts = artifactWriter.createRun(suiteSlugSource = path.nameWithoutExtension.ifEmpty { path.name })
+    val journeys = try {
+      resolveJourneys(
+        path = path,
+        assertionStrategy = resolved.assertionStrategy,
+        platformOverride = resolved.platform,
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      val message = e.message ?: "Failed to resolve journeys"
+      runArtifacts.writeSummary(
+        SuiteArtifactSummary(
+          formatVersion = 1,
+          timestamp = Instant.now(clock).toString(),
+          inputPath = path.path,
+          status = ArtifactStatus.FAILED,
+          total = 0,
+          passed = 0,
+          failed = 0,
+          error = ArtifactError(ArtifactErrorKind.PARSER_FAILURE, message),
+        ),
+      )
+      throw CliktError(message, statusCode = EXIT_INPUT)
+    }
 
     if (dryRun) {
       val dryRunReport = dryRunSuiteRunner?.invoke(journeys, resolved.outputPath)
@@ -161,12 +199,14 @@ class RunCommand(
         resolved = resolved,
         path = path,
         journeys = journeys,
+        runArtifacts = runArtifacts,
       )
 
     printSuiteResult(suiteResult)
+    writeSuiteArtifacts(path, suiteResult, runArtifacts)
 
     if (!suiteResult.passed) {
-      throw CliktError("Journey suite failed")
+      throw CliktError("Journey suite failed", statusCode = EXIT_JOURNEY)
     }
   }
 
@@ -265,6 +305,71 @@ class RunCommand(
     }
   }
 
+  private suspend fun writeSuiteArtifacts(
+    path: File,
+    suiteResult: SuiteRunResult,
+    runArtifacts: RunArtifactDirectory,
+  ) {
+    val journeyRefs = suiteResult.results.mapIndexed { index, item ->
+      val key = "${(index + 1).toString().padStart(3, '0')}-${slugArtifactName(item.resolvedJourney.journey.name, "journey")}"
+      val journeyPath = "journeys/$key.json"
+      runArtifacts.writeJourneyResult(journeyPath, item.toArtifactResult())
+      SuiteJourneyArtifact(
+        path = journeyPath,
+        name = item.resolvedJourney.journey.name,
+        status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
+      )
+    }
+    runArtifacts.writeSummary(
+      SuiteArtifactSummary(
+        formatVersion = 1,
+        timestamp = Instant.now(clock).toString(),
+        inputPath = path.path,
+        status = if (suiteResult.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
+        total = suiteResult.results.size,
+        passed = suiteResult.passedCount,
+        failed = suiteResult.failedCount,
+        journeys = journeyRefs,
+        error = if (suiteResult.passed) {
+          null
+        } else {
+          ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Journey suite failed")
+        },
+        platform = suiteResult.results.firstOrNull()?.resolvedJourney?.journey?.platform,
+      ),
+    )
+  }
+
+  private fun ResolvedJourneyResult.toArtifactResult(): JourneyArtifactResult = JourneyArtifactResult(
+    journey = JourneyArtifactIdentity(
+      name = resolvedJourney.journey.name,
+      file = resolvedJourney.file.path,
+      app = resolvedJourney.journey.app,
+      platform = resolvedJourney.journey.platform,
+    ),
+    passed = result.passed,
+    failedAt = result.failedAt,
+    segments = result.segments.map { segment ->
+      val assertionMode = segment.assertionMode
+      val assertionDescription = segment.assertionDescription
+      SegmentArtifactResult(
+        index = segment.index,
+        passed = segment.passed,
+        executionMode = segment.executionMode,
+        actions = segment.actions,
+        assertion = if (assertionMode != null && assertionDescription != null) {
+          AssertionArtifact(description = assertionDescription, mode = assertionMode)
+        } else {
+          null
+        },
+        reasoning = segment.reasoning,
+        generatedFlows = segment.generatedFlows,
+        evidence = segment.evidence,
+        error = segment.error,
+      )
+    },
+  )
+
   private fun printSuiteResult(suiteResult: SuiteRunResult) {
     suiteResult.results.forEachIndexed { index, journeyResult ->
       val resolved = journeyResult.resolvedJourney
@@ -299,6 +404,7 @@ class RunCommand(
     resolved: ResolvedProjectConfig,
     path: File,
     journeys: List<ResolvedJourney>,
+    runArtifacts: RunArtifactDirectory,
   ): SuiteRunResult {
     val platform = journeys.first().journey.platform
     val contextDir = resolved.contextPath
@@ -344,49 +450,51 @@ class RunCommand(
     )
 
     val executor = MultiLLMPromptExecutor(provider.createClient(apiKey))
+    val navigatorFactory = {
+      NavigatorAgent(
+        bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
+        agentFactory = { systemPrompt ->
+          AIAgent(
+            promptExecutor = executor,
+            llmModel = navigatorModel,
+            systemPrompt = systemPrompt,
+          )
+        },
+      )
+    }
+    val inspectorFactory = {
+      InspectorAgent(
+        treeAgentFactory = {
+          AIAgent(
+            promptExecutor = executor,
+            llmModel = inspectorModel,
+            systemPrompt = InspectorAgent.SYSTEM_PROMPT,
+          )
+        },
+        evaluateVisualContent = { systemPrompt, userMessage, screenshotPath ->
+          val p = prompt("visual-eval") {
+            system(systemPrompt)
+            user {
+              text(userMessage)
+              image(kotlinx.io.files.Path(screenshotPath.toString()))
+            }
+          }
+          val response = executor.execute(p, inspectorModel)
+          response.textContent()
+        },
+      )
+    }
 
     session.use {
-      val orchestrator = Orchestrator(
-        session = session,
-        navigatorFactory = {
-          NavigatorAgent(
-            bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
-            agentFactory = { systemPrompt ->
-              AIAgent(
-                promptExecutor = executor,
-                llmModel = navigatorModel,
-                systemPrompt = systemPrompt,
-              )
-            },
-          )
-        },
-        inspectorFactory = {
-          InspectorAgent(
-            treeAgentFactory = {
-              AIAgent(
-                promptExecutor = executor,
-                llmModel = inspectorModel,
-                systemPrompt = InspectorAgent.SYSTEM_PROMPT,
-              )
-            },
-            evaluateVisualContent = { systemPrompt, userMessage, screenshotPath ->
-              val p = prompt("visual-eval") {
-                system(systemPrompt)
-                user {
-                  text(userMessage)
-                  image(kotlinx.io.files.Path(screenshotPath.toString()))
-                }
-              }
-              val response = executor.execute(p, inspectorModel)
-              response.textContent()
-            },
-          )
-        },
-        context = projectContext.text,
-      )
-
       return SuiteRunResult(
-        journeys.map { resolved ->
+        journeys.mapIndexed { index, resolved ->
+          val orchestrator = Orchestrator(
+            session = session,
+            navigatorFactory = navigatorFactory,
+            inspectorFactory = inspectorFactory,
+            context = projectContext.text,
+            artifactRecorder = runArtifacts.journey(index + 1, resolved.journey.name),
+          )
           ResolvedJourneyResult(
             resolvedJourney = resolved,
             result = orchestrator.run(resolved.journey),

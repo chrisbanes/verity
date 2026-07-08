@@ -10,6 +10,9 @@ import assertk.assertions.isFalse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import java.io.File
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -95,7 +98,7 @@ class RunCommandTest {
         .subcommands(runCommand { error("Suite runner should not be called") })
         .test("run ${dir.absolutePath}")
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(2)
       assertThat(result.output).contains("No journey files found in: ${dir.absolutePath}")
     } finally {
       dir.deleteRecursively()
@@ -113,7 +116,7 @@ class RunCommandTest {
         .subcommands(runCommand { error("Suite runner should not be called") })
         .test("run ${dir.absolutePath}")
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(2)
       assertThat(result.output).contains("Directory suites must use a single platform")
       assertThat(result.output).contains("android.journey.yaml: ANDROID_TV")
       assertThat(result.output).contains("ios.journey.yaml: IOS")
@@ -148,7 +151,7 @@ class RunCommandTest {
         .subcommands(command)
         .test("run ${file.absolutePath}")
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(4)
       assertThat(result.output).contains("File: ${file.absolutePath}")
       assertThat(result.output).contains("Journey: Failure journey")
       assertThat(result.output).contains("FAILED: Segment 1 failed")
@@ -186,7 +189,7 @@ class RunCommandTest {
         .subcommands(command)
         .test("run ${dir.absolutePath}")
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(4)
       assertThat(seen).containsExactly("fail.journey.yaml", "pass.journey.yaml")
       assertThat(result.output).contains("Total: 2")
       assertThat(result.output).contains("Passed: 1")
@@ -232,6 +235,90 @@ class RunCommandTest {
       assertThat(result.output).contains("# Dry Run: Dry journey")
       assertThat(result.output).contains("Artifact: ${File(output, "dry-run/dry.md").path}")
       assertThat(result.output).doesNotContain("Suite result:")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `successful run writes journey result and suite summary`() {
+    val dir = createTempDirectory("verity-run-success-artifacts").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) { journeys ->
+        SuiteRunResult(
+          journeys.map { resolved ->
+            ResolvedJourneyResult(
+              resolvedJourney = resolved,
+              result = JourneyResult(resolved.journey.name, listOf(SegmentResult(index = 0, passed = true))),
+            )
+          },
+        )
+      }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      val runDir = File(outputDir, "runs/20260708-143512-single-journey")
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(File(runDir, "summary.json").exists()).isEqualTo(true)
+      assertThat(File(runDir, "journeys/001-single-journey.json").exists()).isEqualTo(true)
+      assertThat(File(runDir, "summary.json").readText()).contains("\"status\": \"passed\"")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `journey failure exits 4 and writes failed summary`() {
+    val dir = createTempDirectory("verity-run-failure-artifacts").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) { journeys ->
+        SuiteRunResult(
+          journeys.map { resolved ->
+            ResolvedJourneyResult(
+              resolvedJourney = resolved,
+              result = JourneyResult(
+                journeyName = resolved.journey.name,
+                segments = listOf(SegmentResult(index = 0, passed = false, reasoning = "Nope")),
+              ),
+            )
+          },
+        )
+      }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      val summary = File(outputDir, "runs/20260708-143512-single-journey/summary.json")
+      assertThat(result.statusCode).isEqualTo(4)
+      assertThat(summary.exists()).isEqualTo(true)
+      assertThat(summary.readText()).contains("\"status\": \"failed\"")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `parser input failure exits 2 and writes summary`() {
+    val dir = createTempDirectory("verity-run-parser-artifacts").toFile()
+    try {
+      val missing = File(dir, "missing.journey.yaml")
+      val outputDir = File(dir, "output")
+
+      val result = Verity()
+        .subcommands(runCommand(clock = fixedClock()) { error("Suite runner should not be called") })
+        .test("--output-path ${outputDir.absolutePath} run ${missing.absolutePath}")
+
+      val summary = File(outputDir, "runs/20260708-143512-missing-journey/summary.json")
+      assertThat(result.statusCode).isEqualTo(2)
+      assertThat(summary.exists()).isEqualTo(true)
+      assertThat(summary.readText()).contains("\"kind\": \"parser_failure\"")
     } finally {
       dir.deleteRecursively()
     }
@@ -522,8 +609,11 @@ class RunCommandTest {
   }
 
   private fun runCommand(
+    clock: Clock = Clock.systemUTC(),
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
-  ): RunCommand = RunCommand(suiteRunner = runner)
+  ): RunCommand = RunCommand(suiteRunner = runner, clock = clock)
+
+  private fun fixedClock(): Clock = Clock.fixed(Instant.parse("2026-07-08T14:35:12Z"), ZoneOffset.UTC)
 
   private fun dryRunCommand(
     runner: suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport,
