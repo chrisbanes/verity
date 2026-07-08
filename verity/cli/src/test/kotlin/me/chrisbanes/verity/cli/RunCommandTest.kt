@@ -16,13 +16,24 @@ import java.time.ZoneOffset
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.SegmentResult
+import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.ArtifactError
+import me.chrisbanes.verity.core.result.ArtifactErrorKind
+import me.chrisbanes.verity.core.result.ArtifactStatus
+import me.chrisbanes.verity.core.result.EvidenceArtifact
+import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
 import me.chrisbanes.verity.core.result.JourneyArtifactResult
+import me.chrisbanes.verity.core.result.SegmentExecutionMode
+import me.chrisbanes.verity.core.result.SuiteArtifactSummary
+import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 
 class RunCommandTest {
+  private val json = Json { ignoreUnknownKeys = true }
 
   @Test
   fun `single-file input runs one journey`() {
@@ -251,7 +262,23 @@ class RunCommandTest {
           journeys.map { resolved ->
             ResolvedJourneyResult(
               resolvedJourney = resolved,
-              result = JourneyResult(resolved.journey.name, listOf(SegmentResult(index = 0, passed = true))),
+              result = JourneyResult(
+                resolved.journey.name,
+                listOf(
+                  SegmentResult(
+                    index = 0,
+                    passed = true,
+                    assertionMode = AssertMode.VISIBLE,
+                    assertionDescription = "Home is visible",
+                    reasoning = "The Home label is visible",
+                    executionMode = SegmentExecutionMode.SLOW,
+                    actions = listOf("Open navigation", "Select Home"),
+                    generatedFlows = listOf("flows/001-single-journey/segment-000-actions.yaml"),
+                    evidence = listOf(EvidenceArtifact(EvidenceType.HIERARCHY, "evidence/001-single-journey/segment-000-tree.txt")),
+                    error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "diagnostic only"),
+                  ),
+                ),
+              ),
             )
           },
         )
@@ -262,10 +289,50 @@ class RunCommandTest {
         .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
 
       val runDir = File(outputDir, "runs/20260708-143512-single-journey")
+      val summaryFile = File(runDir, "summary.json")
+      val journeyFile = File(runDir, "journeys/001-single-journey.json")
       assertThat(result.statusCode).isEqualTo(0)
-      assertThat(File(runDir, "summary.json").exists()).isEqualTo(true)
-      assertThat(File(runDir, "journeys/001-single-journey.json").exists()).isEqualTo(true)
-      assertThat(File(runDir, "summary.json").readText()).contains("\"status\": \"passed\"")
+      assertThat(summaryFile.exists()).isEqualTo(true)
+      assertThat(journeyFile.exists()).isEqualTo(true)
+
+      val summary = readSummary(summaryFile)
+      assertThat(summary.timestamp).isEqualTo("2026-07-08T14:35:12Z")
+      assertThat(summary.inputPath).isEqualTo(file.path)
+      assertThat(summary.status).isEqualTo(ArtifactStatus.PASSED)
+      assertThat(summary.total).isEqualTo(1)
+      assertThat(summary.passed).isEqualTo(1)
+      assertThat(summary.failed).isEqualTo(0)
+      assertThat(summary.journeys).containsExactly(
+        SuiteJourneyArtifact(
+          path = "journeys/001-single-journey.json",
+          name = "Single journey",
+          status = ArtifactStatus.PASSED,
+        ),
+      )
+      assertThat(summary.error).isEqualTo(null)
+
+      val journey = readJourney(journeyFile)
+      assertThat(journey.journey.name).isEqualTo("Single journey")
+      assertThat(journey.journey.file).isEqualTo(file.path)
+      assertThat(journey.journey.app).isEqualTo("com.example.app")
+      assertThat(journey.journey.platform).isEqualTo(Platform.ANDROID_TV)
+      assertThat(journey.passed).isEqualTo(true)
+      assertThat(journey.failedAt).isEqualTo(null)
+      assertThat(journey.segments.size).isEqualTo(1)
+
+      val segment = journey.segments.single()
+      assertThat(segment.index).isEqualTo(0)
+      assertThat(segment.passed).isEqualTo(true)
+      assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.SLOW)
+      assertThat(segment.actions).containsExactly("Open navigation", "Select Home")
+      assertThat(segment.assertion?.description).isEqualTo("Home is visible")
+      assertThat(segment.assertion?.mode).isEqualTo(AssertMode.VISIBLE)
+      assertThat(segment.reasoning).isEqualTo("The Home label is visible")
+      assertThat(segment.generatedFlows).containsExactly("flows/001-single-journey/segment-000-actions.yaml")
+      assertThat(segment.evidence).containsExactly(
+        EvidenceArtifact(EvidenceType.HIERARCHY, "evidence/001-single-journey/segment-000-tree.txt"),
+      )
+      assertThat(segment.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "diagnostic only"))
     } finally {
       dir.deleteRecursively()
     }
@@ -284,7 +351,20 @@ class RunCommandTest {
               resolvedJourney = resolved,
               result = JourneyResult(
                 journeyName = resolved.journey.name,
-                segments = listOf(SegmentResult(index = 0, passed = false, reasoning = "Nope")),
+                segments = listOf(
+                  SegmentResult(
+                    index = 0,
+                    passed = false,
+                    assertionMode = AssertMode.TREE,
+                    assertionDescription = "Settings exists",
+                    reasoning = "Settings was missing",
+                    executionMode = SegmentExecutionMode.ASSERTION_ONLY,
+                    actions = listOf("Open settings"),
+                    generatedFlows = listOf("flows/001-single-journey/segment-000-actions.yaml"),
+                    evidence = listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, "evidence/001-single-journey/segment-000-visual.png")),
+                    error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Settings was missing"),
+                  ),
+                ),
               ),
             )
           },
@@ -295,10 +375,44 @@ class RunCommandTest {
         .subcommands(command)
         .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
 
-      val summary = File(outputDir, "runs/20260708-143512-single-journey/summary.json")
+      val runDir = File(outputDir, "runs/20260708-143512-single-journey")
+      val summaryFile = File(runDir, "summary.json")
+      val journeyFile = File(runDir, "journeys/001-single-journey.json")
       assertThat(result.statusCode).isEqualTo(4)
-      assertThat(summary.exists()).isEqualTo(true)
-      assertThat(summary.readText()).contains("\"status\": \"failed\"")
+      assertThat(summaryFile.exists()).isEqualTo(true)
+      assertThat(journeyFile.exists()).isEqualTo(true)
+
+      val summary = readSummary(summaryFile)
+      assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
+      assertThat(summary.total).isEqualTo(1)
+      assertThat(summary.passed).isEqualTo(0)
+      assertThat(summary.failed).isEqualTo(1)
+      assertThat(summary.journeys).containsExactly(
+        SuiteJourneyArtifact(
+          path = "journeys/001-single-journey.json",
+          name = "Single journey",
+          status = ArtifactStatus.FAILED,
+        ),
+      )
+      assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+
+      val journey = readJourney(journeyFile)
+      assertThat(journey.passed).isEqualTo(false)
+      assertThat(journey.failedAt).isEqualTo(0)
+      assertThat(journey.segments.size).isEqualTo(1)
+      val segment = journey.segments.single()
+      assertThat(segment.index).isEqualTo(0)
+      assertThat(segment.passed).isEqualTo(false)
+      assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.ASSERTION_ONLY)
+      assertThat(segment.actions).containsExactly("Open settings")
+      assertThat(segment.assertion?.description).isEqualTo("Settings exists")
+      assertThat(segment.assertion?.mode).isEqualTo(AssertMode.TREE)
+      assertThat(segment.reasoning).isEqualTo("Settings was missing")
+      assertThat(segment.generatedFlows).containsExactly("flows/001-single-journey/segment-000-actions.yaml")
+      assertThat(segment.evidence).containsExactly(
+        EvidenceArtifact(EvidenceType.SCREENSHOT, "evidence/001-single-journey/segment-000-visual.png"),
+      )
+      assertThat(segment.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Settings was missing"))
     } finally {
       dir.deleteRecursively()
     }
@@ -318,7 +432,15 @@ class RunCommandTest {
       val summary = File(outputDir, "runs/20260708-143512-missing-journey/summary.json")
       assertThat(result.statusCode).isEqualTo(2)
       assertThat(summary.exists()).isEqualTo(true)
-      assertThat(summary.readText()).contains("\"kind\": \"parser_failure\"")
+      val summaryJson = readSummary(summary)
+      assertThat(summaryJson.timestamp).isEqualTo("2026-07-08T14:35:12Z")
+      assertThat(summaryJson.inputPath).isEqualTo(missing.path)
+      assertThat(summaryJson.status).isEqualTo(ArtifactStatus.FAILED)
+      assertThat(summaryJson.total).isEqualTo(0)
+      assertThat(summaryJson.passed).isEqualTo(0)
+      assertThat(summaryJson.failed).isEqualTo(0)
+      assertThat(summaryJson.journeys).containsExactly()
+      assertThat(summaryJson.error?.kind).isEqualTo(ArtifactErrorKind.PARSER_FAILURE)
     } finally {
       dir.deleteRecursively()
     }
@@ -337,7 +459,15 @@ class RunCommandTest {
       val summary = File(outputDir, "runs/20260708-143512-run/summary.json")
       assertThat(result.statusCode).isEqualTo(2)
       assertThat(summary.exists()).isEqualTo(true)
-      assertThat(summary.readText()).contains("\"kind\": \"parser_failure\"")
+      val summaryJson = readSummary(summary)
+      assertThat(summaryJson.timestamp).isEqualTo("2026-07-08T14:35:12Z")
+      assertThat(summaryJson.inputPath).isEqualTo("")
+      assertThat(summaryJson.status).isEqualTo(ArtifactStatus.FAILED)
+      assertThat(summaryJson.total).isEqualTo(0)
+      assertThat(summaryJson.passed).isEqualTo(0)
+      assertThat(summaryJson.failed).isEqualTo(0)
+      assertThat(summaryJson.journeys).containsExactly()
+      assertThat(summaryJson.error?.kind).isEqualTo(ArtifactErrorKind.PARSER_FAILURE)
     } finally {
       dir.deleteRecursively()
     }
@@ -637,6 +767,10 @@ class RunCommandTest {
   private fun dryRunCommand(
     runner: suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport,
   ): RunCommand = RunCommand(dryRunSuiteRunner = runner)
+
+  private fun readSummary(file: File): SuiteArtifactSummary = json.decodeFromString(SuiteArtifactSummary.serializer(), file.readText())
+
+  private fun readJourney(file: File): JourneyArtifactResult = json.decodeFromString(JourneyArtifactResult.serializer(), file.readText())
 
   private fun artifactResult(): JourneyArtifactResult = JourneyArtifactResult(
     journey = JourneyArtifactIdentity(
