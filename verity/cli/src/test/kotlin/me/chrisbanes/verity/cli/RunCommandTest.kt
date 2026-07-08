@@ -20,6 +20,7 @@ import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.SegmentResult
 import me.chrisbanes.verity.core.model.AssertMode
+import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
@@ -461,7 +462,7 @@ class RunCommandTest {
       assertThat(summary.exists()).isEqualTo(true)
       val summaryJson = readSummary(summary)
       assertThat(summaryJson.timestamp).isEqualTo("2026-07-08T14:35:12Z")
-      assertThat(summaryJson.inputPath).isEqualTo("")
+      assertThat(summaryJson.inputPath).isEqualTo("<unresolved>")
       assertThat(summaryJson.status).isEqualTo(ArtifactStatus.FAILED)
       assertThat(summaryJson.total).isEqualTo(0)
       assertThat(summaryJson.passed).isEqualTo(0)
@@ -700,6 +701,41 @@ class RunCommandTest {
   }
 
   @Test
+  fun `real suite artifact runner passes distinct journey recorders`() = kotlinx.coroutines.test.runTest {
+    val dir = createTempDirectory("verity-run-artifact-runner").toFile()
+    try {
+      val run = RunArtifactWriter(
+        outputRoot = dir,
+        clock = fixedClock(),
+      ).createRun(suiteSlugSource = "suite")
+      val journeys = listOf(
+        resolvedJourney("first.journey.yaml", "First journey"),
+        resolvedJourney("second.journey.yaml", "Second journey"),
+      )
+
+      val result = runResolvedJourneysWithArtifacts(journeys, run) { resolved, recorder ->
+        val flow = recorder.saveGeneratedFlow(segmentIndex = 1, label = "actions", yaml = "flow for ${resolved.journey.name}")
+        JourneyResult(
+          journeyName = resolved.journey.name,
+          segments = listOf(SegmentResult(index = 1, passed = true, generatedFlows = listOfNotNull(flow))),
+        )
+      }
+
+      assertThat(result.passed).isEqualTo(true)
+      assertThat(result.results[0].result.segments.single().generatedFlows)
+        .containsExactly("flows/001-first-journey/segment-001-actions.yaml")
+      assertThat(result.results[1].result.segments.single().generatedFlows)
+        .containsExactly("flows/002-second-journey/segment-001-actions.yaml")
+      assertThat(File(run.directory.toFile(), "flows/001-first-journey/segment-001-actions.yaml").readText())
+        .isEqualTo("flow for First journey")
+      assertThat(File(run.directory.toFile(), "flows/002-second-journey/segment-001-actions.yaml").readText())
+        .isEqualTo("flow for Second journey")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `run artifacts reject journey result paths escaping run directory`() = kotlinx.coroutines.test.runTest {
     val dir = createTempDirectory("verity-artifacts-escape").toFile()
     try {
@@ -771,6 +807,16 @@ class RunCommandTest {
   private fun readSummary(file: File): SuiteArtifactSummary = json.decodeFromString(SuiteArtifactSummary.serializer(), file.readText())
 
   private fun readJourney(file: File): JourneyArtifactResult = json.decodeFromString(JourneyArtifactResult.serializer(), file.readText())
+
+  private fun resolvedJourney(fileName: String, name: String): ResolvedJourney = ResolvedJourney(
+    file = File(fileName),
+    journey = Journey(
+      name = name,
+      app = "com.example.app",
+      platform = Platform.ANDROID_TV,
+      steps = emptyList(),
+    ),
+  )
 
   private fun artifactResult(): JourneyArtifactResult = JourneyArtifactResult(
     journey = JourneyArtifactIdentity(

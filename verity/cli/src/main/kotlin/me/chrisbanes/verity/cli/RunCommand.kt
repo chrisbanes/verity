@@ -19,6 +19,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import me.chrisbanes.verity.agent.InspectorAgent
+import me.chrisbanes.verity.agent.JourneyArtifactRecorder
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
@@ -151,7 +152,7 @@ class RunCommand(
       resolveRunJourneyFile(journeyPath, resolved.configuredJourneysPath)
     } catch (e: IllegalArgumentException) {
       val message = e.message ?: "Invalid journey path"
-      val inputPath = journeyPath ?: resolved.configuredJourneysPath?.path ?: ""
+      val inputPath = journeyPath ?: resolved.configuredJourneysPath?.path ?: "<unresolved>"
       val runArtifacts = artifactWriter.createRun(
         suiteSlugSource = journeyPath ?: resolved.configuredJourneysPath?.path ?: "run",
       )
@@ -499,24 +500,32 @@ class RunCommand(
     }
 
     session.use {
-      return SuiteRunResult(
-        journeys.mapIndexed { index, resolved ->
-          val orchestrator = Orchestrator(
-            session = session,
-            navigatorFactory = navigatorFactory,
-            inspectorFactory = inspectorFactory,
-            context = projectContext.text,
-            artifactRecorder = runArtifacts.journey(index + 1, resolved.journey.name),
-          )
-          ResolvedJourneyResult(
-            resolvedJourney = resolved,
-            result = orchestrator.run(resolved.journey),
-          )
-        },
-      )
+      return runResolvedJourneysWithArtifacts(journeys, runArtifacts) { resolved, artifactRecorder ->
+        val orchestrator = Orchestrator(
+          session = session,
+          navigatorFactory = navigatorFactory,
+          inspectorFactory = inspectorFactory,
+          context = projectContext.text,
+          artifactRecorder = artifactRecorder,
+        )
+        orchestrator.run(resolved.journey)
+      }
     }
   }
 }
+
+internal suspend fun runResolvedJourneysWithArtifacts(
+  journeys: List<ResolvedJourney>,
+  runArtifacts: RunArtifactDirectory,
+  runner: suspend (ResolvedJourney, JourneyArtifactRecorder) -> JourneyResult,
+): SuiteRunResult = SuiteRunResult(
+  journeys.mapIndexed { index, resolved ->
+    ResolvedJourneyResult(
+      resolvedJourney = resolved,
+      result = runner(resolved, runArtifacts.journey(index + 1, resolved.journey.name)),
+    )
+  },
+)
 
 private fun ContextBundle.describeForCli(contextDir: File?, required: Boolean): List<String> {
   val mode = if (required) "required" else "optional"
