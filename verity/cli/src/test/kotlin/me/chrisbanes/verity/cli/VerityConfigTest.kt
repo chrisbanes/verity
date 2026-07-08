@@ -23,6 +23,59 @@ class VerityConfigTest {
   }
 
   @Test
+  fun `parses structured config`() {
+    val yaml =
+      """
+      paths:
+        journeys: journeys
+        context: context
+        output: build/verity
+      device:
+        platform: android-tv
+        id: emulator-5554
+        disable-animations: true
+      llm:
+        provider: anthropic
+        navigator-model: claude-haiku-4-5
+        inspector-model: claude-sonnet-4-5
+      assertions:
+        strategy: tree
+      """.trimIndent()
+
+    val config = VerityConfig.fromYaml(yaml)
+
+    assertThat(config.paths?.journeys).isEqualTo("journeys")
+    assertThat(config.paths?.context).isEqualTo("context")
+    assertThat(config.paths?.output).isEqualTo("build/verity")
+    assertThat(config.device?.platform).isEqualTo("android-tv")
+    assertThat(config.device?.id).isEqualTo("emulator-5554")
+    assertThat(config.device?.disableAnimations).isEqualTo(true)
+    assertThat(config.llm?.provider).isEqualTo("anthropic")
+    assertThat(config.llm?.navigatorModel).isEqualTo("claude-haiku-4-5")
+    assertThat(config.llm?.inspectorModel).isEqualTo("claude-sonnet-4-5")
+    assertThat(config.assertions?.strategy).isEqualTo("tree")
+  }
+
+  @Test
+  fun `structured llm values override legacy top-level values`() {
+    val config = VerityConfig.fromYaml(
+      """
+      provider: openai
+      navigator-model: gpt-4o-mini
+      inspector-model: gpt-4o
+      llm:
+        provider: anthropic
+        navigator-model: claude-haiku-4-5
+        inspector-model: claude-sonnet-4-5
+      """.trimIndent(),
+    )
+
+    assertThat(config.effectiveProvider).isEqualTo("anthropic")
+    assertThat(config.effectiveNavigatorModel).isEqualTo("claude-haiku-4-5")
+    assertThat(config.effectiveInspectorModel).isEqualTo("claude-sonnet-4-5")
+  }
+
+  @Test
   fun `parses partial config with only provider`() {
     val yaml = "provider: google"
     val config = VerityConfig.fromYaml(yaml)

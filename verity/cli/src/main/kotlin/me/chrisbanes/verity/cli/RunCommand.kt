@@ -22,7 +22,9 @@ import me.chrisbanes.verity.core.context.ContextLoader
 import me.chrisbanes.verity.core.context.ContextStatus
 import me.chrisbanes.verity.core.context.ContextValidationException
 import me.chrisbanes.verity.core.journey.JourneyLoader
+import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.Journey
+import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSessionFactory
 
 data class ResolvedJourney(
@@ -44,7 +46,7 @@ data class SuiteRunResult(
 }
 
 class RunCommand(
-  private val loadJourney: (File) -> Journey = JourneyLoader::fromFile,
+  private val loadJourney: (File, AssertionStrategy) -> Journey = JourneyLoader::fromFile,
   private val listJourneyFiles: (File) -> List<File> = JourneyLoader::listJourneyFiles,
   private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
 ) : CliktCommand(name = "run") {
@@ -52,7 +54,11 @@ class RunCommand(
 
   private val journeyPath by argument("journey", help = "Path to .journey.yaml file").optional()
 
-  private fun resolveJourneys(path: File): List<ResolvedJourney> {
+  private fun resolveJourneys(
+    path: File,
+    assertionStrategy: AssertionStrategy,
+    platformOverride: Platform?,
+  ): List<ResolvedJourney> {
     if (!path.exists()) {
       throw CliktError("Journey path not found: ${path.absolutePath}")
     }
@@ -63,14 +69,26 @@ class RunCommand(
         if (files.isEmpty()) {
           throw CliktError("No journey files found in: ${path.absolutePath}")
         }
-        files.map { file -> ResolvedJourney(file = file, journey = loadJourney(file)) }
+        files.map { file -> resolveJourney(file, assertionStrategy, platformOverride) }
           .also(::requireSinglePlatform)
       }
 
-      path.isFile -> listOf(ResolvedJourney(file = path, journey = loadJourney(path)))
+      path.isFile -> listOf(resolveJourney(path, assertionStrategy, platformOverride))
 
       else -> throw CliktError("Journey path is not a file or directory: ${path.absolutePath}")
     }
+  }
+
+  private fun resolveJourney(
+    file: File,
+    assertionStrategy: AssertionStrategy,
+    platformOverride: Platform?,
+  ): ResolvedJourney {
+    val journey = loadJourney(file, assertionStrategy)
+    return ResolvedJourney(
+      file = file,
+      journey = applyResolvedPlatform(journey, platformOverride),
+    )
   }
 
   private fun requireSinglePlatform(journeys: List<ResolvedJourney>) {
@@ -88,12 +106,32 @@ class RunCommand(
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
 
-    val path = journeyPath?.let { File(it) }
-      ?: throw UsageError("Journey path required. Use: verity run <path>")
-    val journeys = resolveJourneys(path)
+    val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
+    val resolved = ResolvedProjectConfig.resolve(
+      config = config,
+      cli = parent.projectCliOptions(),
+    )
+    validateOutputDirectory(resolved.outputPath)
+
+    val path = try {
+      resolveRunJourneyFile(journeyPath, resolved.configuredJourneysPath)
+    } catch (e: IllegalArgumentException) {
+      throw UsageError(e.message ?: "Invalid journey path")
+    }
+    val journeys = resolveJourneys(
+      path = path,
+      assertionStrategy = resolved.assertionStrategy,
+      platformOverride = resolved.platform,
+    )
 
     val suiteResult = suiteRunner?.invoke(journeys)
-      ?: runSuiteWithDevice(parent = parent, journeys = journeys)
+      ?: runSuiteWithDevice(
+        parent = parent,
+        config = config,
+        resolved = resolved,
+        path = path,
+        journeys = journeys,
+      )
 
     printSuiteResult(suiteResult)
 
@@ -132,12 +170,13 @@ class RunCommand(
 
   private suspend fun runSuiteWithDevice(
     parent: Verity,
+    config: VerityConfig,
+    resolved: ResolvedProjectConfig,
+    path: File,
     journeys: List<ResolvedJourney>,
   ): SuiteRunResult {
-    val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
-    val firstJourney = journeys.first().journey
-    val platform = parent.platform ?: firstJourney.platform
-    val contextDir = parent.contextPath?.let { File(it) }
+    val platform = journeys.first().journey.platform
+    val contextDir = resolved.contextPath
     val requireContext = resolveRequiredContext(parent.requireContext, config)
     val projectContext = try {
       withContext(Dispatchers.IO) {
@@ -153,10 +192,10 @@ class RunCommand(
         cliNavigatorModel = parent.navigatorModel,
         cliInspectorModel = parent.inspectorModel,
         apiKey = parent.apiKey,
-        journeyPath = journeyPath,
+        journeyPath = path.path,
         contextPath = null,
         platform = platform,
-        deviceId = parent.device,
+        deviceId = resolved.deviceId,
       ),
       config = config,
     )
@@ -166,8 +205,8 @@ class RunCommand(
 
     val provider = checkNotNull(preflight.provider)
     val apiKey = preflight.apiKey.orEmpty()
-    val navigatorModel = checkNotNull(preflight.navigatorModel)
-    val inspectorModel = checkNotNull(preflight.inspectorModel)
+    val navigatorModel = resolved.navigatorModel
+    val inspectorModel = resolved.inspectorModel
     echo("Provider: ${provider.name}")
     echo("Navigator model: ${navigatorModel.id}")
     echo("Inspector model: ${inspectorModel.id}")
@@ -175,8 +214,8 @@ class RunCommand(
 
     val session = DeviceSessionFactory.connect(
       platform = platform,
-      deviceId = parent.device,
-      disableAnimations = parent.noAnimations,
+      deviceId = resolved.deviceId,
+      disableAnimations = resolved.disableAnimations,
     )
 
     val executor = MultiLLMPromptExecutor(provider.createClient(apiKey))

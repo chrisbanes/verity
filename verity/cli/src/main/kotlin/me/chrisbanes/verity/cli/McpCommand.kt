@@ -23,13 +23,22 @@ class McpCommand : CliktCommand(name = "mcp") {
   override fun run() = runBlocking {
     val parent = currentContext.parent?.command as Verity
     val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
-    val contextDir = parent.contextPath?.let { File(it) }
     val requireContext = resolveRequiredContext(parent.requireContext, config)
+    val resolved = ResolvedProjectConfig.resolve(
+      config = config,
+      cli = parent.projectCliOptions(),
+    )
+    resolved.contextPath?.let { validateReadableDirectory(it, "paths.context") }
+    validateOutputDirectory(resolved.outputPath)
 
     val server = VerityMcpServer(
-      contextPath = contextDir,
+      contextPath = resolved.contextPath,
       skipBundledContext = parent.noBundledContext,
       requireContext = requireContext,
+      defaultJourneysPath = resolved.journeysPath,
+      defaultPlatform = resolved.platform,
+      defaultDeviceId = resolved.deviceId,
+      defaultDisableAnimations = resolved.disableAnimations,
     )
 
     when (transport) {
