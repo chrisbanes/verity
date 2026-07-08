@@ -95,6 +95,38 @@ class CliPreflightCheckerTest {
   }
 
   @Test
+  fun `reports unknown nested llm navigator model without throwing`() = runTest {
+    val journey = Files.createTempFile("journey-", ".journey.yaml")
+    val checker = CliPreflightChecker(
+      devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = null,
+        cliNavigatorModel = null,
+        cliInspectorModel = null,
+        apiKey = null,
+        journeyPath = journey.toString(),
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(
+        llm = VerityLlmConfig(
+          provider = "ollama",
+          navigatorModel = "definitely-not-real",
+        ),
+      ),
+      includeDevicePreflight = false,
+    )
+
+    assertThat(result.report.passed).isFalse()
+    assertThat(result.report.issues.single().code).isEqualTo(PreflightCodes.PROVIDER_MODEL_UNKNOWN)
+    assertThat(result.report.issues.single().message).contains("Unknown model 'definitely-not-real'")
+  }
+
+  @Test
   fun `runs device preflight for selected platform`() = runTest {
     val journey = Files.createTempFile("journey-", ".journey.yaml")
     var receivedPlatform: Platform? = null
@@ -124,6 +156,66 @@ class CliPreflightCheckerTest {
 
     assertThat(receivedPlatform).isEqualTo(Platform.IOS)
     assertThat(receivedDevice).isEqualTo("sim-1")
+  }
+
+  @Test
+  fun `can skip device preflight for dry run`() = runTest {
+    val journey = Files.createTempFile("journey-", ".journey.yaml")
+    var devicePreflightCalls = 0
+    val checker = CliPreflightChecker(
+      environment = { name -> if (name == "ANTHROPIC_API_KEY") "secret" else null },
+      devicePreflightChecker = DevicePreflightChecker { _, _ ->
+        devicePreflightCalls += 1
+        PreflightReport()
+      },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = "anthropic",
+        cliNavigatorModel = null,
+        cliInspectorModel = null,
+        apiKey = null,
+        journeyPath = journey.toString(),
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(),
+      includeDevicePreflight = false,
+    )
+
+    assertThat(result.report.passed).isTrue()
+    assertThat(devicePreflightCalls).isEqualTo(0)
+  }
+
+  @Test
+  fun `can skip inspector model validation for dry run navigator preflight`() = runTest {
+    val journey = Files.createTempFile("journey-", ".journey.yaml")
+    val checker = CliPreflightChecker(
+      environment = { name -> if (name == "ANTHROPIC_API_KEY") "secret" else null },
+      devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = "anthropic",
+        cliNavigatorModel = "claude-haiku-4-5",
+        cliInspectorModel = "definitely-not-real",
+        apiKey = null,
+        journeyPath = journey.toString(),
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(),
+      includeDevicePreflight = false,
+      includeInspectorModelPreflight = false,
+    )
+
+    assertThat(result.report.passed).isTrue()
+    assertThat(result.navigatorModel?.id).isEqualTo("claude-haiku-4-5")
+    assertThat(result.inspectorModel).isEqualTo(null)
   }
 
   @Test

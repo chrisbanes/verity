@@ -39,6 +39,8 @@ class CliPreflightChecker(
   suspend fun check(
     request: CliPreflightRequest,
     config: VerityConfig,
+    includeDevicePreflight: Boolean = true,
+    includeInspectorModelPreflight: Boolean = true,
   ): CliPreflightResult {
     var report = PreflightReport()
     val provider = runCatching { resolveProvider(request.cliProvider, config) }
@@ -61,16 +63,16 @@ class CliPreflightChecker(
       resolveModelSafely(
         provider = it,
         cliModel = request.cliNavigatorModel,
-        configModel = config.navigatorModel,
+        configModel = config.effectiveNavigatorModel,
         defaultModel = it.defaultNavigatorModel,
         role = "navigator",
       ) { modelReport -> report += modelReport }
     }
-    val inspectorModel = provider?.let {
+    val inspectorModel = provider?.takeIf { includeInspectorModelPreflight }?.let {
       resolveModelSafely(
         provider = it,
         cliModel = request.cliInspectorModel,
-        configModel = config.inspectorModel,
+        configModel = config.effectiveInspectorModel,
         defaultModel = it.defaultInspectorModel,
         role = "inspector",
       ) { modelReport -> report += modelReport }
@@ -130,7 +132,9 @@ class CliPreflightChecker(
     }
 
     report += pathPreflightChecker.requireTempWritable()
-    report += devicePreflightChecker.check(request.platform, request.deviceId)
+    if (includeDevicePreflight) {
+      report += devicePreflightChecker.check(request.platform, request.deviceId)
+    }
 
     return CliPreflightResult(
       report = report,

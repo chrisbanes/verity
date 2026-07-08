@@ -9,10 +9,13 @@ import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.core.UsageError
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
+import com.github.ajalt.clikt.parameters.options.flag
+import com.github.ajalt.clikt.parameters.options.option
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.NavigatorAgent
@@ -49,10 +52,15 @@ class RunCommand(
   private val loadJourney: (File, AssertionStrategy) -> Journey = JourneyLoader::fromFile,
   private val listJourneyFiles: (File) -> List<File> = JourneyLoader::listJourneyFiles,
   private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
+  private val dryRunSuiteRunner: (suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport)? = null,
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
   private val journeyPath by argument("journey", help = "Path to .journey.yaml file").optional()
+  private val dryRun by option(
+    "--dry-run",
+    help = "Validate journeys and render generated Maestro YAML without device access",
+  ).flag()
 
   private fun resolveJourneys(
     path: File,
@@ -84,7 +92,11 @@ class RunCommand(
     assertionStrategy: AssertionStrategy,
     platformOverride: Platform?,
   ): ResolvedJourney {
-    val journey = loadJourney(file, assertionStrategy)
+    val journey = try {
+      loadJourney(file, assertionStrategy)
+    } catch (e: SerializationException) {
+      throw CliktError("Failed to load journey ${file.absolutePath}: ${e.message}")
+    }
     return ResolvedJourney(
       file = file,
       journey = applyResolvedPlatform(journey, platformOverride),
@@ -107,10 +119,15 @@ class RunCommand(
     val parent = currentContext.parent?.command as Verity
 
     val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
-    val resolved = ResolvedProjectConfig.resolve(
-      config = config,
-      cli = parent.projectCliOptions(),
-    )
+    val cliOptions = parent.projectCliOptions()
+    val resolved = if (dryRun) {
+      resolveDryRunProjectConfig(config, cliOptions)
+    } else {
+      ResolvedProjectConfig.resolve(
+        config = config,
+        cli = cliOptions,
+      )
+    }
     validateOutputDirectory(resolved.outputPath)
 
     val path = try {
@@ -123,6 +140,19 @@ class RunCommand(
       assertionStrategy = resolved.assertionStrategy,
       platformOverride = resolved.platform,
     )
+
+    if (dryRun) {
+      val dryRunReport = dryRunSuiteRunner?.invoke(journeys, resolved.outputPath)
+        ?: runDryRun(
+          parent = parent,
+          config = config,
+          resolved = resolved,
+          path = path,
+          journeys = journeys,
+        )
+      echo(DryRunRenderer.renderSuite(dryRunReport))
+      return@runBlocking
+    }
 
     val suiteResult = suiteRunner?.invoke(journeys)
       ?: runSuiteWithDevice(
@@ -137,6 +167,101 @@ class RunCommand(
 
     if (!suiteResult.passed) {
       throw CliktError("Journey suite failed")
+    }
+  }
+
+  private fun resolveDryRunProjectConfig(
+    config: VerityConfig,
+    cli: ProjectCliOptions,
+  ): ResolvedProjectConfig = ResolvedProjectConfig.resolve(
+    config = config.copy(
+      llm = config.llm?.copy(
+        provider = null,
+        navigatorModel = null,
+        inspectorModel = null,
+      ),
+      provider = null,
+      navigatorModel = null,
+      inspectorModel = null,
+    ),
+    cli = cli.copy(
+      provider = "ollama",
+      navigatorModel = null,
+      inspectorModel = null,
+    ),
+  )
+
+  private suspend fun runDryRun(
+    parent: Verity,
+    config: VerityConfig,
+    resolved: ResolvedProjectConfig,
+    path: File,
+    journeys: List<ResolvedJourney>,
+  ): DryRunSuiteReport {
+    val contextDir = resolved.contextPath
+    val requireContext = resolveRequiredContext(parent.requireContext, config)
+    val projectContext = try {
+      withContext(Dispatchers.IO) {
+        ContextLoader.loadProject(directory = contextDir, required = requireContext)
+      }
+    } catch (e: ContextValidationException) {
+      throw CliktError(e.message ?: "Project context validation failed")
+    }
+    projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
+
+    var dryRunNavigator: DryRunNavigator? = null
+    val planner = DryRunPlanner(
+      context = projectContext.text,
+      navigatorFactory = {
+        dryRunNavigator ?: createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform)
+          .also { dryRunNavigator = it }
+      },
+    )
+    val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
+    return DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
+  }
+
+  private suspend fun createDryRunNavigator(
+    parent: Verity,
+    config: VerityConfig,
+    resolved: ResolvedProjectConfig,
+    path: File,
+    platform: Platform,
+  ): DryRunNavigator {
+    val preflight = CliPreflightChecker().check(
+      request = CliPreflightRequest(
+        cliProvider = parent.provider,
+        cliNavigatorModel = parent.navigatorModel,
+        cliInspectorModel = parent.inspectorModel,
+        apiKey = parent.apiKey,
+        journeyPath = path.path,
+        contextPath = null,
+        platform = platform,
+        deviceId = resolved.deviceId,
+      ),
+      config = config,
+      includeDevicePreflight = false,
+      includeInspectorModelPreflight = false,
+    )
+    if (!preflight.report.passed) {
+      throw CliktError(preflight.report.renderPlainText())
+    }
+
+    val provider = checkNotNull(preflight.provider)
+    val navigatorModel = checkNotNull(preflight.navigatorModel)
+    val executor = MultiLLMPromptExecutor(provider.createClient(preflight.apiKey.orEmpty()))
+    val navigatorAgent = NavigatorAgent(
+      bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
+      agentFactory = { systemPrompt ->
+        AIAgent(
+          promptExecutor = executor,
+          llmModel = navigatorModel,
+          systemPrompt = systemPrompt,
+        )
+      },
+    )
+    return DryRunNavigator { actions, appId, targetPlatform, context ->
+      navigatorAgent.generate(actions, appId, targetPlatform, context)
     }
   }
 

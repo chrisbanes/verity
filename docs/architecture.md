@@ -2,7 +2,7 @@
 
 Verity is a Kotlin/JVM tool that combines device automation (Maestro SDK) with LLM reasoning (via Koog) to run end-to-end journey tests on Android TV, Android mobile, and iOS devices. It operates in two modes:
 
-1. **CLI mode** (`verity run`) — Executes journey YAML files against a connected device, using LLMs to generate Maestro flows and evaluate assertions.
+1. **CLI mode** (`verity run`) — Executes journey YAML files against a connected device, using LLMs to generate Maestro flows and evaluate assertions. `verity run --dry-run` parses, segments, renders fast-path actions, and generates slow-path Maestro YAML without device access.
 2. **MCP server mode** (`verity mcp`) — Exposes device control as MCP tools so an AI agent can interactively drive the device.
 
 LLMs serve two purposes: flow generation (turning English into Maestro YAML) and assertion evaluation (judging whether screen state matches an expectation). Deterministic fast-paths handle both when possible, so LLM calls happen only when necessary.
@@ -177,6 +177,12 @@ data class JourneySegment(
 - Trailing actions without an assertion become a final segment
 
 Each segment is a natural checkpoint: run actions, evaluate assertion, stop on failure.
+
+### Dry-Run Planning
+
+`verity run --dry-run` reuses normal journey resolution and segmentation, then switches to a CLI-owned planner instead of `Orchestrator`. The planner renders the launch flow, classifies fast-path action groups with `InteractionMapper`, generates Maestro YAML for slow-path action groups with `NavigatorAgent`, and records assertion descriptions and modes without evaluating them.
+
+Dry-run always prints a Markdown report and writes per-journey artifacts under `<output-path>/dry-run`. It may call the navigator LLM for slow-path YAML, but it does not run device preflight, create `DeviceSession`, execute flows, capture hierarchy, capture screenshots, or evaluate assertions.
 
 ---
 
