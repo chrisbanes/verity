@@ -125,6 +125,25 @@ class ConfigResolverTest {
   }
 
   @Test
+  fun `resolved config creates run artifact metadata`() {
+    val resolved = ResolvedProjectConfig.resolve(
+      config = VerityConfig(provider = "anthropic"),
+      cli = ProjectCliOptions(
+        navigatorModel = "claude-haiku-4-5",
+        inspectorModel = "claude-sonnet-4-5",
+      ),
+    )
+
+    assertThat(resolved.toRunArtifactMetadata()).isEqualTo(
+      RunArtifactMetadata(
+        provider = "anthropic",
+        navigatorModel = "claude-haiku-4-5",
+        inspectorModel = "claude-sonnet-4-5",
+      ),
+    )
+  }
+
+  @Test
   fun `resolved config preserves current defaults when config and cli are empty`() {
     val resolved = ResolvedProjectConfig.resolve(
       config = VerityConfig(),

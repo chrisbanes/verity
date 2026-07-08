@@ -260,7 +260,7 @@ class RunCommandTest {
       val outputDir = File(dir, "output")
       val command = runCommand(clock = fixedClock()) { journeys ->
         SuiteRunResult(
-          journeys.map { resolved ->
+          results = journeys.map { resolved ->
             ResolvedJourneyResult(
               resolvedJourney = resolved,
               result = JourneyResult(
@@ -282,6 +282,11 @@ class RunCommandTest {
               ),
             )
           },
+          metadata = RunArtifactMetadata(
+            provider = "ollama",
+            navigatorModel = "qwen2.5-coder",
+            inspectorModel = "llava",
+          ),
         )
       }
 
@@ -303,6 +308,9 @@ class RunCommandTest {
       assertThat(summary.total).isEqualTo(1)
       assertThat(summary.passed).isEqualTo(1)
       assertThat(summary.failed).isEqualTo(0)
+      assertThat(summary.provider).isEqualTo("ollama")
+      assertThat(summary.navigatorModel).isEqualTo("qwen2.5-coder")
+      assertThat(summary.inspectorModel).isEqualTo("llava")
       assertThat(summary.journeys).containsExactly(
         SuiteJourneyArtifact(
           path = "journeys/001-single-journey.json",

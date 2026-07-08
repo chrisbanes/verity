@@ -55,8 +55,15 @@ data class ResolvedJourneyResult(
   val result: JourneyResult,
 )
 
+data class RunArtifactMetadata(
+  val provider: String,
+  val navigatorModel: String,
+  val inspectorModel: String,
+)
+
 data class SuiteRunResult(
   val results: List<ResolvedJourneyResult>,
+  val metadata: RunArtifactMetadata? = null,
 ) {
   val passed: Boolean get() = results.all { it.result.passed }
   val passedCount: Int get() = results.count { it.result.passed }
@@ -147,6 +154,7 @@ class RunCommand(
         cli = cliOptions,
       )
     }
+    val metadata = resolved.toRunArtifactMetadata()
     validateOutputDirectory(resolved.outputPath)
 
     val path = try {
@@ -155,7 +163,7 @@ class RunCommand(
       val message = e.message ?: "Invalid journey path"
       val inputPath = journeyPath ?: resolved.configuredJourneysPath?.path ?: "<unresolved>"
       val runArtifacts = createRunArtifactsOrExit(resolved.outputPath, journeyPath ?: resolved.configuredJourneysPath?.path ?: "run")
-      writeParserFailureSummary(runArtifacts, inputPath, message)
+      writeParserFailureSummary(runArtifacts, inputPath, message, metadata)
       throw CliktError(message, statusCode = EXIT_INPUT)
     }
     val runArtifacts = createRunArtifactsOrExit(resolved.outputPath, path.nameWithoutExtension.ifEmpty { path.name })
@@ -169,7 +177,7 @@ class RunCommand(
       throw e
     } catch (e: Exception) {
       val message = e.message ?: "Failed to resolve journeys"
-      writeParserFailureSummary(runArtifacts, path.path, message)
+      writeParserFailureSummary(runArtifacts, path.path, message, metadata)
       throw CliktError(message, statusCode = EXIT_INPUT)
     }
 
@@ -209,11 +217,11 @@ class RunCommand(
       throw e
     } catch (e: JourneyExecutionFailure) {
       val message = e.message ?: "Journey suite failed"
-      writeJourneyFailureSummary(runArtifacts, path.path, message, journeys)
+      writeJourneyFailureSummary(runArtifacts, path.path, message, journeys, metadata)
       throw CliktError(message, statusCode = EXIT_JOURNEY)
     } catch (e: Exception) {
       val message = e.message ?: "Journey suite setup failed"
-      writeSetupFailureSummary(runArtifacts, path.path, message)
+      writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
       throw CliktError(message, statusCode = EXIT_SETUP)
     }
 
@@ -224,7 +232,7 @@ class RunCommand(
       throw e
     } catch (e: Exception) {
       val message = e.message ?: "Failed to write run artifacts"
-      writeSetupFailureSummary(runArtifacts, path.path, message, suiteResult)
+      writeSetupFailureSummary(runArtifacts, path.path, message, suiteResult, metadata)
       throw CliktError(message, statusCode = EXIT_SETUP)
     }
 
@@ -343,6 +351,7 @@ class RunCommand(
     runArtifacts: RunArtifactDirectory,
     inputPath: String,
     message: String,
+    metadata: RunArtifactMetadata? = null,
   ) {
     runArtifacts.writeSummary(
       SuiteArtifactSummary(
@@ -354,6 +363,9 @@ class RunCommand(
         passed = 0,
         failed = 0,
         error = ArtifactError(ArtifactErrorKind.PARSER_FAILURE, message),
+        provider = metadata?.provider,
+        navigatorModel = metadata?.navigatorModel,
+        inspectorModel = metadata?.inspectorModel,
       ),
     )
   }
@@ -363,7 +375,9 @@ class RunCommand(
     inputPath: String,
     message: String,
     suiteResult: SuiteRunResult? = null,
+    metadata: RunArtifactMetadata? = null,
   ) {
+    val summaryMetadata = suiteResult?.metadata ?: metadata
     try {
       runArtifacts.writeSummary(
         SuiteArtifactSummary(
@@ -384,6 +398,9 @@ class RunCommand(
           } ?: emptyList(),
           error = ArtifactError(ArtifactErrorKind.SETUP_FAILURE, message),
           platform = suiteResult?.results?.firstOrNull()?.resolvedJourney?.journey?.platform,
+          provider = summaryMetadata?.provider,
+          navigatorModel = summaryMetadata?.navigatorModel,
+          inspectorModel = summaryMetadata?.inspectorModel,
         ),
       )
     } catch (e: CancellationException) {
@@ -398,6 +415,7 @@ class RunCommand(
     inputPath: String,
     message: String,
     journeys: List<ResolvedJourney>,
+    metadata: RunArtifactMetadata? = null,
   ) {
     try {
       runArtifacts.writeSummary(
@@ -419,6 +437,9 @@ class RunCommand(
           },
           error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
           platform = journeys.firstOrNull()?.journey?.platform,
+          provider = metadata?.provider,
+          navigatorModel = metadata?.navigatorModel,
+          inspectorModel = metadata?.inspectorModel,
         ),
       )
     } catch (e: CancellationException) {
@@ -458,6 +479,9 @@ class RunCommand(
           ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Journey suite failed")
         },
         platform = suiteResult.results.firstOrNull()?.resolvedJourney?.journey?.platform,
+        provider = suiteResult.metadata?.provider,
+        navigatorModel = suiteResult.metadata?.navigatorModel,
+        inspectorModel = suiteResult.metadata?.inspectorModel,
       ),
     )
   }
@@ -618,7 +642,7 @@ class RunCommand(
             artifactRecorder = artifactRecorder,
           )
           orchestrator.run(resolved.journey)
-        }
+        }.copy(metadata = resolved.toRunArtifactMetadata())
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
