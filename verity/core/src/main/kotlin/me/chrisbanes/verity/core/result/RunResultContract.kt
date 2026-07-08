@@ -76,7 +76,7 @@ data class SuiteArtifactSummary(
   val failed: Int,
   val journeys: List<SuiteJourneyArtifact> = emptyList(),
   val error: ArtifactError? = null,
-  val platform: String? = null,
+  @Serializable(with = PlatformWireSerializer::class) val platform: Platform? = null,
   val provider: String? = null,
   val navigatorModel: String? = null,
   val inspectorModel: String? = null,

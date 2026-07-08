@@ -68,6 +68,7 @@ class RunResultContractTest {
         SuiteJourneyArtifact(path = "journeys/002-browse.json", name = "Browse", status = ArtifactStatus.FAILED),
       ),
       error = ArtifactError(kind = ArtifactErrorKind.JOURNEY_FAILURE, message = "One or more journeys failed"),
+      platform = Platform.IOS,
     )
 
     val encoded = json.encodeToString(SuiteArtifactSummary.serializer(), summary)
@@ -77,6 +78,28 @@ class RunResultContractTest {
     assertThat(encoded).contains("\"passed\":1")
     assertThat(encoded).contains("\"failed\":1")
     assertThat(encoded).contains("\"path\":\"journeys/001-login.json\"")
+    assertThat(encoded).contains("\"platform\":\"ios\"")
+  }
+
+  @Test
+  fun `suite summary decodes stable platform wire value`() {
+    val decoded = json.decodeFromString(
+      SuiteArtifactSummary.serializer(),
+      """
+      {
+        "formatVersion":1,
+        "timestamp":"2026-07-08T14:35:12Z",
+        "inputPath":"journeys",
+        "status":"passed",
+        "total":1,
+        "passed":1,
+        "failed":0,
+        "platform":"ios"
+      }
+      """.trimIndent(),
+    )
+
+    assertThat(decoded.platform).isEqualTo(Platform.IOS)
   }
 
   @Test
