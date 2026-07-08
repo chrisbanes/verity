@@ -6,13 +6,18 @@ import assertk.assertions.containsExactly
 import assertk.assertions.doesNotContain
 import assertk.assertions.exists
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.SegmentResult
+import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
+import me.chrisbanes.verity.core.result.JourneyArtifactResult
 
 class RunCommandTest {
 
@@ -458,6 +463,64 @@ class RunCommandTest {
     }
   }
 
+  @Test
+  fun `run artifacts reject journey result paths escaping run directory`() = kotlinx.coroutines.test.runTest {
+    val dir = createTempDirectory("verity-artifacts-escape").toFile()
+    try {
+      val run = RunArtifactWriter(
+        outputRoot = dir,
+        clock = java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T14:35:12Z"), java.time.ZoneOffset.UTC),
+      ).createRun(suiteSlugSource = "My Suite")
+
+      assertFailsWith<IllegalArgumentException> {
+        run.writeJourneyResult("../escape.json", artifactResult())
+      }
+
+      assertThat(File(run.directory.parent.toFile(), "escape.json").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `run artifacts sanitize generated flow labels`() = kotlinx.coroutines.test.runTest {
+    val dir = createTempDirectory("verity-artifacts-label").toFile()
+    try {
+      val run = RunArtifactWriter(
+        outputRoot = dir,
+        clock = java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T14:35:12Z"), java.time.ZoneOffset.UTC),
+      ).createRun(suiteSlugSource = "My Suite")
+      val journey = run.journey(index = 1, name = "Login")
+
+      val flow = journey.saveGeneratedFlow(segmentIndex = 2, label = "../bad label", yaml = "flow")
+
+      assertThat(flow).isEqualTo("flows/001-login/segment-002-bad-label.yaml")
+      assertThat(File(run.directory.toFile(), flow).readText()).isEqualTo("flow")
+      assertThat(File(run.directory.toFile(), "flows/001-login/segment-002-../bad label.yaml").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `run artifacts create collision safe run directories`() = kotlinx.coroutines.test.runTest {
+    val dir = createTempDirectory("verity-artifacts-collision").toFile()
+    try {
+      val writer = RunArtifactWriter(
+        outputRoot = dir,
+        clock = java.time.Clock.fixed(java.time.Instant.parse("2026-07-08T14:35:12Z"), java.time.ZoneOffset.UTC),
+      )
+
+      val first = writer.createRun(suiteSlugSource = "My Suite")
+      val second = writer.createRun(suiteSlugSource = "My Suite")
+
+      assertThat(first.directory.toFile().name).isEqualTo("20260708-143512-my-suite")
+      assertThat(second.directory.toFile().name).isEqualTo("20260708-143512-my-suite-2")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
   private fun runCommand(
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
   ): RunCommand = RunCommand(suiteRunner = runner)
@@ -465,6 +528,16 @@ class RunCommandTest {
   private fun dryRunCommand(
     runner: suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport,
   ): RunCommand = RunCommand(dryRunSuiteRunner = runner)
+
+  private fun artifactResult(): JourneyArtifactResult = JourneyArtifactResult(
+    journey = JourneyArtifactIdentity(
+      name = "Login",
+      file = "login.journey.yaml",
+      app = "com.example.app",
+      platform = Platform.ANDROID_TV,
+    ),
+    passed = true,
+  )
 
   private fun writeJourney(
     dir: File,
