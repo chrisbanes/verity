@@ -96,4 +96,80 @@ class RunResultContractTest {
     assertThat(decoded.segments.single().assertion?.mode).isEqualTo(AssertMode.VISIBLE)
     assertThat(decoded.segments.single().executionMode).isEqualTo(SegmentExecutionMode.ASSERTION_ONLY)
   }
+
+  @Test
+  fun `platform encodes and decodes all stable wire values`() {
+    assertThat(json.encodeToString(PlatformWireSerializer, Platform.ANDROID_TV)).isEqualTo("\"android-tv\"")
+    assertThat(json.encodeToString(PlatformWireSerializer, Platform.ANDROID_MOBILE)).isEqualTo("\"android\"")
+    assertThat(json.encodeToString(PlatformWireSerializer, Platform.IOS)).isEqualTo("\"ios\"")
+
+    assertThat(json.decodeFromString(PlatformWireSerializer, "\"android-tv\"")).isEqualTo(Platform.ANDROID_TV)
+    assertThat(json.decodeFromString(PlatformWireSerializer, "\"android\"")).isEqualTo(Platform.ANDROID_MOBILE)
+    assertThat(json.decodeFromString(PlatformWireSerializer, "\"ios\"")).isEqualTo(Platform.IOS)
+  }
+
+  @Test
+  fun `assert mode encodes and decodes all stable wire values`() {
+    assertThat(json.encodeToString(AssertModeWireSerializer, AssertMode.VISIBLE)).isEqualTo("\"visible\"")
+    assertThat(json.encodeToString(AssertModeWireSerializer, AssertMode.FOCUSED)).isEqualTo("\"focused\"")
+    assertThat(json.encodeToString(AssertModeWireSerializer, AssertMode.TREE)).isEqualTo("\"tree\"")
+    assertThat(json.encodeToString(AssertModeWireSerializer, AssertMode.VISUAL)).isEqualTo("\"visual\"")
+
+    assertThat(json.decodeFromString(AssertModeWireSerializer, "\"visible\"")).isEqualTo(AssertMode.VISIBLE)
+    assertThat(json.decodeFromString(AssertModeWireSerializer, "\"focused\"")).isEqualTo(AssertMode.FOCUSED)
+    assertThat(json.decodeFromString(AssertModeWireSerializer, "\"tree\"")).isEqualTo(AssertMode.TREE)
+    assertThat(json.decodeFromString(AssertModeWireSerializer, "\"visual\"")).isEqualTo(AssertMode.VISUAL)
+  }
+
+  @Test
+  fun `artifact status encodes and decodes all stable wire values`() {
+    assertThat(json.encodeToString(ArtifactStatus.serializer(), ArtifactStatus.PASSED)).isEqualTo("\"passed\"")
+    assertThat(json.encodeToString(ArtifactStatus.serializer(), ArtifactStatus.FAILED)).isEqualTo("\"failed\"")
+
+    assertThat(json.decodeFromString(ArtifactStatus.serializer(), "\"passed\"")).isEqualTo(ArtifactStatus.PASSED)
+    assertThat(json.decodeFromString(ArtifactStatus.serializer(), "\"failed\"")).isEqualTo(ArtifactStatus.FAILED)
+  }
+
+  @Test
+  fun `segment execution mode encodes and decodes all stable wire values`() {
+    assertThat(json.encodeToString(SegmentExecutionMode.serializer(), SegmentExecutionMode.FAST)).isEqualTo("\"fast\"")
+    assertThat(json.encodeToString(SegmentExecutionMode.serializer(), SegmentExecutionMode.SLOW)).isEqualTo("\"slow\"")
+    assertThat(json.encodeToString(SegmentExecutionMode.serializer(), SegmentExecutionMode.LOOP)).isEqualTo("\"loop\"")
+    assertThat(json.encodeToString(SegmentExecutionMode.serializer(), SegmentExecutionMode.ASSERTION_ONLY))
+      .isEqualTo("\"assertion-only\"")
+
+    assertThat(json.decodeFromString(SegmentExecutionMode.serializer(), "\"fast\"")).isEqualTo(SegmentExecutionMode.FAST)
+    assertThat(json.decodeFromString(SegmentExecutionMode.serializer(), "\"slow\"")).isEqualTo(SegmentExecutionMode.SLOW)
+    assertThat(json.decodeFromString(SegmentExecutionMode.serializer(), "\"loop\"")).isEqualTo(SegmentExecutionMode.LOOP)
+    assertThat(json.decodeFromString(SegmentExecutionMode.serializer(), "\"assertion-only\""))
+      .isEqualTo(SegmentExecutionMode.ASSERTION_ONLY)
+  }
+
+  @Test
+  fun `evidence type encodes and decodes all stable wire values`() {
+    assertThat(json.encodeToString(EvidenceType.serializer(), EvidenceType.FLOW)).isEqualTo("\"flow\"")
+    assertThat(json.encodeToString(EvidenceType.serializer(), EvidenceType.SCREENSHOT)).isEqualTo("\"screenshot\"")
+    assertThat(json.encodeToString(EvidenceType.serializer(), EvidenceType.HIERARCHY)).isEqualTo("\"hierarchy\"")
+
+    assertThat(json.decodeFromString(EvidenceType.serializer(), "\"flow\"")).isEqualTo(EvidenceType.FLOW)
+    assertThat(json.decodeFromString(EvidenceType.serializer(), "\"screenshot\"")).isEqualTo(EvidenceType.SCREENSHOT)
+    assertThat(json.decodeFromString(EvidenceType.serializer(), "\"hierarchy\"")).isEqualTo(EvidenceType.HIERARCHY)
+  }
+
+  @Test
+  fun `artifact error kind encodes and decodes all stable wire values`() {
+    assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.PARSER_FAILURE))
+      .isEqualTo("\"parser_failure\"")
+    assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.SETUP_FAILURE))
+      .isEqualTo("\"setup_failure\"")
+    assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.JOURNEY_FAILURE))
+      .isEqualTo("\"journey_failure\"")
+
+    assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"parser_failure\""))
+      .isEqualTo(ArtifactErrorKind.PARSER_FAILURE)
+    assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"setup_failure\""))
+      .isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+    assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"journey_failure\""))
+      .isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+  }
 }
