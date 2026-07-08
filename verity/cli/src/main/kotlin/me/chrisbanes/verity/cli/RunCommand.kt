@@ -69,6 +69,9 @@ class RunCommand(
   private val suiteRunner: (suspend (List<ResolvedJourney>) -> SuiteRunResult)? = null,
   private val dryRunSuiteRunner: (suspend (List<ResolvedJourney>, File) -> DryRunSuiteReport)? = null,
   private val clock: Clock = Clock.systemUTC(),
+  private val createRunArtifacts: suspend (File, Clock, String) -> RunArtifactDirectory = { outputRoot, runClock, suiteSlugSource ->
+    RunArtifactWriter(outputRoot, runClock).createRun(suiteSlugSource)
+  },
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -146,19 +149,16 @@ class RunCommand(
     }
     validateOutputDirectory(resolved.outputPath)
 
-    val artifactWriter = RunArtifactWriter(resolved.outputPath, clock)
     val path = try {
       resolveRunJourneyFile(journeyPath, resolved.configuredJourneysPath)
     } catch (e: IllegalArgumentException) {
       val message = e.message ?: "Invalid journey path"
       val inputPath = journeyPath ?: resolved.configuredJourneysPath?.path ?: "<unresolved>"
-      val runArtifacts = artifactWriter.createRun(
-        suiteSlugSource = journeyPath ?: resolved.configuredJourneysPath?.path ?: "run",
-      )
+      val runArtifacts = createRunArtifactsOrExit(resolved.outputPath, journeyPath ?: resolved.configuredJourneysPath?.path ?: "run")
       writeParserFailureSummary(runArtifacts, inputPath, message)
       throw CliktError(message, statusCode = EXIT_INPUT)
     }
-    val runArtifacts = artifactWriter.createRun(suiteSlugSource = path.nameWithoutExtension.ifEmpty { path.name })
+    val runArtifacts = createRunArtifactsOrExit(resolved.outputPath, path.nameWithoutExtension.ifEmpty { path.name })
     val journeys = try {
       resolveJourneys(
         path = path,
@@ -187,8 +187,16 @@ class RunCommand(
     }
 
     val suiteResult = try {
-      suiteRunner?.invoke(journeys)
-        ?: runSuiteWithDevice(
+      if (suiteRunner != null) {
+        try {
+          suiteRunner.invoke(journeys)
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: Exception) {
+          throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e)
+        }
+      } else {
+        runSuiteWithDevice(
           parent = parent,
           config = config,
           resolved = resolved,
@@ -196,8 +204,13 @@ class RunCommand(
           journeys = journeys,
           runArtifacts = runArtifacts,
         )
+      }
     } catch (e: CancellationException) {
       throw e
+    } catch (e: JourneyExecutionFailure) {
+      val message = e.message ?: "Journey suite failed"
+      writeJourneyFailureSummary(runArtifacts, path.path, message, journeys)
+      throw CliktError(message, statusCode = EXIT_JOURNEY)
     } catch (e: Exception) {
       val message = e.message ?: "Journey suite setup failed"
       writeSetupFailureSummary(runArtifacts, path.path, message)
@@ -315,6 +328,17 @@ class RunCommand(
     }
   }
 
+  private suspend fun createRunArtifactsOrExit(
+    outputPath: File,
+    suiteSlugSource: String,
+  ): RunArtifactDirectory = try {
+    createRunArtifacts(outputPath, clock, suiteSlugSource)
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: Exception) {
+    throw CliktError(e.message ?: "Failed to create run artifact directory", statusCode = EXIT_SETUP)
+  }
+
   private suspend fun writeParserFailureSummary(
     runArtifacts: RunArtifactDirectory,
     inputPath: String,
@@ -366,6 +390,41 @@ class RunCommand(
       throw e
     } catch (_: Exception) {
       // Keep setup failures controlled even when the failure is summary writing itself.
+    }
+  }
+
+  private suspend fun writeJourneyFailureSummary(
+    runArtifacts: RunArtifactDirectory,
+    inputPath: String,
+    message: String,
+    journeys: List<ResolvedJourney>,
+  ) {
+    try {
+      runArtifacts.writeSummary(
+        SuiteArtifactSummary(
+          formatVersion = 1,
+          timestamp = Instant.now(clock).toString(),
+          inputPath = inputPath,
+          status = ArtifactStatus.FAILED,
+          total = journeys.size,
+          passed = 0,
+          failed = journeys.size,
+          journeys = journeys.mapIndexed { index, item ->
+            val recorder = runArtifacts.journey(index + 1, item.journey.name)
+            SuiteJourneyArtifact(
+              path = recorder.resultPath,
+              name = item.journey.name,
+              status = ArtifactStatus.FAILED,
+            )
+          },
+          error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
+          platform = journeys.firstOrNull()?.journey?.platform,
+        ),
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      // Preserve the journey failure classification even if summary writing fails.
     }
   }
 
@@ -549,19 +608,30 @@ class RunCommand(
     }
 
     session.use {
-      return runResolvedJourneysWithArtifacts(journeys, runArtifacts) { resolved, artifactRecorder ->
-        val orchestrator = Orchestrator(
-          session = session,
-          navigatorFactory = navigatorFactory,
-          inspectorFactory = inspectorFactory,
-          context = projectContext.text,
-          artifactRecorder = artifactRecorder,
-        )
-        orchestrator.run(resolved.journey)
+      return try {
+        runResolvedJourneysWithArtifacts(journeys, runArtifacts) { resolved, artifactRecorder ->
+          val orchestrator = Orchestrator(
+            session = session,
+            navigatorFactory = navigatorFactory,
+            inspectorFactory = inspectorFactory,
+            context = projectContext.text,
+            artifactRecorder = artifactRecorder,
+          )
+          orchestrator.run(resolved.journey)
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e)
       }
     }
   }
 }
+
+private class JourneyExecutionFailure(
+  message: String,
+  cause: Throwable,
+) : Exception(message, cause)
 
 internal suspend fun runResolvedJourneysWithArtifacts(
   journeys: List<ResolvedJourney>,

@@ -455,6 +455,54 @@ class RunCommandTest {
   }
 
   @Test
+  fun `run directory creation failure exits 3 without summary`() {
+    val dir = createTempDirectory("verity-run-create-failure").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(
+        clock = fixedClock(),
+        createRunArtifacts = { _, _, _ -> error("cannot create run directory") },
+      ) { error("Suite runner should not be called") }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(File(outputDir, "runs").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `journey execution exception exits 4 and writes journey failure summary`() {
+    val dir = createTempDirectory("verity-run-execution-failure").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) {
+        throw IllegalStateException("visual evaluator failed")
+      }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      assertThat(result.statusCode).isEqualTo(4)
+      assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
+      assertThat(summary.total).isEqualTo(1)
+      assertThat(summary.passed).isEqualTo(0)
+      assertThat(summary.failed).isEqualTo(1)
+      assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `parser input failure exits 2 and writes summary`() {
     val dir = createTempDirectory("verity-run-parser-artifacts").toFile()
     try {
@@ -833,8 +881,11 @@ class RunCommandTest {
 
   private fun runCommand(
     clock: Clock = Clock.systemUTC(),
+    createRunArtifacts: suspend (File, Clock, String) -> RunArtifactDirectory = { outputRoot, runClock, suiteSlugSource ->
+      RunArtifactWriter(outputRoot, runClock).createRun(suiteSlugSource)
+    },
     runner: suspend (List<ResolvedJourney>) -> SuiteRunResult,
-  ): RunCommand = RunCommand(suiteRunner = runner, clock = clock)
+  ): RunCommand = RunCommand(suiteRunner = runner, clock = clock, createRunArtifacts = createRunArtifacts)
 
   private fun fixedClock(): Clock = Clock.fixed(Instant.parse("2026-07-08T14:35:12Z"), ZoneOffset.UTC)
 
