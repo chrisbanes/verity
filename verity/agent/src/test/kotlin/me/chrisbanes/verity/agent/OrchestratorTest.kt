@@ -7,6 +7,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
@@ -16,6 +17,8 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.EvidenceType
+import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.device.DeviceSession
 
 class OrchestratorTest {
@@ -141,6 +144,43 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `loop slow path fallback records generated flow reference`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(false, true)),
+    )
+    val recorder = RecordingArtifactRecorder()
+    val generatedYaml = flow("- swipe")
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { generatedYaml } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "loop-flow-metadata",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Loop(action = "navigate to settings page", until = "Settings", max = 2)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.LOOP)
+    assertThat(segment.actions).containsExactly("navigate to settings page")
+    assertThat(segment.generatedFlows).containsExactly("flows/segment-000-loop-000.yaml")
+    assertThat(recorder.generatedFlows).containsExactly("0:loop-000:$generatedYaml")
+  }
+
+  @Test
   fun `run loop reports zero iterations when target already visible`() = runTest {
     val session = FakeDeviceSession(
       containsTextResults = ArrayDeque(listOf(true)),
@@ -194,6 +234,69 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `tree assertion records hierarchy evidence`() = runTest {
+    val session = FakeDeviceSession()
+    val recorder = RecordingArtifactRecorder()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { """{"passed": true, "reasoning": "Tree matched"}""" } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "tree-evidence",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.TREE)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.HIERARCHY)
+    assertThat(segment.evidence.single().path).isEqualTo("evidence/segment-000-tree.txt")
+    assertThat(recorder.hierarchies.single()).isEqualTo("[text=Home]\n")
+  }
+
+  @Test
+  fun `visual assertion records screenshot evidence`() = runTest {
+    val session = FakeDeviceSession()
+    val recorder = RecordingArtifactRecorder()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "visual-evidence",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.SCREENSHOT)
+    assertThat(segment.evidence.single().path).isEqualTo("evidence/segment-000-visual.png")
+    assertThat(recorder.screenshotRequests).containsExactly(0)
+    assertThat(session.capturedScreenshotPaths).containsExactly(recorder.screenshotPaths.single())
+  }
+
+  @Test
   fun `classifies tap instruction as fast path on mobile`() {
     val actions = listOf("tap Settings")
     val isFastPath = Orchestrator.isFastPath(actions, Platform.ANDROID_MOBILE)
@@ -234,6 +337,81 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
+  }
+
+  @Test
+  fun `fast path segment records execution mode and source actions`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "fast-metadata",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.FAST)
+    assertThat(segment.actions).containsExactly("tap Settings")
+    assertThat(segment.generatedFlows).isEmpty()
+  }
+
+  @Test
+  fun `slow path segment records generated flow reference before execution`() = runTest {
+    val recorder = RecordingArtifactRecorder()
+    val generatedYaml = flow("- tapOn: \"Settings\"")
+    val session = FakeDeviceSession(
+      onExecuteFlow = { yaml ->
+        if (yaml == generatedYaml) {
+          assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
+        }
+      },
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { generatedYaml } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "slow-metadata",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Action(instruction = "navigate to settings page")),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.SLOW)
+    assertThat(segment.actions).containsExactly("navigate to settings page")
+    assertThat(segment.generatedFlows).containsExactly("flows/segment-000-actions.yaml")
+    assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
   }
 
   @Test
@@ -500,21 +678,54 @@ class OrchestratorTest {
 
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
+    private val onExecuteFlow: (String) -> Unit = {},
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val executedFlows = mutableListOf<String>()
+    val capturedScreenshotPaths = mutableListOf<Path>()
 
     override suspend fun executeFlow(yaml: String): FlowResult {
+      onExecuteFlow(yaml)
       executedFlows += yaml
       return FlowResult(success = true)
     }
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
-    override suspend fun captureScreenshot(output: Path) = Unit
+    override suspend fun captureScreenshot(output: Path) {
+      capturedScreenshotPaths.add(output)
+      Files.write(output, byteArrayOf(1, 2, 3))
+    }
     override suspend fun shell(command: String): String = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean = containsTextResults.removeFirstOrNull() ?: false
 
     override fun close() = Unit
+  }
+
+  private class RecordingArtifactRecorder : JourneyArtifactRecorder {
+    val generatedFlows = mutableListOf<String>()
+    val hierarchies = mutableListOf<String>()
+    val screenshotRequests = mutableListOf<Int>()
+    val screenshotPaths = mutableListOf<Path>()
+
+    override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String {
+      generatedFlows += "$segmentIndex:$label:$yaml"
+      return "flows/segment-${segmentIndex.toString().padStart(3, '0')}-$label.yaml"
+    }
+
+    override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String {
+      hierarchies += hierarchy
+      return "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-tree.txt"
+    }
+
+    override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact {
+      screenshotRequests += segmentIndex
+      val path = Files.createTempFile("verity-visual-test", ".png")
+      screenshotPaths.add(path)
+      return JourneyScreenshotArtifact(
+        path = path,
+        relativePath = "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png",
+      )
+    }
   }
 }
