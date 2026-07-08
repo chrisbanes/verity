@@ -420,6 +420,34 @@ require-context: true
 
 `require-context` makes `--context-path` mandatory for workflows that depend on project context. The CLI `--require-context` flag also enables this behavior for one invocation.
 
+### Run Artifacts And CI Results
+
+`verity run` writes one timestamped artifact directory under `paths.output/runs/` after configuration resolution and output-path validation. The directory name is stable and slugged from the input suite, for example `20260708-143512-login-suite`.
+
+Each run contains:
+
+- `summary.json` — Suite-level CI contract with `formatVersion`, timestamp, input path, pass/fail counts, per-journey result references, error classification, platform, provider, navigator model, and inspector model.
+- `journeys/<index>-<journey>.json` — Journey-level result with identity, pass/fail state, failed segment index, segment execution mode, generated flow references, evidence references, assertions, reasoning, and optional diagnostic error.
+- `flows/<index>-<journey>/...` — Generated Maestro YAML when a segment used LLM flow generation.
+- `evidence/<index>-<journey>/...` — Hierarchy text and screenshots captured for assertions.
+
+Module ownership is split by artifact responsibility:
+
+- `:verity:core` owns the serializable artifact/result DTOs and stable wire values.
+- `:verity:agent` owns segment metadata collection and recorder calls for generated flows and evidence.
+- `:verity:cli` owns run directory layout, JSON writing, summary aggregation, and exit-code mapping.
+
+Exit codes are intentionally stable for CI:
+
+| Code | Classification | Summary error kind |
+|------|----------------|--------------------|
+| `0` | All journeys passed | none |
+| `2` | Input or parser failure | `parser_failure` |
+| `3` | Setup or required artifact write failure | `setup_failure` |
+| `4` | Journey execution or assertion failure | `journey_failure` |
+
+Required suite artifacts (`summary.json` and journey result JSON) are part of the command outcome. Optional evidence writes, such as generated flows, hierarchy captures, and screenshots, are recorded when available but do not fail the journey solely because the artifact path cannot be written.
+
 ---
 
 ## Execution Data Flow

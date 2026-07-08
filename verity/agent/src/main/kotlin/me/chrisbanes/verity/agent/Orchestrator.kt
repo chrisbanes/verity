@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.agent
 
+import java.io.IOException
 import java.nio.file.Files
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,11 @@ import me.chrisbanes.verity.core.model.InspectionVerdict
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.ArtifactError
+import me.chrisbanes.verity.core.result.ArtifactErrorKind
+import me.chrisbanes.verity.core.result.EvidenceArtifact
+import me.chrisbanes.verity.core.result.EvidenceType
+import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.device.DeviceSession
 
 /**
@@ -27,6 +33,7 @@ class Orchestrator(
   private val navigatorFactory: () -> NavigatorAgent,
   private val inspectorFactory: () -> InspectorAgent,
   private val context: String = "",
+  private val artifactRecorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments.
@@ -56,18 +63,38 @@ class Orchestrator(
     navigator: NavigatorAgent,
     inspector: InspectorAgent,
   ): SegmentResult {
+    var executionMode = SegmentExecutionMode.ASSERTION_ONLY
+    var actions = emptyList<String>()
+    val generatedFlows = mutableListOf<String>()
+
     // Execute actions
     if (segment.actions.isNotEmpty()) {
       val instructions = segment.actions.map { it.instruction }
+      actions = instructions
       if (isFastPath(instructions, platform)) {
         executeFastPath(instructions, appId, platform, navigator)
+        executionMode = SegmentExecutionMode.FAST
       } else {
-        val flowResult = executeSlowPath(instructions, appId, platform, navigator)
-        if (!flowResult.success) {
+        val slowPathResult = executeSlowPath(
+          instructions = instructions,
+          appId = appId,
+          platform = platform,
+          navigator = navigator,
+          segmentIndex = segment.index,
+          label = "actions",
+        )
+        slowPathResult.reference?.let(generatedFlows::add)
+        executionMode = SegmentExecutionMode.SLOW
+        if (!slowPathResult.flowResult.success) {
+          val message = "Flow execution failed: ${slowPathResult.flowResult.output}"
           return SegmentResult(
             index = segment.index,
             passed = false,
-            reasoning = "Flow execution failed: ${flowResult.output}",
+            reasoning = message,
+            executionMode = executionMode,
+            actions = actions,
+            generatedFlows = generatedFlows,
+            error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
           )
         }
       }
@@ -75,27 +102,51 @@ class Orchestrator(
 
     // Execute loop
     segment.loop?.let { loop ->
-      val loopResult = executeLoop(loop.action, loop.until, loop.max, appId, platform, navigator)
+      val loopResult = executeLoop(loop.action, loop.until, loop.max, appId, platform, navigator, segment.index)
       return SegmentResult(
         index = segment.index,
         passed = loopResult.satisfied,
         reasoning = loopResult.reasoning,
+        executionMode = SegmentExecutionMode.LOOP,
+        actions = listOf(loop.action),
+        generatedFlows = loopResult.generatedFlows,
+        error = if (loopResult.satisfied) {
+          null
+        } else {
+          ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, loopResult.reasoning)
+        },
       )
     }
 
     // Evaluate assertion
     segment.assertion?.let { assert ->
-      val verdict = evaluateAssertion(assert.description, assert.mode, inspector)
+      val evaluation = evaluateAssertion(assert.description, assert.mode, inspector, segment.index)
       return SegmentResult(
         index = segment.index,
-        passed = verdict.passed,
+        passed = evaluation.verdict.passed,
         assertionMode = assert.mode,
-        reasoning = verdict.reasoning,
+        assertionDescription = assert.description,
+        reasoning = evaluation.verdict.reasoning,
+        executionMode = executionMode,
+        actions = actions,
+        generatedFlows = generatedFlows,
+        evidence = evaluation.evidence,
+        error = if (evaluation.verdict.passed) {
+          null
+        } else {
+          ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, evaluation.verdict.reasoning)
+        },
       )
     }
 
     // Actions only, no assertion — always passes
-    return SegmentResult(index = segment.index, passed = true)
+    return SegmentResult(
+      index = segment.index,
+      passed = true,
+      executionMode = executionMode,
+      actions = actions,
+      generatedFlows = generatedFlows,
+    )
   }
 
   private suspend fun executeFastPath(
@@ -169,9 +220,18 @@ class Orchestrator(
     appId: String,
     platform: Platform,
     navigator: NavigatorAgent,
-  ): FlowResult {
+    segmentIndex: Int,
+    label: String,
+  ): SlowPathResult {
     val yaml = navigator.generate(instructions, appId, platform, context)
-    return session.executeFlow(yaml)
+    val reference = try {
+      artifactRecorder.saveGeneratedFlow(segmentIndex, label, yaml)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      null
+    }
+    return SlowPathResult(session.executeFlow(yaml), reference)
   }
 
   private suspend fun executeLoop(
@@ -181,11 +241,13 @@ class Orchestrator(
     appId: String,
     platform: Platform,
     navigator: NavigatorAgent,
+    segmentIndex: Int,
   ): LoopResult {
     val mapper = InteractionMapper.forPlatform(platform)
     val executor = InteractionExecutor(session, appId)
     val interaction = mapper.map(action)
     var actionsExecuted = 0
+    val generatedFlows = mutableListOf<String>()
 
     repeat(max) {
       if (session.containsText(until)) {
@@ -193,6 +255,7 @@ class Orchestrator(
           satisfied = true,
           iterations = actionsExecuted,
           reasoning = "Text '$until' found after $actionsExecuted iterations",
+          generatedFlows = generatedFlows,
         )
       }
 
@@ -200,12 +263,15 @@ class Orchestrator(
         executor.execute(interaction)
         actionsExecuted += 1
       } else {
-        val flowResult = executeSlowPath(listOf(action), appId, platform, navigator)
-        if (!flowResult.success) {
+        val label = "loop-${actionsExecuted.toString().padStart(3, '0')}"
+        val slowPathResult = executeSlowPath(listOf(action), appId, platform, navigator, segmentIndex, label)
+        slowPathResult.reference?.let(generatedFlows::add)
+        if (!slowPathResult.flowResult.success) {
           return LoopResult(
             satisfied = false,
             iterations = actionsExecuted,
-            reasoning = "Loop flow execution failed: ${flowResult.output}",
+            reasoning = "Loop flow execution failed: ${slowPathResult.flowResult.output}",
+            generatedFlows = generatedFlows,
           )
         }
         actionsExecuted += 1
@@ -218,6 +284,7 @@ class Orchestrator(
         satisfied = true,
         iterations = actionsExecuted,
         reasoning = "Text '$until' found after $actionsExecuted iterations",
+        generatedFlows = generatedFlows,
       )
     }
 
@@ -225,6 +292,7 @@ class Orchestrator(
       satisfied = false,
       iterations = actionsExecuted,
       reasoning = "Text '$until' not found after $actionsExecuted iterations",
+      generatedFlows = generatedFlows,
     )
   }
 
@@ -232,42 +300,102 @@ class Orchestrator(
     description: String,
     mode: AssertMode,
     inspector: InspectorAgent,
-  ): InspectionVerdict = when (mode) {
+    segmentIndex: Int,
+  ): AssertionEvaluation = when (mode) {
     AssertMode.VISIBLE -> {
       val passed = session.containsText(description)
-      InspectionVerdict(
-        passed = passed,
-        reasoning = if (passed) "Text '$description' is visible" else "Text '$description' is not visible",
+      AssertionEvaluation(
+        InspectionVerdict(
+          passed = passed,
+          reasoning = if (passed) "Text '$description' is visible" else "Text '$description' is not visible",
+        ),
       )
     }
 
     AssertMode.FOCUSED -> {
       val passed = session.checkFocused(description)
-      InspectionVerdict(
-        passed = passed,
-        reasoning = if (passed) "Text '$description' is focused" else "Text '$description' is not focused",
+      AssertionEvaluation(
+        InspectionVerdict(
+          passed = passed,
+          reasoning = if (passed) "Text '$description' is focused" else "Text '$description' is not focused",
+        ),
       )
     }
 
     AssertMode.TREE -> {
       val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
-      inspector.evaluateTree(hierarchy, description)
+      val reference = try {
+        artifactRecorder.saveHierarchy(segmentIndex, hierarchy)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        null
+      }
+      AssertionEvaluation(
+        verdict = inspector.evaluateTree(hierarchy, description),
+        evidence = reference?.let { listOf(EvidenceArtifact(EvidenceType.HIERARCHY, it)) } ?: emptyList(),
+      )
     }
 
     AssertMode.VISUAL -> {
-      val tempFile = withContext(Dispatchers.IO) {
-        Files.createTempFile("verity-screenshot-", ".png")
+      val artifact = try {
+        artifactRecorder.screenshotPath(segmentIndex)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        null
       }
-      try {
-        session.captureScreenshot(tempFile)
-        inspector.evaluateVisual(tempFile, description)
-      } finally {
-        withContext(NonCancellable + Dispatchers.IO) {
-          Files.deleteIfExists(tempFile)
+      if (artifact != null) {
+        val captured = try {
+          session.captureScreenshot(artifact.path)
+          true
+        } catch (e: CancellationException) {
+          throw e
+        } catch (_: IOException) {
+          false
+        } catch (_: SecurityException) {
+          false
         }
+        if (captured) {
+          AssertionEvaluation(
+            verdict = inspector.evaluateVisual(artifact.path, description),
+            evidence = listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)),
+          )
+        } else {
+          evaluateVisualWithTempFile(inspector, description)
+        }
+      } else {
+        evaluateVisualWithTempFile(inspector, description)
       }
     }
   }
+
+  private suspend fun evaluateVisualWithTempFile(
+    inspector: InspectorAgent,
+    description: String,
+  ): AssertionEvaluation {
+    val tempFile = withContext(Dispatchers.IO) {
+      Files.createTempFile("verity-screenshot-", ".png")
+    }
+    try {
+      session.captureScreenshot(tempFile)
+      return AssertionEvaluation(inspector.evaluateVisual(tempFile, description))
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) {
+        Files.deleteIfExists(tempFile)
+      }
+    }
+  }
+
+  private data class SlowPathResult(
+    val flowResult: FlowResult,
+    val reference: String?,
+  )
+
+  private data class AssertionEvaluation(
+    val verdict: InspectionVerdict,
+    val evidence: List<EvidenceArtifact> = emptyList(),
+  )
 
   companion object {
     fun isFastPath(instructions: List<String>, platform: Platform): Boolean {

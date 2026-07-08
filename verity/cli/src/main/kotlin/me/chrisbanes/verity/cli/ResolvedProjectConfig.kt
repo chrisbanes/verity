@@ -95,6 +95,12 @@ fun validateOutputDirectory(path: File) {
   }
 }
 
+fun ResolvedProjectConfig.toRunArtifactMetadata(): RunArtifactMetadata = RunArtifactMetadata(
+  provider = provider.name,
+  navigatorModel = navigatorModel.id,
+  inspectorModel = inspectorModel.id,
+)
+
 val Platform.serialName: String
   get() = when (this) {
     Platform.ANDROID_TV -> "android-tv"

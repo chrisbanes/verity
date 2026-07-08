@@ -5,10 +5,14 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNotEqualTo
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
+import java.io.IOException
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.AssertMode
@@ -16,6 +20,9 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.ArtifactErrorKind
+import me.chrisbanes.verity.core.result.EvidenceType
+import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.device.DeviceSession
 
 class OrchestratorTest {
@@ -141,6 +148,43 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `loop slow path fallback records generated flow reference`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(false, true)),
+    )
+    val recorder = RecordingArtifactRecorder()
+    val generatedYaml = flow("- swipe")
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { generatedYaml } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "loop-flow-metadata",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Loop(action = "navigate to settings page", until = "Settings", max = 2)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.LOOP)
+    assertThat(segment.actions).containsExactly("navigate to settings page")
+    assertThat(segment.generatedFlows).containsExactly("flows/segment-000-loop-000.yaml")
+    assertThat(recorder.generatedFlows).containsExactly("0:loop-000:$generatedYaml")
+  }
+
+  @Test
   fun `run loop reports zero iterations when target already visible`() = runTest {
     val session = FakeDeviceSession(
       containsTextResults = ArrayDeque(listOf(true)),
@@ -190,7 +234,78 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
 
     assertThat(result.passed).isFalse()
-    assertThat(result.segments.single().reasoning).isEqualTo("Text 'Home' is not visible")
+    val segment = result.segments.single()
+    assertThat(segment.reasoning).isEqualTo("Text 'Home' is not visible")
+    assertThat(segment.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+    assertThat(segment.error?.message).isEqualTo("Text 'Home' is not visible")
+  }
+
+  @Test
+  fun `tree assertion records hierarchy evidence`() = runTest {
+    val session = FakeDeviceSession()
+    val recorder = RecordingArtifactRecorder()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { """{"passed": true, "reasoning": "Tree matched"}""" } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "tree-evidence",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.TREE)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.HIERARCHY)
+    assertThat(segment.evidence.single().path).isEqualTo("evidence/segment-000-tree.txt")
+    assertThat(recorder.hierarchies.single()).isEqualTo("[text=Home]\n")
+  }
+
+  @Test
+  fun `visual assertion records screenshot evidence`() = runTest {
+    val screenshotDirectory = Files.createTempDirectory("verity-visual-test")
+    try {
+      val session = FakeDeviceSession()
+      val recorder = RecordingArtifactRecorder(screenshotDirectory)
+      val orchestrator = Orchestrator(
+        session = session,
+        navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+        inspectorFactory = {
+          InspectorAgent(
+            treeAgentFactory = { FakeTextAgent { error("unused") } },
+            evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+          )
+        },
+        artifactRecorder = recorder,
+      )
+
+      val result = orchestrator.run(
+        Journey(
+          name = "visual-evidence",
+          app = APP_ID,
+          platform = Platform.ANDROID_MOBILE,
+          steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+        ),
+      )
+
+      val segment = result.segments.single()
+      assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.SCREENSHOT)
+      assertThat(segment.evidence.single().path).isEqualTo("evidence/segment-000-visual.png")
+      assertThat(recorder.screenshotRequests).containsExactly(0)
+      assertThat(session.capturedScreenshotPaths).containsExactly(recorder.screenshotPaths.single())
+    } finally {
+      deleteRecursively(screenshotDirectory)
+    }
   }
 
   @Test
@@ -234,6 +349,280 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
+  }
+
+  @Test
+  fun `fast path segment records execution mode and source actions`() = runTest {
+    val session = FakeDeviceSession(
+      containsTextResults = ArrayDeque(listOf(true)),
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "fast-metadata",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.FAST)
+    assertThat(segment.actions).containsExactly("tap Settings")
+    assertThat(segment.generatedFlows).isEmpty()
+  }
+
+  @Test
+  fun `slow path segment records generated flow reference before execution`() = runTest {
+    val recorder = RecordingArtifactRecorder()
+    val generatedYaml = flow("- tapOn: \"Settings\"")
+    val session = FakeDeviceSession(
+      onExecuteFlow = { yaml ->
+        if (yaml == generatedYaml) {
+          assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
+        }
+      },
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = {
+        NavigatorAgent("unused") { FakeTextAgent { generatedYaml } }
+      },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "slow-metadata",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Action(instruction = "navigate to settings page")),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.SLOW)
+    assertThat(segment.actions).containsExactly("navigate to settings page")
+    assertThat(segment.generatedFlows).containsExactly("flows/segment-000-actions.yaml")
+    assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
+  }
+
+  @Test
+  fun `slow path recorder failure does not prevent flow execution`() = runTest {
+    val generatedYaml = flow("- tapOn: \"Settings\"")
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { generatedYaml } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = ThrowingArtifactRecorder(),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "slow-recorder-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Action(instruction = "navigate to settings page")),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.generatedFlows).isEmpty()
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
+  }
+
+  @Test
+  fun `tree recorder failure does not fail passing assertion`() = runTest {
+    val orchestrator = Orchestrator(
+      session = FakeDeviceSession(),
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { """{"passed": true, "reasoning": "Tree matched"}""" } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = ThrowingArtifactRecorder(),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "tree-recorder-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.TREE)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.evidence).isEmpty()
+  }
+
+  @Test
+  fun `visual recorder failure does not fail passing assertion`() = runTest {
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+        )
+      },
+      artifactRecorder = ThrowingArtifactRecorder(),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "visual-recorder-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.evidence).isEmpty()
+    assertThat(session.capturedScreenshotPaths.size).isEqualTo(1)
+  }
+
+  @Test
+  fun `visual artifact capture IOException falls back to temp screenshot without evidence`() = runTest {
+    val artifactPath = Files.createTempDirectory("verity-unwritable-artifact").resolve("artifact.png")
+    val captureAttempts = mutableListOf<Path>()
+    val session = FakeDeviceSession(
+      onCaptureScreenshot = { path ->
+        captureAttempts.add(path)
+        if (path == artifactPath) throw IOException("artifact path unavailable")
+      },
+    )
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, screenshotPath ->
+            assertThat(screenshotPath).isNotEqualTo(artifactPath)
+            """{"passed": true, "reasoning": "Looks right"}"""
+          },
+        )
+      },
+      artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "visual-artifact-capture-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.evidence).isEmpty()
+    assertThat(captureAttempts.size).isEqualTo(2)
+    assertThat(captureAttempts.first()).isEqualTo(artifactPath)
+    assertThat(session.capturedScreenshotPaths).containsExactly(captureAttempts.last())
+  }
+
+  @Test
+  fun `visual artifact capture device failure is not retried with temp screenshot`() = runTest {
+    val artifactPath = Files.createTempDirectory("verity-visual-device-failure").resolve("artifact.png")
+    val captureAttempts = mutableListOf<Path>()
+    val orchestrator = Orchestrator(
+      session = FakeDeviceSession(
+        onCaptureScreenshot = { path ->
+          captureAttempts.add(path)
+          if (path == artifactPath) error("device screenshot failed")
+        },
+      ),
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("visual evaluator should not run") },
+        )
+      },
+      artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
+    )
+
+    assertFailsWith<IllegalStateException> {
+      orchestrator.run(
+        Journey(
+          name = "visual-device-failure",
+          app = APP_ID,
+          platform = Platform.ANDROID_MOBILE,
+          steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+        ),
+      )
+    }
+
+    assertThat(captureAttempts).containsExactly(artifactPath)
+  }
+
+  @Test
+  fun `visual evaluator failure after artifact capture is not retried with temp screenshot`() = runTest {
+    val artifactPath = Files.createTempDirectory("verity-visual-evaluator-failure").resolve("artifact.png")
+    val evaluatedPaths = mutableListOf<Path>()
+    val orchestrator = Orchestrator(
+      session = FakeDeviceSession(),
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, screenshotPath ->
+            evaluatedPaths.add(screenshotPath)
+            error("visual evaluator failed")
+          },
+        )
+      },
+      artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
+    )
+
+    assertFailsWith<IllegalStateException> {
+      orchestrator.run(
+        Journey(
+          name = "visual-evaluator-failure",
+          app = APP_ID,
+          platform = Platform.ANDROID_MOBILE,
+          steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+        ),
+      )
+    }
+
+    assertThat(evaluatedPaths).containsExactly(artifactPath)
   }
 
   @Test
@@ -492,29 +881,94 @@ class OrchestratorTest {
     assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: UP"))
   }
 
-  private companion object {
-    const val APP_ID = "com.example.app"
-    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp"
-    fun flow(command: String) = "appId: $APP_ID\n---\n$command"
-  }
-
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
+    private val onExecuteFlow: (String) -> Unit = {},
+    private val onCaptureScreenshot: (Path) -> Unit = {},
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val executedFlows = mutableListOf<String>()
+    val capturedScreenshotPaths = mutableListOf<Path>()
 
     override suspend fun executeFlow(yaml: String): FlowResult {
+      onExecuteFlow(yaml)
       executedFlows += yaml
       return FlowResult(success = true)
     }
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
-    override suspend fun captureScreenshot(output: Path) = Unit
+    override suspend fun captureScreenshot(output: Path) {
+      onCaptureScreenshot(output)
+      capturedScreenshotPaths.add(output)
+      Files.write(output, byteArrayOf(1, 2, 3))
+    }
     override suspend fun shell(command: String): String = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean = containsTextResults.removeFirstOrNull() ?: false
 
     override fun close() = Unit
+  }
+
+  private class RecordingArtifactRecorder(
+    private val screenshotDirectory: Path? = null,
+  ) : JourneyArtifactRecorder {
+    val generatedFlows = mutableListOf<String>()
+    val hierarchies = mutableListOf<String>()
+    val screenshotRequests = mutableListOf<Int>()
+    val screenshotPaths = mutableListOf<Path>()
+
+    override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String {
+      generatedFlows += "$segmentIndex:$label:$yaml"
+      return "flows/segment-${segmentIndex.toString().padStart(3, '0')}-$label.yaml"
+    }
+
+    override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String {
+      hierarchies += hierarchy
+      return "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-tree.txt"
+    }
+
+    override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact {
+      screenshotRequests += segmentIndex
+      val path = if (screenshotDirectory != null) {
+        Files.createTempFile(screenshotDirectory, "verity-visual-test", ".png")
+      } else {
+        Files.createTempFile("verity-visual-test", ".png")
+      }
+      screenshotPaths.add(path)
+      return JourneyScreenshotArtifact(
+        path = path,
+        relativePath = "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png",
+      )
+    }
+  }
+
+  private class ThrowingArtifactRecorder : JourneyArtifactRecorder {
+    override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String = error("artifact unavailable")
+
+    override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String = error("artifact unavailable")
+
+    override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = error("artifact unavailable")
+  }
+
+  private class StaticScreenshotArtifactRecorder(
+    private val path: Path,
+  ) : JourneyArtifactRecorder {
+    override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = JourneyScreenshotArtifact(
+      path = path,
+      relativePath = "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png",
+    )
+  }
+
+  private companion object {
+    const val APP_ID = "com.example.app"
+    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp"
+    fun flow(command: String) = "appId: $APP_ID\n---\n$command"
+
+    fun deleteRecursively(path: Path) {
+      if (!Files.exists(path)) return
+      Files.walk(path).use { paths ->
+        paths.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+      }
+    }
   }
 }
