@@ -431,6 +431,12 @@ Each run contains:
 - `flows/<index>-<journey>/...` — Generated Maestro YAML when a segment used LLM flow generation.
 - `evidence/<index>-<journey>/...` — Hierarchy text and screenshots captured for assertions.
 
+Module ownership is split by artifact responsibility:
+
+- `:verity:core` owns the serializable artifact/result DTOs and stable wire values.
+- `:verity:agent` owns segment metadata collection and recorder calls for generated flows and evidence.
+- `:verity:cli` owns run directory layout, JSON writing, summary aggregation, and exit-code mapping.
+
 Exit codes are intentionally stable for CI:
 
 | Code | Classification | Summary error kind |

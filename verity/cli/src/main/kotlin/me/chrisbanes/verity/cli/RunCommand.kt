@@ -155,7 +155,11 @@ class RunCommand(
       )
     }
     val metadata = resolved.toRunArtifactMetadata()
-    validateOutputDirectory(resolved.outputPath)
+    try {
+      validateOutputDirectory(resolved.outputPath)
+    } catch (e: IllegalArgumentException) {
+      throw CliktError(e.message ?: "Invalid output path", statusCode = EXIT_SETUP)
+    }
 
     val path = try {
       resolveRunJourneyFile(journeyPath, resolved.configuredJourneysPath)
@@ -201,7 +205,7 @@ class RunCommand(
         } catch (e: CancellationException) {
           throw e
         } catch (e: Exception) {
-          throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e)
+          throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e, journeys.singleOrNull())
         }
       } else {
         runSuiteWithDevice(
@@ -217,7 +221,15 @@ class RunCommand(
       throw e
     } catch (e: JourneyExecutionFailure) {
       val message = e.message ?: "Journey suite failed"
-      writeJourneyFailureSummary(runArtifacts, path.path, message, journeys, metadata)
+      writeJourneyFailureSummary(
+        runArtifacts = runArtifacts,
+        inputPath = path.path,
+        message = message,
+        journeys = journeys,
+        metadata = metadata,
+        failedJourney = e.resolvedJourney ?: journeys.singleOrNull(),
+        failedAt = e.failedAt,
+      )
       throw CliktError(message, statusCode = EXIT_JOURNEY)
     } catch (e: Exception) {
       val message = e.message ?: "Journey suite setup failed"
@@ -416,8 +428,25 @@ class RunCommand(
     message: String,
     journeys: List<ResolvedJourney>,
     metadata: RunArtifactMetadata? = null,
+    failedJourney: ResolvedJourney? = null,
+    failedAt: Int? = null,
   ) {
     try {
+      val journeyRefs = failedJourney?.let { item ->
+        val index = journeys.indexOf(item).takeIf { it >= 0 }?.plus(1) ?: 1
+        val recorder = runArtifacts.journey(index, item.journey.name)
+        runArtifacts.writeJourneyResult(
+          recorder.resultPath,
+          item.toFailureArtifactResult(message, failedAt),
+        )
+        listOf(
+          SuiteJourneyArtifact(
+            path = recorder.resultPath,
+            name = item.journey.name,
+            status = ArtifactStatus.FAILED,
+          ),
+        )
+      } ?: emptyList()
       runArtifacts.writeSummary(
         SuiteArtifactSummary(
           formatVersion = 1,
@@ -427,14 +456,7 @@ class RunCommand(
           total = journeys.size,
           passed = 0,
           failed = journeys.size,
-          journeys = journeys.mapIndexed { index, item ->
-            val recorder = runArtifacts.journey(index + 1, item.journey.name)
-            SuiteJourneyArtifact(
-              path = recorder.resultPath,
-              name = item.journey.name,
-              status = ArtifactStatus.FAILED,
-            )
-          },
+          journeys = journeyRefs,
           error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
           platform = journeys.firstOrNull()?.journey?.platform,
           provider = metadata?.provider,
@@ -514,6 +536,21 @@ class RunCommand(
         error = segment.error,
       )
     },
+  )
+
+  private fun ResolvedJourney.toFailureArtifactResult(
+    message: String,
+    failedAt: Int?,
+  ): JourneyArtifactResult = JourneyArtifactResult(
+    journey = JourneyArtifactIdentity(
+      name = journey.name,
+      file = file.path,
+      app = journey.app,
+      platform = journey.platform,
+    ),
+    passed = false,
+    failedAt = failedAt,
+    error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
   )
 
   private fun printSuiteResult(suiteResult: SuiteRunResult) {
@@ -645,6 +682,8 @@ class RunCommand(
         }.copy(metadata = resolved.toRunArtifactMetadata())
       } catch (e: CancellationException) {
         throw e
+      } catch (e: JourneyExecutionFailure) {
+        throw e
       } catch (e: Exception) {
         throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e)
       }
@@ -655,6 +694,8 @@ class RunCommand(
 private class JourneyExecutionFailure(
   message: String,
   cause: Throwable,
+  val resolvedJourney: ResolvedJourney? = null,
+  val failedAt: Int? = null,
 ) : Exception(message, cause)
 
 internal suspend fun runResolvedJourneysWithArtifacts(
@@ -662,10 +703,19 @@ internal suspend fun runResolvedJourneysWithArtifacts(
   runArtifacts: RunArtifactDirectory,
   runner: suspend (ResolvedJourney, JourneyRunArtifactRecorder) -> JourneyResult,
 ): SuiteRunResult = SuiteRunResult(
-  journeys.mapIndexed { index, resolved ->
+  results = journeys.mapIndexed { index, resolved ->
+    val result = try {
+      runner(resolved, runArtifacts.journey(index + 1, resolved.journey.name))
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: JourneyExecutionFailure) {
+      throw e
+    } catch (e: Exception) {
+      throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e, resolved)
+    }
     ResolvedJourneyResult(
       resolvedJourney = resolved,
-      result = runner(resolved, runArtifacts.journey(index + 1, resolved.journey.name)),
+      result = result,
     )
   },
 )

@@ -485,7 +485,25 @@ class RunCommandTest {
   }
 
   @Test
-  fun `journey execution exception exits 4 and writes journey failure summary`() {
+  fun `invalid output path exits 3 without summary`() {
+    val dir = createTempDirectory("verity-run-invalid-output").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputPath = File(dir, "output-file").apply { writeText("not a directory") }
+
+      val result = Verity()
+        .subcommands(runCommand(clock = fixedClock()) { error("Suite runner should not be called") })
+        .test("--output-path ${outputPath.absolutePath} run ${file.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(File(dir, "output-file/runs").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `journey execution exception exits 4 and writes journey failure artifacts`() {
     val dir = createTempDirectory("verity-run-execution-failure").toFile()
     try {
       val file = writeJourney(dir, "single.journey.yaml", "Single journey")
@@ -498,13 +516,33 @@ class RunCommandTest {
         .subcommands(command)
         .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
 
-      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      val runDir = File(outputDir, "runs/20260708-143512-single-journey")
+      val journeyFile = File(runDir, "journeys/001-single-journey.json")
+      val summary = readSummary(File(runDir, "summary.json"))
       assertThat(result.statusCode).isEqualTo(4)
       assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
       assertThat(summary.total).isEqualTo(1)
       assertThat(summary.passed).isEqualTo(0)
       assertThat(summary.failed).isEqualTo(1)
+      assertThat(summary.journeys).containsExactly(
+        SuiteJourneyArtifact(
+          path = "journeys/001-single-journey.json",
+          name = "Single journey",
+          status = ArtifactStatus.FAILED,
+        ),
+      )
       assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+
+      assertThat(journeyFile.exists()).isEqualTo(true)
+      val journey = readJourney(journeyFile)
+      assertThat(journey.journey.name).isEqualTo("Single journey")
+      assertThat(journey.journey.file).isEqualTo(file.path)
+      assertThat(journey.journey.app).isEqualTo("com.example.app")
+      assertThat(journey.journey.platform).isEqualTo(Platform.ANDROID_TV)
+      assertThat(journey.passed).isEqualTo(false)
+      assertThat(journey.failedAt).isEqualTo(null)
+      assertThat(journey.segments).containsExactly()
+      assertThat(journey.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "visual evaluator failed"))
     } finally {
       dir.deleteRecursively()
     }

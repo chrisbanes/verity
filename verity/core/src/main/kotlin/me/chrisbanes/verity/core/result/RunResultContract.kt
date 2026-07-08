@@ -56,6 +56,7 @@ data class JourneyArtifactResult(
   val passed: Boolean,
   val failedAt: Int? = null,
   val segments: List<SegmentArtifactResult> = emptyList(),
+  val error: ArtifactError? = null,
 )
 
 @Serializable
