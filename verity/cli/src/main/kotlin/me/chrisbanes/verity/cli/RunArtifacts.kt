@@ -63,8 +63,10 @@ class RunArtifactDirectory(
 
 class JourneyRunArtifactRecorder(
   private val directory: Path,
-  private val key: String,
+  val key: String,
 ) : JourneyArtifactRecorder {
+  val resultPath: String get() = "journeys/$key.json"
+
   override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String = withContext(Dispatchers.IO) {
     val relative = "flows/$key/segment-${segmentIndex.toString().padStart(3, '0')}-${slugArtifactName(label, "flow")}.yaml"
     val target = resolveArtifactPath(directory, relative)

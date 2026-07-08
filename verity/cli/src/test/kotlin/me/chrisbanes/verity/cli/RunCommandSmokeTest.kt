@@ -38,7 +38,7 @@ class RunCommandSmokeTest {
         ),
       )
 
-    assertThat(result.statusCode).isEqualTo(1)
+    assertThat(result.statusCode).isEqualTo(3)
     assertThat(result.output)
       .contains("Required project context directory does not exist or is not a directory: /nonexistent/context")
   }

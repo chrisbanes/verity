@@ -420,6 +420,41 @@ class RunCommandTest {
   }
 
   @Test
+  fun `required artifact write failure exits 3 and writes setup failure summary`() {
+    val dir = createTempDirectory("verity-run-artifact-write-failure").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) { journeys ->
+        val runDir = File(outputDir, "runs/20260708-143512-single-journey")
+        File(runDir, "journeys").writeText("not a directory")
+        SuiteRunResult(
+          journeys.map { resolved ->
+            ResolvedJourneyResult(
+              resolvedJourney = resolved,
+              result = JourneyResult(resolved.journey.name, listOf(SegmentResult(index = 0, passed = true))),
+            )
+          },
+        )
+      }
+
+      val result = Verity()
+        .subcommands(command)
+        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
+      assertThat(summary.total).isEqualTo(1)
+      assertThat(summary.passed).isEqualTo(1)
+      assertThat(summary.failed).isEqualTo(0)
+      assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `parser input failure exits 2 and writes summary`() {
     val dir = createTempDirectory("verity-run-parser-artifacts").toFile()
     try {
@@ -712,8 +747,10 @@ class RunCommandTest {
         resolvedJourney("first.journey.yaml", "First journey"),
         resolvedJourney("second.journey.yaml", "Second journey"),
       )
+      val resultPaths = mutableListOf<String>()
 
       val result = runResolvedJourneysWithArtifacts(journeys, run) { resolved, recorder ->
+        resultPaths += recorder.resultPath
         val flow = recorder.saveGeneratedFlow(segmentIndex = 1, label = "actions", yaml = "flow for ${resolved.journey.name}")
         JourneyResult(
           journeyName = resolved.journey.name,
@@ -726,6 +763,7 @@ class RunCommandTest {
         .containsExactly("flows/001-first-journey/segment-001-actions.yaml")
       assertThat(result.results[1].result.segments.single().generatedFlows)
         .containsExactly("flows/002-second-journey/segment-001-actions.yaml")
+      assertThat(resultPaths).containsExactly("journeys/001-first-journey.json", "journeys/002-second-journey.json")
       assertThat(File(run.directory.toFile(), "flows/001-first-journey/segment-001-actions.yaml").readText())
         .isEqualTo("flow for First journey")
       assertThat(File(run.directory.toFile(), "flows/002-second-journey/segment-001-actions.yaml").readText())

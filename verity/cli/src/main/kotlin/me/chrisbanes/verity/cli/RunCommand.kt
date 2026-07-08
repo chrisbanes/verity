@@ -19,7 +19,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import me.chrisbanes.verity.agent.InspectorAgent
-import me.chrisbanes.verity.agent.JourneyArtifactRecorder
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
@@ -187,18 +186,34 @@ class RunCommand(
       return@runBlocking
     }
 
-    val suiteResult = suiteRunner?.invoke(journeys)
-      ?: runSuiteWithDevice(
-        parent = parent,
-        config = config,
-        resolved = resolved,
-        path = path,
-        journeys = journeys,
-        runArtifacts = runArtifacts,
-      )
+    val suiteResult = try {
+      suiteRunner?.invoke(journeys)
+        ?: runSuiteWithDevice(
+          parent = parent,
+          config = config,
+          resolved = resolved,
+          path = path,
+          journeys = journeys,
+          runArtifacts = runArtifacts,
+        )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      val message = e.message ?: "Journey suite setup failed"
+      writeSetupFailureSummary(runArtifacts, path.path, message)
+      throw CliktError(message, statusCode = EXIT_SETUP)
+    }
 
     printSuiteResult(suiteResult)
-    writeSuiteArtifacts(path, suiteResult, runArtifacts)
+    try {
+      writeSuiteArtifacts(path, suiteResult, runArtifacts)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      val message = e.message ?: "Failed to write run artifacts"
+      writeSetupFailureSummary(runArtifacts, path.path, message, suiteResult)
+      throw CliktError(message, statusCode = EXIT_SETUP)
+    }
 
     if (!suiteResult.passed) {
       throw CliktError("Journey suite failed", statusCode = EXIT_JOURNEY)
@@ -319,17 +334,51 @@ class RunCommand(
     )
   }
 
+  private suspend fun writeSetupFailureSummary(
+    runArtifacts: RunArtifactDirectory,
+    inputPath: String,
+    message: String,
+    suiteResult: SuiteRunResult? = null,
+  ) {
+    try {
+      runArtifacts.writeSummary(
+        SuiteArtifactSummary(
+          formatVersion = 1,
+          timestamp = Instant.now(clock).toString(),
+          inputPath = inputPath,
+          status = ArtifactStatus.FAILED,
+          total = suiteResult?.results?.size ?: 0,
+          passed = suiteResult?.passedCount ?: 0,
+          failed = suiteResult?.failedCount ?: 0,
+          journeys = suiteResult?.results?.mapIndexed { index, item ->
+            val recorder = runArtifacts.journey(index + 1, item.resolvedJourney.journey.name)
+            SuiteJourneyArtifact(
+              path = recorder.resultPath,
+              name = item.resolvedJourney.journey.name,
+              status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
+            )
+          } ?: emptyList(),
+          error = ArtifactError(ArtifactErrorKind.SETUP_FAILURE, message),
+          platform = suiteResult?.results?.firstOrNull()?.resolvedJourney?.journey?.platform,
+        ),
+      )
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      // Keep setup failures controlled even when the failure is summary writing itself.
+    }
+  }
+
   private suspend fun writeSuiteArtifacts(
     path: File,
     suiteResult: SuiteRunResult,
     runArtifacts: RunArtifactDirectory,
   ) {
     val journeyRefs = suiteResult.results.mapIndexed { index, item ->
-      val key = "${(index + 1).toString().padStart(3, '0')}-${slugArtifactName(item.resolvedJourney.journey.name, "journey")}"
-      val journeyPath = "journeys/$key.json"
-      runArtifacts.writeJourneyResult(journeyPath, item.toArtifactResult())
+      val recorder = runArtifacts.journey(index + 1, item.resolvedJourney.journey.name)
+      runArtifacts.writeJourneyResult(recorder.resultPath, item.toArtifactResult())
       SuiteJourneyArtifact(
-        path = journeyPath,
+        path = recorder.resultPath,
         name = item.resolvedJourney.journey.name,
         status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
       )
@@ -517,7 +566,7 @@ class RunCommand(
 internal suspend fun runResolvedJourneysWithArtifacts(
   journeys: List<ResolvedJourney>,
   runArtifacts: RunArtifactDirectory,
-  runner: suspend (ResolvedJourney, JourneyArtifactRecorder) -> JourneyResult,
+  runner: suspend (ResolvedJourney, JourneyRunArtifactRecorder) -> JourneyResult,
 ): SuiteRunResult = SuiteRunResult(
   journeys.mapIndexed { index, resolved ->
     ResolvedJourneyResult(

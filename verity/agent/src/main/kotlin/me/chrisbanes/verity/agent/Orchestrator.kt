@@ -223,7 +223,13 @@ class Orchestrator(
     label: String,
   ): SlowPathResult {
     val yaml = navigator.generate(instructions, appId, platform, context)
-    val reference = artifactRecorder.saveGeneratedFlow(segmentIndex, label, yaml)
+    val reference = try {
+      artifactRecorder.saveGeneratedFlow(segmentIndex, label, yaml)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      null
+    }
     return SlowPathResult(session.executeFlow(yaml), reference)
   }
 
@@ -317,7 +323,13 @@ class Orchestrator(
 
     AssertMode.TREE -> {
       val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
-      val reference = artifactRecorder.saveHierarchy(segmentIndex, hierarchy)
+      val reference = try {
+        artifactRecorder.saveHierarchy(segmentIndex, hierarchy)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        null
+      }
       AssertionEvaluation(
         verdict = inspector.evaluateTree(hierarchy, description),
         evidence = reference?.let { listOf(EvidenceArtifact(EvidenceType.HIERARCHY, it)) } ?: emptyList(),
@@ -325,7 +337,13 @@ class Orchestrator(
     }
 
     AssertMode.VISUAL -> {
-      val artifact = artifactRecorder.screenshotPath(segmentIndex)
+      val artifact = try {
+        artifactRecorder.screenshotPath(segmentIndex)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        null
+      }
       if (artifact != null) {
         session.captureScreenshot(artifact.path)
         AssertionEvaluation(

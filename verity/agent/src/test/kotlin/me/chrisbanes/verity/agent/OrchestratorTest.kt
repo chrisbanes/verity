@@ -424,6 +424,95 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `slow path recorder failure does not prevent flow execution`() = runTest {
+    val generatedYaml = flow("- tapOn: \"Settings\"")
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { generatedYaml } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = ThrowingArtifactRecorder(),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "slow-recorder-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Action(instruction = "navigate to settings page")),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.generatedFlows).isEmpty()
+    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
+  }
+
+  @Test
+  fun `tree recorder failure does not fail passing assertion`() = runTest {
+    val orchestrator = Orchestrator(
+      session = FakeDeviceSession(),
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { """{"passed": true, "reasoning": "Tree matched"}""" } },
+          evaluateVisualContent = { _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = ThrowingArtifactRecorder(),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "tree-recorder-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.TREE)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.evidence).isEmpty()
+  }
+
+  @Test
+  fun `visual recorder failure does not fail passing assertion`() = runTest {
+    val session = FakeDeviceSession()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      inspectorFactory = {
+        InspectorAgent(
+          treeAgentFactory = { FakeTextAgent { error("unused") } },
+          evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+        )
+      },
+      artifactRecorder = ThrowingArtifactRecorder(),
+    )
+
+    val result = orchestrator.run(
+      Journey(
+        name = "visual-recorder-failure",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.VISUAL)),
+      ),
+    )
+
+    val segment = result.segments.single()
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.evidence).isEmpty()
+    assertThat(session.capturedScreenshotPaths.size).isEqualTo(1)
+  }
+
+  @Test
   fun `fast path scrolls to find off-screen target then taps`() = runTest {
     // First containsText: not visible. After scroll: visible.
     val session = FakeDeviceSession(
@@ -736,6 +825,14 @@ class OrchestratorTest {
         relativePath = "evidence/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png",
       )
     }
+  }
+
+  private class ThrowingArtifactRecorder : JourneyArtifactRecorder {
+    override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String = error("artifact unavailable")
+
+    override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String = error("artifact unavailable")
+
+    override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = error("artifact unavailable")
   }
 
   private companion object {
