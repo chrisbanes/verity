@@ -26,8 +26,8 @@ internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowRes
       Files.writeString(flowPath, yaml)
       YamlCommandReader.readCommands(flowPath)
     }
-    val success = Orchestra(maestro = maestro).runFlow(commands)
-    FlowResult(success = success)
+    val result = Orchestra(maestro = maestro).runFlow(commands)
+    FlowResult(success = result.success)
   } catch (error: SyntaxError) {
     FlowResult(success = false, output = error.message)
   } catch (error: CancellationException) {

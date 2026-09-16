@@ -1,6 +1,5 @@
 package me.chrisbanes.verity.device.android
 
-import dadb.Dadb
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -13,15 +12,16 @@ import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.executeMaestroFlow
 
 /**
- * Android device session backed by Dadb (ADB over TCP) and Maestro SDK (gRPC).
+ * Android device session backed by Maestro SDK (ADB and gRPC).
  *
- * [dadb] handles ADB shell commands. [maestro] handles UI automation via
- * the on-device gRPC agent (hierarchy, screenshots, key presses, animations).
+ * [executeShell] handles ADB shell commands through Maestro's device connection. [maestro]
+ * handles UI automation via the on-device gRPC agent (hierarchy, screenshots, key presses,
+ * animations) and owns the connection lifecycle.
  */
 class AndroidDeviceSession(
-  private val dadb: Dadb,
   private val maestro: Maestro,
   override val platform: Platform,
+  private val executeShell: (String) -> String,
 ) : DeviceSession {
 
   override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
@@ -44,8 +44,7 @@ class AndroidDeviceSession(
   }
 
   override suspend fun shell(command: String): String = withContext(Dispatchers.IO) {
-    val response = dadb.shell(command)
-    response.output
+    executeShell(command)
   }
 
   override suspend fun waitForAnimationToEnd(): Unit = withContext(Dispatchers.IO) {
@@ -54,26 +53,25 @@ class AndroidDeviceSession(
 
   override suspend fun getAnimationState(): DeviceSession.AnimationState = withContext(Dispatchers.IO) {
     DeviceSession.AnimationState(
-      windowScale = dadb.shell("settings get global window_animation_scale").output.trim(),
-      transitionScale = dadb.shell("settings get global transition_animation_scale").output.trim(),
-      animatorScale = dadb.shell("settings get global animator_duration_scale").output.trim(),
+      windowScale = executeShell("settings get global window_animation_scale").trim(),
+      transitionScale = executeShell("settings get global transition_animation_scale").trim(),
+      animatorScale = executeShell("settings get global animator_duration_scale").trim(),
     )
   }
 
   override suspend fun disableAnimations(): Unit = withContext(Dispatchers.IO) {
-    dadb.shell("settings put global window_animation_scale 0")
-    dadb.shell("settings put global transition_animation_scale 0")
-    dadb.shell("settings put global animator_duration_scale 0")
+    executeShell("settings put global window_animation_scale 0")
+    executeShell("settings put global transition_animation_scale 0")
+    executeShell("settings put global animator_duration_scale 0")
   }
 
   override suspend fun restoreAnimationState(state: DeviceSession.AnimationState): Unit = withContext(Dispatchers.IO) {
-    dadb.shell("settings put global window_animation_scale ${state.windowScale}")
-    dadb.shell("settings put global transition_animation_scale ${state.transitionScale}")
-    dadb.shell("settings put global animator_duration_scale ${state.animatorScale}")
+    executeShell("settings put global window_animation_scale ${state.windowScale}")
+    executeShell("settings put global transition_animation_scale ${state.transitionScale}")
+    executeShell("settings put global animator_duration_scale ${state.animatorScale}")
   }
 
   override fun close() {
     maestro.close()
-    dadb.close()
   }
 }

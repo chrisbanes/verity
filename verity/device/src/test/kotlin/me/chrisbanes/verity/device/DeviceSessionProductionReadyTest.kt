@@ -26,9 +26,9 @@ class DeviceSessionProductionReadyTest {
   @Test
   fun `android executeFlow returns success for valid flow`() = runTest {
     val session = AndroidDeviceSession(
-      dadb = FakeDadb(),
       maestro = Maestro(FakeDriver()),
       platform = Platform.ANDROID_MOBILE,
+      executeShell = { "" },
     )
 
     val result = session.executeFlow(
@@ -45,9 +45,9 @@ class DeviceSessionProductionReadyTest {
   @Test
   fun `android executeFlow returns failure output for invalid flow`() = runTest {
     val session = AndroidDeviceSession(
-      dadb = FakeDadb(),
       maestro = Maestro(FakeDriver()),
       platform = Platform.ANDROID_MOBILE,
+      executeShell = { "" },
     )
 
     val result = session.executeFlow("- launchApp")
@@ -59,9 +59,9 @@ class DeviceSessionProductionReadyTest {
   @Test
   fun `android executeFlow returns failure output for runtime errors`() = runTest {
     val session = AndroidDeviceSession(
-      dadb = FakeDadb(),
       maestro = Maestro(ThrowingDriver()),
       platform = Platform.ANDROID_MOBILE,
+      executeShell = { "" },
     )
 
     val result = session.executeFlow(
@@ -73,7 +73,7 @@ class DeviceSessionProductionReadyTest {
     )
 
     assertThat(result.success).isEqualTo(false)
-    assertThat(result.output).contains("Unable to launch app")
+    assertThat(result.output).contains("boom")
   }
 
   @Test
@@ -121,31 +121,31 @@ class DeviceSessionProductionReadyTest {
   }
 
   @Test
-  fun `resolveAndroidConnection uses adb server transport query for explicit serial`() {
-    val expected = FakeDadb()
-    val dadb = DeviceSessionFactory.resolveAndroidConnection(
+  fun `resolveAndroidConnection uses explicit serial`() {
+    val expected = Any()
+    val connection = DeviceSessionFactory.resolveAndroidConnection(
       deviceId = "emulator-5554",
-      createWithQuery = { query ->
-        assertThat(query).isEqualTo("host:transport:emulator-5554")
+      createWithId = { id ->
+        assertThat(id).isEqualTo("emulator-5554")
         expected
       },
       discover = { error("unused") },
     )
 
-    assertThat(dadb).isEqualTo(expected)
+    assertThat(connection).isEqualTo(expected)
   }
 
   @Test
   fun `resolveAndroidConnection falls back to discovery when serial omitted`() {
-    val discovered = FakeDadb()
+    val discovered = Any()
 
-    val dadb = DeviceSessionFactory.resolveAndroidConnection(
+    val connection = DeviceSessionFactory.resolveAndroidConnection(
       deviceId = null,
-      createWithQuery = { error("unused") },
+      createWithId = { error("unused") },
       discover = { discovered },
     )
 
-    assertThat(dadb).isEqualTo(discovered)
+    assertThat(connection).isEqualTo(discovered)
   }
 
   @Test
@@ -153,18 +153,10 @@ class DeviceSessionProductionReadyTest {
     assertFailure {
       DeviceSessionFactory.resolveAndroidConnection(
         deviceId = "192.168.1.20",
-        createWithQuery = { error("unused") },
+        createWithId = { error("unused") },
         discover = { error("unused") },
       )
     }.messageContains("Expected an ADB serial")
-  }
-
-  private class FakeDadb : dadb.Dadb {
-    override fun open(destination: String): dadb.AdbStream = throw UnsupportedOperationException("unused in test")
-
-    override fun supportsFeature(feature: String): Boolean = false
-
-    override fun close() = Unit
   }
 
   private class FakeIosDevice : device.IOSDevice {
@@ -205,6 +197,8 @@ class DeviceSessionProductionReadyTest {
     }
 
     override fun setOrientation(orientation: String) = Unit
+    override fun isDarkModeEnabled(): Boolean = false
+    override fun setAppearance(appearance: String) = Unit
     override fun isShutdown(): Boolean = false
     override fun isScreenStatic(): Boolean = true
     override fun setPermissions(id: String, permissions: Map<String, String>) = Unit
@@ -250,7 +244,6 @@ class DeviceSessionProductionReadyTest {
     override fun setProxy(host: String, port: Int) = Unit
     override fun resetProxy() = Unit
     override fun isShutdown(): Boolean = false
-    override fun isUnicodeInputSupported(): Boolean = true
     override fun waitUntilScreenIsStatic(timeoutMs: Long): Boolean = true
     override fun waitForAppToSettle(
       initialHierarchy: maestro.ViewHierarchy?,
@@ -263,6 +256,8 @@ class DeviceSessionProductionReadyTest {
     override fun addMedia(mediaFiles: List<java.io.File>) = Unit
     override fun isAirplaneModeEnabled(): Boolean = false
     override fun setAirplaneMode(enabled: Boolean) = Unit
+    override fun isDarkModeEnabled(): Boolean = false
+    override fun setDarkMode(enabled: Boolean) = Unit
   }
 
   private class ThrowingDriver : FakeDriver() {
