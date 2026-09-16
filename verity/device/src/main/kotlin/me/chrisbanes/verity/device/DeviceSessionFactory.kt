@@ -1,7 +1,5 @@
 package me.chrisbanes.verity.device
 
-import dadb.Dadb
-import dadb.adbserver.AdbServer
 import device.SimctlIOSDevice
 import ios.LocalIOSDevice
 import ios.xctest.XCTestIOSDevice
@@ -17,6 +15,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import maestro.Maestro
+import maestro.android.AndroidDeviceConnection
 import maestro.drivers.AndroidDriver
 import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
@@ -59,11 +58,19 @@ object DeviceSessionFactory {
     deviceId: String?,
     disableAnimations: Boolean,
   ): DeviceSession {
-    val dadb = resolveAndroidConnection(deviceId)
+    val connection = resolveAndroidConnection(
+      deviceId = deviceId,
+      createWithId = { id -> AndroidDeviceConnection.byId(id, host = "localhost") },
+      discover = { AndroidDeviceConnection.discover(host = "localhost") },
+    ) ?: error("No Android device found. Is ADB available?")
 
-    val driver = AndroidDriver(dadb)
+    val driver = AndroidDriver(connection)
     val maestro = Maestro.android(driver)
-    val session = AndroidDeviceSession(dadb, maestro, platform)
+    val session = AndroidDeviceSession(
+      maestro = maestro,
+      platform = platform,
+      executeShell = { command -> connection.shell(command).output },
+    )
 
     if (disableAnimations) {
       val state = session.getAnimationState()
@@ -74,16 +81,15 @@ object DeviceSessionFactory {
     return session
   }
 
-  internal fun resolveAndroidConnection(
+  internal fun <T> resolveAndroidConnection(
     deviceId: String?,
-    createWithQuery: (String) -> Dadb = { query -> AdbServer.createDadb(deviceQuery = query) },
-    discover: () -> Dadb? = { Dadb.discover() },
-  ): Dadb = deviceId?.let { id ->
+    createWithId: (String) -> T,
+    discover: () -> T?,
+  ): T? = deviceId?.let { id ->
     validateAndroidDeviceId(id)
-    createWithQuery("host:transport:$id")
+    createWithId(id)
   }
     ?: discover()
-    ?: error("No Android device found. Is ADB available?")
 
   internal suspend fun resolveIosDeviceId(
     deviceId: String?,
