@@ -9,6 +9,9 @@ package me.chrisbanes.verity.core.hierarchy
  */
 object FocusDetector {
 
+  /** True only when the node carries the focused state. */
+  fun isFocused(node: HierarchyNode): Boolean = "focused" in node.states
+
   private data class FlatEntry(
     val depth: Int,
     val focused: Boolean,
@@ -24,7 +27,7 @@ object FocusDetector {
       flat.add(
         FlatEntry(
           depth = depth,
-          focused = "focused" in node.states,
+          focused = isFocused(node),
           hasText = node.attributes.values.any { it.lowercase().contains(textLower) },
         ),
       )
