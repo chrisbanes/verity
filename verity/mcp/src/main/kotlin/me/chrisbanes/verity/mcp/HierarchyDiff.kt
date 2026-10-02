@@ -17,8 +17,7 @@ object HierarchyDiff {
   private const val MAX_SAMPLE_CHARACTERS = 500
   private const val MAX_RENDERED_CHARACTERS = 16_000
 
-  private class Category(entries: List<String>) {
-    val count = entries.size
+  private class Category(val count: Int, entries: Sequence<String>) {
     val samples = entries.take(MAX_SAMPLES).map(::boundedSample).toMutableList()
 
     fun toJson(): JsonObject = buildJsonObject {
@@ -32,21 +31,24 @@ object HierarchyDiff {
   fun render(sessionId: UUID, pair: ResolvedHierarchySnapshotPair): String {
     val before = flatten(pair.before)
     val after = flatten(pair.after)
-    val added = after.filterKeys { it !in before }.map { (path, node) -> describe(path, node) }
-    val removed = before.filterKeys { it !in after }.map { (path, node) -> describe(path, node) }
-    val changed = before.mapNotNull { (path, node) ->
+    val added = after.filterKeys { it !in before }
+    val removed = before.filterKeys { it !in after }
+    val changed = before.filter { (path, node) ->
       val other = after[path]
-      if (other != null && (node.attributes != other.attributes || node.states != other.states)) {
-        "${describe(path, node)} -> ${describe(path, other)}"
-      } else {
-        null
-      }
+      other != null && (node.attributes != other.attributes || node.states != other.states)
     }
-    val addedCategory = Category(added)
-    val removedCategory = Category(removed)
-    val changedCategory = Category(changed)
-    val focusBefore = Category(before.filterValues(FocusDetector::isFocused).map { (path, node) -> describe(path, node) })
-    val focusAfter = Category(after.filterValues(FocusDetector::isFocused).map { (path, node) -> describe(path, node) })
+    val focusedBefore = before.filterValues(FocusDetector::isFocused)
+    val focusedAfter = after.filterValues(FocusDetector::isFocused)
+    val addedCategory = Category(added.size, added.asSequence().map { (path, node) -> describe(path, node) })
+    val removedCategory = Category(removed.size, removed.asSequence().map { (path, node) -> describe(path, node) })
+    val changedCategory = Category(
+      changed.size,
+      changed.asSequence().map { (path, node) ->
+        "${describe(path, node)} -> ${describe(path, after.getValue(path))}"
+      },
+    )
+    val focusBefore = Category(focusedBefore.size, focusedBefore.asSequence().map { (path, node) -> describe(path, node) })
+    val focusAfter = Category(focusedAfter.size, focusedAfter.asSequence().map { (path, node) -> describe(path, node) })
     val priority = listOf(focusBefore, focusAfter, changedCategory, addedCategory, removedCategory)
     var renderedTruncated = false
     fun document(): String = buildJsonObject {
