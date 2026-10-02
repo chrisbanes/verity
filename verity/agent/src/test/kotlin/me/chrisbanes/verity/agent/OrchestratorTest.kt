@@ -1040,6 +1040,65 @@ class OrchestratorTest {
     }
   }
 
+  @Test fun `scroll model failure stops action and loop before any fallback or later work`() = runTest {
+    for (loop in listOf(false, true)) {
+      val events = mutableListOf<String>()
+      val session = LoopSession(events, Platform.ANDROID_MOBILE)
+      val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ ->
+        events += "check"
+        inspectionReply("""{"passed":false,"reasoning":"previous"}""")
+      }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+      val navigator = NavigatorAgent("context") { _, _ -> error("HTTP_BODY_SENTINEL sk-secret") }
+      val journey = loopJourney("Tap Settings; swipe left", 2, Platform.ANDROID_MOBILE).copy(steps = listOf(if (loop) JourneyStep.Loop("Tap Settings; swipe left", "page is ready", 2) else JourneyStep.Action("Tap Settings"), JourneyStep.Action("Press back")))
+      assertFailsWith<ModelFailureException> { loopOrchestrator(session, inspector, navigator).run(journey) }
+      assertThat(events).containsExactly(*(if (loop) arrayOf("check") else emptyArray()))
+    }
+  }
+
+  @Test fun `invalid truncated empty timed out and failed slow generation never record or execute flow bodies`() = runTest {
+    for (loop in listOf(false, true)) {
+      for (type in listOf("invalid", "truncated", "empty", "timeout", "request")) {
+        val events = mutableListOf<String>()
+        val session = LoopSession(events, Platform.ANDROID_TV)
+        val recorder = RecordingArtifactRecorder()
+        val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ ->
+          events += "check"
+          inspectionReply("""{"passed":false,"reasoning":"previous"}""")
+        }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+        val navigator = NavigatorAgent("context") { _, _ ->
+          when (type) {
+            "invalid" -> modelReply("appId: com.example\n---\n- tapOn:")
+
+            "truncated" -> modelReply("appId: com.example\n---\n- launchApp", "max_tokens")
+
+            "empty" -> modelReply(" ")
+
+            "timeout" -> {
+              kotlinx.coroutines.delay(30_001)
+              modelReply("unused")
+            }
+
+            else -> error("HTTP_BODY_SENTINEL sk-secret")
+          }
+        }
+        val journey = loopJourney("Press D-pad down; complete onboarding wizard", 2, Platform.ANDROID_TV).copy(steps = listOf(if (loop) JourneyStep.Loop("Press D-pad down; complete onboarding wizard", "page is ready", 2) else JourneyStep.Action("complete onboarding wizard"), JourneyStep.Action("Press back")))
+        assertFailsWith<ModelFailureException> { loopOrchestrator(session, inspector, navigator, recorder).run(journey) }
+        assertThat(recorder.generatedFlows).isEmpty()
+        assertThat(events).containsExactly(*(if (loop) arrayOf("check") else emptyArray()))
+      }
+    }
+  }
+
+  @Test fun `valid scroll NONE remains ordinary navigation with fallback tap`() = runTest {
+    val events = mutableListOf<String>()
+    val session = LoopSession(events, Platform.ANDROID_MOBILE)
+    val navigator = NavigatorAgent("context") { _, _ -> modelReply("NONE") }
+    val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+    val result = loopOrchestrator(session, inspector, navigator).run(Journey("none", APP_ID, Platform.ANDROID_MOBILE, listOf(JourneyStep.Action("Tap Settings"))))
+    assertThat(result.passed).isTrue()
+    assertThat(events).containsExactly("flow")
+  }
+
   private fun loopJourney(body: String, max: Int, platform: Platform) = Journey(
     name = "loop-contract",
     app = APP_ID,

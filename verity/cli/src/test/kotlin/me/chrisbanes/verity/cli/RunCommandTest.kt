@@ -6,6 +6,8 @@ import assertk.assertions.containsExactly
 import assertk.assertions.doesNotContain
 import assertk.assertions.exists
 import assertk.assertions.isEqualTo
+import assertk.assertions.isEmpty
+import assertk.assertions.isTrue
 import assertk.assertions.isFalse
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
@@ -19,6 +21,9 @@ import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
+import me.chrisbanes.verity.device.validateMaestroFlow
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
+import me.chrisbanes.verity.device.MaestroFlowValidationPhase
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.ModelFailureKind
 import me.chrisbanes.verity.agent.ModelRequestStage
@@ -1256,6 +1261,81 @@ class RunCommandTest {
       dir.deleteRecursively()
     }
   }
+
+
+  @Test fun `actual navigator local validation failure aborts suite with retained setup results`() {
+    verifyNavigatorSuite("infrastructure", null)
+  }
+
+  @Test fun `actual navigator model generation and scroll failures stop suite without exposing reply or provider text`() {
+    for (type in listOf("flow", "scroll", "invalid")) verifyNavigatorSuite(type, null)
+  }
+
+  @Test fun `required journey and summary writes take precedence over actual navigator model or infrastructure failure`() {
+    for (type in listOf("flow", "scroll", "infrastructure")) for (write in listOf("journey", "summary")) verifyNavigatorSuite(type, write)
+  }
+
+  @Test fun `actual navigator create write cleanup SDK and missing resource failures stay setup3`() {
+    for (type in listOf("infrastructure-create", "infrastructure-write", "infrastructure-cleanup", "infrastructure-sdk", "infrastructure-resource")) verifyNavigatorSuite(type, null)
+  }
+
+  private fun verifyNavigatorSuite(failureType: String, writeFailure: String?) {
+    val dir = createTempDirectory("verity-navigator-suite").toFile()
+    try {
+      writeJourney(dir, "a.journey.yaml", "First", platform = "android")
+      writeJourneyWithSteps(dir, "b.journey.yaml", "Second", platform = "android", steps = listOf(if (failureType == "scroll") "tap Missing" else "complete onboarding wizard"))
+      writeJourney(dir, "c.journey.yaml", "Third", platform = "android")
+      val seen = mutableListOf<String>()
+      val sessions = mutableListOf<FakeDeviceSession>()
+      val output = File(dir, "output")
+      val command = runCommand(clock = fixedClock(),
+        writeSummary = { run, summary -> if (writeFailure == "summary") error("required summary failed") else run.writeSummary(summary) },
+        writeJourneyResult = { run, path, result -> if (writeFailure == "journey" && path.contains("002-second")) error("required journey failed") else run.writeJourneyResult(path, result) },
+        journeyRunner = { resolved, recorder ->
+          seen += resolved.journey.name
+          val session = FakeDeviceSession(platform = Platform.ANDROID_MOBILE, hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))).also { sessions += it }
+          val navigator = NavigatorAgent("context", validateFlow = { yaml ->
+            when (failureType) {
+              "infrastructure-create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(NAVIGATOR_SENTINEL) })
+              "infrastructure-write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(NAVIGATOR_SENTINEL) })
+              "infrastructure-cleanup" -> validateMaestroFlow(yaml, deleteFlow = { java.nio.file.Files.delete(it); throw java.io.IOException(NAVIGATOR_SENTINEL) })
+              "infrastructure-sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(NAVIGATOR_SENTINEL) })
+              "infrastructure-resource" -> validateMaestroFlow("appId: com.example.app\n---\n- runFlow: /unavailable/verity-missing.yaml")
+              "infrastructure" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(NAVIGATOR_SENTINEL) })
+              else -> validateMaestroFlow(yaml)
+            }
+          }) { _, _ ->
+            if (failureType.startsWith("infrastructure")) modelReply("appId: com.example.app\n---\n- launchApp")
+            else if (failureType == "invalid") modelReply("appId: com.example.app\n---\n- tapOn: \"$NAVIGATOR_SENTINEL")
+            else error(NAVIGATOR_SENTINEL)
+          }
+          Orchestrator(session, { navigator }, { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused inspector") }, evaluateVisualContent = { _, _, _, _ -> error("unused inspector") }) }, artifactRecorder = recorder).run(resolved.journey)
+        },
+      ) { error("unused suite") }
+      val result = Verity().subcommands(command).test("--output-path ${output.absolutePath} run ${dir.absolutePath}")
+      val expectedKind = if (failureType.startsWith("infrastructure")) ArtifactErrorKind.SETUP_FAILURE else ArtifactErrorKind.MODEL_FAILURE
+      assertThat(result.statusCode).isEqualTo(if (writeFailure != null || failureType.startsWith("infrastructure")) 3 else 5)
+      assertThat(seen).containsExactly("First", "Second")
+      assertThat(sessions[1].executedFlows.size).isEqualTo(1) // Static launch only; no generated flow or fallback tap.
+      assertThat(sessions[1].pressedKeys).isEmpty()
+      val run = File(output, "runs").listFiles()!!.single()
+      assertThat(readJourney(File(run, "journeys/001-first.json")).passed).isTrue()
+      assertThat(File(run, "journeys/003-third.json").exists()).isFalse()
+      assertThat(File(run, "flows").walkTopDown().filter { it.isFile }.toList()).isEmpty()
+      if (writeFailure == null) {
+        val summary = readSummary(File(run, "summary.json"))
+        assertThat(summary.total).isEqualTo(2)
+        assertThat(summary.passed).isEqualTo(1)
+        assertThat(summary.failed).isEqualTo(1)
+        assertThat(summary.error?.kind).isEqualTo(expectedKind)
+        assertThat(readJourney(File(run, "journeys/002-second.json")).error).isEqualTo(summary.error)
+      }
+      val outward = result.output + run.walkTopDown().filter { it.isFile }.joinToString("\n") { it.readText() }
+      for (sentinel in listOf("sk-private", "credential-private", "eyJprivate.payload.signature", "HTTP_BODY_PRIVATE", "HEADER_PRIVATE")) assertThat(outward).doesNotContain(sentinel)
+    } finally { dir.deleteRecursively() }
+  }
+
+  private val NAVIGATOR_SENTINEL = "sk-private Bearer credential-private eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"
 
   private fun runCommand(
     clock: Clock = Clock.systemUTC(),

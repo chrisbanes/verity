@@ -40,6 +40,7 @@ import me.chrisbanes.verity.core.result.SegmentArtifactResult
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.DeviceSessionFactory
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
 
 private const val EXIT_INPUT = 2
 private const val EXIT_SETUP = 3
@@ -261,7 +262,14 @@ class RunCommand(
         writeSetupFailureSummary(runArtifacts, path.path, artifactMessage, metadata = metadata)
         throw CliktError(artifactMessage, statusCode = EXIT_SETUP)
       }
-      throw CliktError(message, statusCode = if (e.kind == ArtifactErrorKind.MODEL_FAILURE) EXIT_MODEL else EXIT_JOURNEY)
+      throw CliktError(
+        message,
+        statusCode = when (e.kind) {
+          ArtifactErrorKind.SETUP_FAILURE -> EXIT_SETUP
+          ArtifactErrorKind.MODEL_FAILURE -> EXIT_MODEL
+          else -> EXIT_JOURNEY
+        },
+      )
     } catch (e: Exception) {
       val message = e.message ?: "Journey suite setup failed"
       writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
@@ -775,7 +783,11 @@ private class JourneyExecutionFailure(
   val resolvedJourney: ResolvedJourney? = null,
   val failedAt: Int? = null,
   val completedResults: List<ResolvedJourneyResult> = emptyList(),
-  val kind: ArtifactErrorKind = if (cause is ModelFailureException) ArtifactErrorKind.MODEL_FAILURE else ArtifactErrorKind.JOURNEY_FAILURE,
+  val kind: ArtifactErrorKind = when (cause) {
+    is ModelFailureException -> ArtifactErrorKind.MODEL_FAILURE
+    is MaestroFlowValidationInfrastructureException -> ArtifactErrorKind.SETUP_FAILURE
+    else -> ArtifactErrorKind.JOURNEY_FAILURE
+  },
 ) : Exception(message, cause)
 
 internal suspend fun runResolvedJourneysWithArtifacts(
