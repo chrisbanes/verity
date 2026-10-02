@@ -1267,7 +1267,7 @@ class RunCommandTest {
   }
 
   @Test fun `actual navigator model generation and scroll failures stop suite without exposing reply or provider text`() {
-    for (type in listOf("flow", "scroll", "invalid")) verifyNavigatorSuite(type, null)
+    for (type in listOf("flow", "scroll", "invalid", "null-options")) verifyNavigatorSuite(type, null)
   }
 
   @Test fun `required journey and summary writes take precedence over actual navigator model or infrastructure failure`() {
@@ -1316,6 +1316,8 @@ class RunCommandTest {
           }) { _, _ ->
             if (failureType.startsWith("infrastructure")) {
               modelReply("appId: com.example.app\n---\n- launchApp")
+            } else if (failureType == "null-options") {
+              modelReply("appId: com.example.app\n---\n- tapOn:")
             } else if (failureType == "invalid") {
               modelReply("appId: com.example.app\n---\n- tapOn: \"$navigatorSentinel")
             } else {
