@@ -24,7 +24,7 @@ Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation 
 | `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, focus-condition grammar, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
 | `:verity:device` | `:verity:core` | `DeviceSession` interface and platform-specific implementations (Android via Dadb + Maestro gRPC, iOS via Maestro XCTest HTTP) |
 | `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, Orchestrator |
-| `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 12 tools, session manager, snapshot store |
+| `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 13 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
 | `:verity:smoke-tests` | `:verity:cli` | Device smoke tests (Android emulator) |
 
@@ -354,13 +354,17 @@ Per-session mutex for safe concurrent tool calls. Animation state is managed by 
 
 ### Snapshot Store
 
-LRU map of captured `HierarchyNode` trees (capped at 10 per session). Supports future diff functionality without refactoring.
+Capture-ordered map of full `HierarchyNode` trees, capped at ten per session. `capture_hierarchy` stores the full tree before filtering its text response; reads preserve capture order and eviction removes the oldest capture. `resolvePair` validates explicit IDs and selects previous/latest defaults together under the store mutex, retaining both IDs/tree references before comparison.
+
+`diff_hierarchy` compares root-relative child-index paths, every attribute/state and empty containers. Its compact JSON includes resolved IDs, full change/focus counts, samples and omission/truncation metadata. Focus summaries use `FocusDetector.isFocused`, the shared focused-state predicate. [The snapshot diff spec](specs/hierarchy-snapshot-diff.md) defines independent defaults, structured errors, structural identity limits and serialized 20-sample/500-character/16,000-character budgets.
+
+Diff admission rechecks `isOpen` inside the acquired session callback. Removal before admission gives structured `session_unavailable`; admitted work finishes from retained trees while close waits for the session mutex. Only a missing-session lookup failure before callback entry is normalized; cancellation and unexpected callback failures preserve existing behavior. The snapshot lock is released before rendering, while the session lock remains held. A defaulted constructor-injected suspend `hierarchyDiffRenderer(UUID, ResolvedHierarchySnapshotPair)` delegates to the pure renderer and supplies a test barrier for this admission/close contract without changing the manager or tool schema.
 
 ### Screenshot Compression
 
 For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation), encode as JPEG at 0.75 quality, return as base64.
 
-### Tool Catalog (12 tools)
+### Tool Catalog (13 tools)
 
 | Tool | Required params | Returns | Notes |
 |------|----------------|---------|-------|
@@ -372,6 +376,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 | `press_key` | session_id, key | confirmation | Optional focus change result |
 | `capture_screenshot` | session_id | base64 JPEG or file path | Optional: save_to_file |
 | `capture_hierarchy` | session_id | hierarchy text + snapshot_id | Optional: filter (focus/content/all) |
+| `diff_hierarchy` | session_id | bounded structural/focus JSON + resolved IDs | Optional: before_snapshot_id, after_snapshot_id; previous/latest defaults |
 | `check_visible` | session_id, text | true/false | Deterministic, case-insensitive |
 | `check_focused` | session_id, text | true/false | Lenient ancestor/sibling/child check |
 | `run_loop` | session_id, action, until | SATISFIED/NOT + iterations | Optional: max, wait_ms |
@@ -475,11 +480,12 @@ VerityMcpServer
     ├── press_key → session.pressKey()
     ├── run_flow → session.executeFlow()
     ├── capture_screenshot → session.captureScreenshot() → compress → base64
-    ├── capture_hierarchy → session.captureHierarchy() → snapshot store
+    ├── capture_hierarchy → session.captureHierarchyTree() → snapshot store → filtered text
+    ├── diff_hierarchy → session admission → snapshotStore.resolvePair() → HierarchyDiff.render()
     ├── check_visible → session.containsText()
     ├── check_focused → session.checkFocused()
     ├── run_loop → pressKey() loop with condition check
-    └── close_session → restore animations → session.close()
+    └── close_session → restore animations → session.close() → clear snapshots
 ```
 
 ---
