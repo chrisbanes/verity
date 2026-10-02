@@ -56,8 +56,8 @@ suspend fun validateMaestroFlow(
   var cleanupFailed = false
   try {
     currentCoroutineContext().ensureActive()
+    beforeResponseCheck()
     try {
-      beforeResponseCheck()
       YAMLFactory().createParser(yaml).use { parser -> while (parser.nextToken() != null) {} }
     } catch (error: CancellationException) {
       throw error

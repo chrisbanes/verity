@@ -13,7 +13,9 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -141,7 +143,18 @@ class MaestroFlowValidatorTest {
       val cancellation = CallerCancellation()
       val caller = Job()
       var created: Path? = null
-      val dispatcher = StandardTestDispatcher(testScheduler)
+      val delegate = StandardTestDispatcher(testScheduler)
+      val dispatcher = object : CoroutineDispatcher() {
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+          delegate.dispatch(
+            context,
+            Runnable {
+              block.run()
+              caller.cancel(cancellation)
+            },
+          )
+        }
+      }
       val failure = runCatching {
         withContext(caller) {
           validateMaestroFlow(
@@ -152,7 +165,7 @@ class MaestroFlowValidatorTest {
                 if (point == "create") caller.cancel(cancellation)
               }
             },
-            readFlow = { if (point != "create") caller.cancel(cancellation) },
+            readFlow = { if (point == "read") caller.cancel(cancellation) },
             ioDispatcher = if (point == "return") dispatcher else Dispatchers.IO,
           )
         }
@@ -176,6 +189,31 @@ class MaestroFlowValidatorTest {
     assertThat(failure).isSameInstanceAs(cancellation)
     assertThat(cancellation.suppressed).isEmpty()
     withContext(NonCancellable + Dispatchers.IO) { Files.delete(created!!) }
+  }
+
+  @Test fun `SDK faults cannot enter lexical invalid classification merely by exception type`() = runTest {
+    val lexical = runCatching { YAMLFactory().createParser("\"unfinished").use { while (it.nextToken() != null) {} } }.exceptionOrNull()!!
+    assertSafe(runCatching { validateMaestroFlow(VALID, beforeResponseCheck = { throw lexical }) }.exceptionOrNull(), true)
+  }
+
+  @Test fun `scalar object and invalid nesting are rejected with safe response diagnostics`() = runTest {
+    for (yaml in listOf("scalar", "{}", "appId: com.example\n---\n- [launchApp]", "appId: com.example\n---\n- tapOn: [unfinished")) assertSafe(runCatching { validateMaestroFlow(yaml) }.exceptionOrNull(), false)
+  }
+
+  @Test fun `SDK erased cancellation cause cannot become a completed infrastructure failure`() = runTest {
+    val cancellation = CallerCancellation()
+    val caller = Job()
+    var created: Path? = null
+    val failure = runCatching {
+      withContext(caller) {
+        validateMaestroFlow(VALID, createTempFile = { Files.createTempFile("verity-erased-cancel-", ".yaml").also { created = it } }, readFlow = {
+          caller.cancel(cancellation)
+          throw SyntaxError(SENTINEL)
+        })
+      }
+    }.exceptionOrNull()
+    assertThat(failure).isSameInstanceAs(cancellation)
+    withContext(Dispatchers.IO) { assertThat(Files.exists(created!!)).isFalse() }
   }
 
   private fun assertSafe(failure: Throwable?, infrastructure: Boolean) {
