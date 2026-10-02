@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs for this repo live as GitHub issues in `chrisbanes/verity`. Prefer the GitHub connector and plugin. If they are unavailable or cannot perform the operation, use the `gh` CLI outside the Codex sandbox. Never access GitHub through the browser. The CLI examples below describe the fallback workflow.
+Issues and proposed specs for this repo live as GitHub issues in `chrisbanes/verity`. Implemented behavior specs live in `docs/specs/`. Prefer the GitHub connector and plugin. If they are unavailable or cannot perform the operation, use the `gh` CLI outside the Codex sandbox. Never access GitHub through the browser. The CLI examples below describe the fallback workflow.
 
 ## Conventions
 
