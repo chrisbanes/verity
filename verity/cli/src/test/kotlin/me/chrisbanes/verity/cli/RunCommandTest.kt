@@ -17,8 +17,17 @@ import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.Json
+import me.chrisbanes.verity.agent.FakeTextAgent
+import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
+import me.chrisbanes.verity.agent.ModelFailureException
+import me.chrisbanes.verity.agent.ModelFailureKind
+import me.chrisbanes.verity.agent.ModelRequestStage
+import me.chrisbanes.verity.agent.NavigatorAgent
+import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.agent.SegmentResult
+import me.chrisbanes.verity.agent.inspectionReply
+import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.Platform
@@ -32,6 +41,7 @@ import me.chrisbanes.verity.core.result.JourneyArtifactResult
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
+import me.chrisbanes.verity.device.FakeDeviceSession
 
 class RunCommandTest {
   private val json = Json { ignoreUnknownKeys = true }
@@ -1098,6 +1108,150 @@ class RunCommandTest {
 
       assertThat(first.directory.toFile().name).isEqualTo("20260708-143512-my-suite")
       assertThat(second.directory.toFile().name).isEqualTo("20260708-143512-my-suite-2")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `semantic loop inspector failure exits 5 retains prior result and stops the suite safely`() {
+    val dir = createTempDirectory("verity-model-failure-suite").toFile()
+    try {
+      writeJourney(dir, "a.journey.yaml", "First")
+      writeJourneyWithSteps(dir, "b.journey.yaml", "Second", steps = listOf("Press D-pad down until page is ready max 0"))
+      writeJourney(dir, "c.journey.yaml", "Third")
+      val seen = mutableListOf<String>()
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock(), journeyRunner = { resolved, recorder ->
+        seen += resolved.journey.name
+        val inspector = InspectorAgent(
+          evaluateTreeContent = { _, _, _ -> error("sk-secret Bearer credential HTTP_BODY_SENTINEL HEADER_SENTINEL") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
+        )
+        Orchestrator(
+          FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))),
+          { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+          { inspector },
+          artifactRecorder = recorder,
+        ).run(resolved.journey)
+      }) { error("unused suite runner") }
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(5)
+      assertThat(seen).containsExactly("First", "Second")
+      val runDir = File(outputDir, "runs").listFiles()!!.single()
+      val summaryFile = File(runDir, "summary.json")
+      val secondFile = File(runDir, "journeys/002-second.json")
+      val summary = readSummary(summaryFile)
+      assertThat(summary.total).isEqualTo(2)
+      assertThat(summary.passed).isEqualTo(1)
+      assertThat(summary.error).isEqualTo(ArtifactError(ArtifactErrorKind.MODEL_FAILURE, "Inspector tree request failed"))
+      assertThat(readJourney(File(runDir, "journeys/001-first.json")).passed).isEqualTo(true)
+      assertThat(readJourney(secondFile).error).isEqualTo(summary.error)
+      assertThat(File(runDir, "journeys/003-third.json").exists()).isFalse()
+      for (text in listOf(result.output, summaryFile.readText(), secondFile.readText())) {
+        for (sentinel in listOf("sk-secret", "credential", "HTTP_BODY_SENTINEL", "HEADER_SENTINEL")) {
+          assertThat(text).doesNotContain(sentinel)
+        }
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `negative semantic loop persists its metadata exits 4 and continues ordinary suite execution`() {
+    val dir = createTempDirectory("verity-negative-loop").toFile()
+    try {
+      writeJourneyWithSteps(dir, "a.journey.yaml", "Negative", steps = listOf("Press D-pad down until page is ready max 0"))
+      writeJourney(dir, "b.journey.yaml", "Later")
+      val seen = mutableListOf<String>()
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock(), journeyRunner = { resolved, recorder ->
+        seen += resolved.journey.name
+        Orchestrator(
+          FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))),
+          { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+          {
+            InspectorAgent(
+              evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"menu not ready"}""") },
+              evaluateVisualContent = { _, _, _, _ -> error("unused") },
+            )
+          },
+          artifactRecorder = recorder,
+        ).run(resolved.journey)
+      }) { error("unused") }
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(4)
+      assertThat(seen).containsExactly("Negative", "Later")
+      val runDir = File(outputDir, "runs").listFiles()!!.single()
+      val summary = readSummary(File(runDir, "summary.json"))
+      assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+      assertThat(summary.total).isEqualTo(2)
+      val segment = readJourney(File(runDir, "journeys/001-negative.json")).segments.single()
+      assertThat(segment.loop).isEqualTo(me.chrisbanes.verity.core.result.LoopArtifact("page is ready", 0, me.chrisbanes.verity.core.result.ConditionTier.TREE, "menu not ready"))
+      assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.HIERARCHY)
+      assertThat(readJourney(File(runDir, "journeys/002-later.json")).passed).isEqualTo(true)
+      assertThat(File(runDir, "journeys/002-later.json").readText()).doesNotContain("\"loop\"")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `required failure-artifact write takes precedence over fatal inspector model failure`() {
+    val dir = createTempDirectory("verity-model-failure-write").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock(), writeJourneyResult = { _, _, _ -> error("result disk full") }) {
+        throw ModelFailureException(ModelRequestStage.INSPECTOR_VISUAL, ModelFailureKind.TIMEOUT)
+      }
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(3)
+      val runDir = File(outputDir, "runs").listFiles()!!.single()
+      assertThat(readSummary(File(runDir, "summary.json")).error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `suite runner preserves model failure kind and caller cancellation produces no completed failure`() {
+    val dir = createTempDirectory("verity-model-suite-wrapper").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) { throw ModelFailureException(ModelRequestStage.INSPECTOR_TREE, ModelFailureKind.TRUNCATED) }
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(5)
+      val runDir = File(outputDir, "runs").listFiles()!!.single()
+      assertThat(readSummary(File(runDir, "summary.json")).error).isEqualTo(ArtifactError(ArtifactErrorKind.MODEL_FAILURE, "Inspector tree response was truncated"))
+      val cancelledOutput = File(dir, "cancelled")
+      val cancelled = runCommand(clock = fixedClock(), journeyRunner = { _, _ -> throw kotlin.coroutines.cancellation.CancellationException("caller") }) { error("unused") }
+      assertFailsWith<kotlin.coroutines.cancellation.CancellationException> {
+        Verity().subcommands(cancelled).test("--output-path ${cancelledOutput.absolutePath} run ${file.absolutePath}")
+      }
+      val cancelledRun = File(cancelledOutput, "runs").listFiles()!!.single()
+      assertThat(File(cancelledRun, "summary.json").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `production dry run accepts every limit and visual condition without provider or device access`() {
+    val dir = createTempDirectory("verity-loop-preview-limits").toFile()
+    try {
+      for ((index, limit) in listOf("up to 3 times", "max 3", "for up to 3", "3 iterations").withIndex()) {
+        val file = writeJourneyWithSteps(dir, "loop$index.journey.yaml", "Preview $index", steps = listOf("Press D-pad down; press D-pad right until visually Settings $limit."))
+        val output = File(dir, "out$index")
+        val result = Verity().subcommands(RunCommand(loadConfig = { VerityConfig(provider = "definitely-not-real") }))
+          .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
+        assertThat(result.statusCode).isEqualTo(0)
+        assertThat(result.output).contains("until visually Settings, max 3")
+        assertThat(result.output).contains("Interactions:\n- KeyPress(DPAD_DOWN)\n- KeyPress(DPAD_RIGHT)")
+        assertThat(File(output, "dry-run/loop$index.md").readText()).contains("until visually Settings, max 3")
+      }
     } finally {
       dir.deleteRecursively()
     }

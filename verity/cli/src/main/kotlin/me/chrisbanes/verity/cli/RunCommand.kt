@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
+import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.core.context.ContextBundle
@@ -44,6 +45,7 @@ import me.chrisbanes.verity.device.DeviceSessionFactory
 private const val EXIT_INPUT = 2
 private const val EXIT_SETUP = 3
 private const val EXIT_JOURNEY = 4
+private const val EXIT_MODEL = 5
 
 data class ResolvedJourney(
   val file: File,
@@ -251,6 +253,7 @@ class RunCommand(
           failedJourney = e.resolvedJourney ?: journeys.singleOrNull(),
           failedAt = e.failedAt,
           completedResults = e.completedResults,
+          kind = e.kind,
         )
       } catch (artifactError: CancellationException) {
         throw artifactError
@@ -259,7 +262,7 @@ class RunCommand(
         writeSetupFailureSummary(runArtifacts, path.path, artifactMessage, metadata = metadata)
         throw CliktError(artifactMessage, statusCode = EXIT_SETUP)
       }
-      throw CliktError(message, statusCode = EXIT_JOURNEY)
+      throw CliktError(message, statusCode = if (e.kind == ArtifactErrorKind.MODEL_FAILURE) EXIT_MODEL else EXIT_JOURNEY)
     } catch (e: Exception) {
       val message = e.message ?: "Journey suite setup failed"
       writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
@@ -479,6 +482,7 @@ class RunCommand(
     failedJourney: ResolvedJourney? = null,
     failedAt: Int? = null,
     completedResults: List<ResolvedJourneyResult> = emptyList(),
+    kind: ArtifactErrorKind = ArtifactErrorKind.JOURNEY_FAILURE,
   ) {
     val completedRefs = completedResults.map { item ->
       val index = journeys.indexOf(item.resolvedJourney).takeIf { it >= 0 }?.plus(1) ?: 1
@@ -496,7 +500,7 @@ class RunCommand(
       writeJourneyResult(
         runArtifacts,
         recorder.resultPath,
-        item.toFailureArtifactResult(message, failedAt),
+        item.toFailureArtifactResult(message, failedAt, kind),
       )
       SuiteJourneyArtifact(
         path = recorder.resultPath,
@@ -516,7 +520,7 @@ class RunCommand(
         passed = journeyRefs.count { it.status == ArtifactStatus.PASSED },
         failed = journeyRefs.count { it.status == ArtifactStatus.FAILED },
         journeys = journeyRefs,
-        error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
+        error = ArtifactError(kind, message),
         platform = journeys.firstOrNull()?.journey?.platform,
         provider = metadata?.provider,
         navigatorModel = metadata?.navigatorModel,
@@ -589,6 +593,7 @@ class RunCommand(
         generatedFlows = segment.generatedFlows,
         evidence = segment.evidence,
         error = segment.error,
+        loop = segment.loop,
       )
     },
   )
@@ -596,6 +601,7 @@ class RunCommand(
   private fun ResolvedJourney.toFailureArtifactResult(
     message: String,
     failedAt: Int?,
+    kind: ArtifactErrorKind,
   ): JourneyArtifactResult = JourneyArtifactResult(
     journey = JourneyArtifactIdentity(
       name = journey.name,
@@ -605,7 +611,7 @@ class RunCommand(
     ),
     passed = false,
     failedAt = failedAt,
-    error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, message),
+    error = ArtifactError(kind, message),
   )
 
   private fun printSuiteResult(suiteResult: SuiteRunResult) {
@@ -702,23 +708,37 @@ class RunCommand(
     }
     val inspectorFactory = {
       InspectorAgent(
-        treeAgentFactory = {
-          AIAgent(
-            promptExecutor = executor,
-            llmModel = inspectorModel,
-            systemPrompt = InspectorAgent.SYSTEM_PROMPT,
+        evaluateTreeContent = { systemPrompt, userMessage, references ->
+          executor.execute(
+            prompt("tree-eval") {
+              system(systemPrompt)
+              user {
+                text(userMessage)
+                references.forEachIndexed { index, path ->
+                  text("Reference screenshot ${index + 1}")
+                  image(kotlinx.io.files.Path(path.toString()))
+                }
+              }
+            },
+            inspectorModel,
           )
         },
-        evaluateVisualContent = { systemPrompt, userMessage, screenshotPath ->
-          val p = prompt("visual-eval") {
-            system(systemPrompt)
-            user {
-              text(userMessage)
-              image(kotlinx.io.files.Path(screenshotPath.toString()))
-            }
-          }
-          val response = executor.execute(p, inspectorModel)
-          response.textContent()
+        evaluateVisualContent = { systemPrompt, userMessage, screenshotPath, references ->
+          executor.execute(
+            prompt("visual-eval") {
+              system(systemPrompt)
+              user {
+                text(userMessage)
+                text("Current screenshot")
+                image(kotlinx.io.files.Path(screenshotPath.toString()))
+                references.forEachIndexed { index, path ->
+                  text("Reference screenshot ${index + 1}")
+                  image(kotlinx.io.files.Path(path.toString()))
+                }
+              }
+            },
+            inspectorModel,
+          )
         },
       )
     }
@@ -752,6 +772,7 @@ private class JourneyExecutionFailure(
   val resolvedJourney: ResolvedJourney? = null,
   val failedAt: Int? = null,
   val completedResults: List<ResolvedJourneyResult> = emptyList(),
+  val kind: ArtifactErrorKind = if (cause is ModelFailureException) ArtifactErrorKind.MODEL_FAILURE else ArtifactErrorKind.JOURNEY_FAILURE,
 ) : Exception(message, cause)
 
 internal suspend fun runResolvedJourneysWithArtifacts(

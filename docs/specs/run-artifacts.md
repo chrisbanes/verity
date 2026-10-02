@@ -27,7 +27,7 @@ Journey keys use a one-based, three-digit index and a slug of the journey name. 
 
 Generated slow-path action and loop YAML is saved before flow execution when possible. Fast-path interactions are represented by action text and execution mode without manufacturing generated YAML. The static application launch is executed separately and is not currently recorded as a generated segment flow.
 
-Tree assertions save the hierarchy used for evaluation; visual assertions save the screenshot used for evaluation when possible. Visible/focused assertions do not persist evidence files. Maestro runner temporary files remain separate from these durable artifacts.
+Tree assertions and conditions save the hierarchy used for evaluation; visual assertions and conditions save the screenshot used for evaluation when possible. Loop evidence represents the final evaluated state, not a history of checks. Visible/focused assertions do not persist evidence files. Maestro runner temporary files remain separate from these durable artifacts.
 
 ## JSON contract
 
@@ -39,7 +39,7 @@ Tree assertions save the hierarchy used for evaluation; visual assertions save t
 - Optional `error` with `kind` and `message`.
 - Optional `platform`, `provider`, `navigatorModel`, and `inspectorModel`.
 
-Each journey result contains `journey` identity (`name`, `file`, `app`, `platform`), `passed`, optional `failedAt`, `segments`, and an optional error. Each segment contains its `index`, `passed`, `executionMode`, source `actions`, optional assertion description/mode, `reasoning`, `generatedFlows`, `evidence`, and optional error. Evidence references contain `type` and `path`.
+Each journey result contains `journey` identity (`name`, `file`, `app`, `platform`), `passed`, optional `failedAt`, `segments`, and an optional error. Each segment contains its `index`, `passed`, `executionMode`, source `actions`, optional assertion description/mode, `reasoning`, `generatedFlows`, `evidence`, and optional error. Evidence references contain `type` and `path`. Loop segments additionally contain optional `loop` metadata with `condition`, completed `iterations`, final `tier` and condition `reasoning`. An execution failure retains the previous evaluated condition metadata separately from the segment error. Non-loop segments omit `loop`. See [loop conditions](loop-conditions.md).
 
 JSON property names use camelCase. Default values are included; null-valued properties are omitted. Stable wire values are:
 
@@ -49,7 +49,8 @@ JSON property names use camelCase. Default values are included; null-valued prop
 | Execution mode | `fast`, `slow`, `loop`, `assertion-only` |
 | Assertion mode | `visible`, `focused`, `tree`, `visual` |
 | Evidence type | `flow`, `screenshot`, `hierarchy` |
-| Error kind | `parser_failure`, `setup_failure`, `journey_failure` |
+| Error kind | `parser_failure`, `setup_failure`, `journey_failure`, `model_failure` |
+| Loop condition tier | `literal`, `focus`, `tree`, `visual` |
 | Platform | `android-tv`, `android`, `ios` |
 
 ## Exit codes and failure boundaries
@@ -59,15 +60,16 @@ JSON property names use camelCase. Default values are included; null-valued prop
 | `0` | All journeys passed | Absent |
 | `2` | Input resolution or journey parsing failed, including empty/mixed-platform directories | `parser_failure` |
 | `3` | Configuration, output, preflight, required context, session/client setup, or required result writing failed | `setup_failure`, when a summary can be written |
-| `4` | A journey returned a failed result or threw during execution | `journey_failure` |
+| `4` | A journey returned a failed result or threw during execution, apart from a classified model failure | `journey_failure` |
+| `5` | An inspector request failed, timed out, was truncated or returned an empty/invalid verdict | `model_failure` |
 
 Configuration loading/resolution and output validation happen before run-directory creation. Failures there, or failure to create the run directory itself, exit `3` without a summary. Once the directory exists, input failures produce a failed summary with zero executed journeys; setup failures attempt a setup summary. A failure to write the summary cannot itself guarantee another summary.
 
-A failed journey result allows subsequent journeys to run. An execution exception aborts the suite and preserves completed results plus a failure result for the journey that threw. A required result-write failure takes precedence over a journey/input failure and exits `3`.
+A failed journey result allows subsequent journeys to run. An execution exception aborts the suite and preserves completed results plus a failure result for the journey that threw. A fatal inspector model failure also aborts the suite, preserves completed results and writes `model_failure` for the affected journey and summary. Diagnostics contain fixed stage/failure-class text without raw replies, request exception text or raw causes. Valid negative inspector verdicts remain ordinary failed journey results. A required result-write failure takes precedence over a journey, input or model failure and exits `3`.
 
 Generated-flow and evidence writes are optional. A failed optional write may omit its reference or use a temporary screenshot for evaluation; it does not independently fail the journey and does not guarantee an artifact diagnostic in the result. Assertions can still fail on their own verdict or execution error.
 
-Cancellation propagates rather than being converted into a completed run failure. [Dry run](dry-run.md) has a separate report contract.
+This model-failure classification currently covers inspector requests. Navigator generation, scroll-direction classification and slow-path dry-run classification remain issue #91 work. Cancellation propagates rather than being converted into a completed run failure. [Dry run](dry-run.md) has a separate report contract.
 
 ## Ownership and coverage
 

@@ -2,7 +2,9 @@ package me.chrisbanes.verity.agent
 
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.result.ArtifactError
+import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
+import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 
 data class SegmentResult(
@@ -16,6 +18,7 @@ data class SegmentResult(
   val generatedFlows: List<String> = emptyList(),
   val evidence: List<EvidenceArtifact> = emptyList(),
   val error: ArtifactError? = null,
+  val loop: LoopArtifact? = null,
 )
 
 data class JourneyResult(
@@ -31,4 +34,7 @@ data class LoopResult(
   val iterations: Int,
   val reasoning: String = "",
   val generatedFlows: List<String> = emptyList(),
+  val tier: ConditionTier? = null,
+  val conditionReasoning: String = "",
+  val evidence: List<EvidenceArtifact> = emptyList(),
 )

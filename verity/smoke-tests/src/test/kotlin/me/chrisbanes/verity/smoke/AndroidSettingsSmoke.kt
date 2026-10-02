@@ -69,10 +69,10 @@ class AndroidSettingsSmoke {
     },
     inspectorFactory = {
       InspectorAgent(
-        treeAgentFactory = {
-          FakeTextAgent { error("VISIBLE mode: inspector should not be called") }
+        evaluateTreeContent = { _, _, _ ->
+          error("VISIBLE mode: inspector should not be called")
         },
-        evaluateVisualContent = { _, _, _ ->
+        evaluateVisualContent = { _, _, _, _ ->
           error("inspector visual should not be called")
         },
       )

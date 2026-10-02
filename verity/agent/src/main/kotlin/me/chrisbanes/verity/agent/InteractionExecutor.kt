@@ -37,7 +37,8 @@ class InteractionExecutor(
   }
 
   private suspend fun executeCommand(command: String) {
-    session.executeFlow("appId: $appId\n---\n$command")
+    val result = session.executeFlow("appId: $appId\n---\n$command")
+    if (!result.success) throw InteractionExecutionFailure(result)
   }
 
   companion object {

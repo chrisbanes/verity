@@ -7,6 +7,7 @@ import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 
 class InspectorAgentTest {
@@ -46,23 +47,26 @@ class InspectorAgentTest {
   }
 
   @Test
-  fun `parse failure returns failed verdict`() {
-    val verdict = InspectorAgent.parseVerdict("garbage response")
-    assertThat(verdict.passed).isFalse()
-    assertThat(verdict.reasoning).contains("parse error")
+  fun `invalid replies fail instead of returning a negative verdict`() {
+    for (reply in listOf(
+      "garbage response", "", "  ", "{}", "[]", "true", "null", "{passed:true,reasoning:ok}",
+      """{"passed":"true","reasoning":"ok"}""", """{"passed":null,"reasoning":"ok"}""",
+      """{"passed":true,"reasoning":5}""", """{"passed":true,"reasoning":null}""",
+      """{"passed":true}""", """{"reasoning":"ok"}""",
+    )) {
+      assertFailsWith<ModelFailureException> { InspectorAgent.parseVerdict(reply) }
+    }
   }
 
   @Test
   fun `evaluateTree invokes text executor and parses verdict`() = runTest {
     var capturedMessage = ""
     val agent = InspectorAgent(
-      treeAgentFactory = {
-        FakeTextAgent { userMessage ->
-          capturedMessage = userMessage
-          """{"passed": true, "reasoning": "Tree matched"}"""
-        }
+      evaluateTreeContent = { _, userMessage, _ ->
+        capturedMessage = userMessage
+        inspectionReply("""{"passed": true, "reasoning": "Tree matched"}""")
       },
-      evaluateVisualContent = { _, _, _ -> error("unused") },
+      evaluateVisualContent = { _, _, _, _ -> error("unused") },
     )
 
     val verdict = agent.evaluateTree("hierarchy text", "Home is visible")
@@ -77,11 +81,11 @@ class InspectorAgentTest {
   fun `evaluateVisual invokes vision executor with screenshot path and parses verdict`() = runTest {
     var capturedPath: Path? = null
     val agent = InspectorAgent(
-      treeAgentFactory = { FakeTextAgent { error("unused") } },
-      evaluateVisualContent = { _, userMessage, screenshotPath ->
+      evaluateTreeContent = { _, _, _ -> error("unused") },
+      evaluateVisualContent = { _, userMessage, screenshotPath, _ ->
         capturedPath = screenshotPath
         assertThat(userMessage).contains("Hero image renders")
-        """{"passed": false, "reasoning": "Image mismatch"}"""
+        inspectionReply("""{"passed": false, "reasoning": "Image mismatch"}""")
       },
     )
 
@@ -90,5 +94,87 @@ class InspectorAgentTest {
     assertThat(capturedPath).isEqualTo(Path.of("/tmp/sample.png"))
     assertThat(verdict.passed).isFalse()
     assertThat(verdict.reasoning).contains("Image mismatch")
+  }
+
+  @Test
+  fun `truncation fails before otherwise valid verdict decoding`() = runTest {
+    for (reason in listOf("length", "MAX_TOKENS", "Incomplete")) {
+      val inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":true,"reasoning":"ok"}""", reason) },
+        evaluateVisualContent = { _, _, _, _ -> inspectionReply("""{"passed":true,"reasoning":"ok"}""", reason) },
+      )
+      assertThat(assertFailsWith<ModelFailureException> { inspector.evaluateTree("tree", "Home") }.failure).isEqualTo(ModelFailureKind.TRUNCATED)
+      assertThat(assertFailsWith<ModelFailureException> { inspector.evaluateVisual(Path.of("current.png"), "Home") }.failure).isEqualTo(ModelFailureKind.TRUNCATED)
+    }
+  }
+
+  @Test
+  fun `both inspector requests own a timeout while caller cancellation propagates`() = runTest {
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> kotlinx.coroutines.awaitCancellation() },
+      evaluateVisualContent = { _, _, _, _ -> kotlinx.coroutines.awaitCancellation() },
+    )
+    assertThat(assertFailsWith<ModelFailureException> { inspector.evaluateTree("tree", "Home") }.failure).isEqualTo(ModelFailureKind.TIMEOUT)
+    assertThat(assertFailsWith<ModelFailureException> { inspector.evaluateVisual(Path.of("current.png"), "Home") }.failure).isEqualTo(ModelFailureKind.TIMEOUT)
+    assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+      kotlinx.coroutines.withTimeout(100) { inspector.evaluateTree("tree", "Home") }
+    }
+    assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+      kotlinx.coroutines.withTimeout(100) { inspector.evaluateVisual(Path.of("current.png"), "Home") }
+    }
+    val cancellation = kotlin.coroutines.cancellation.CancellationException("caller")
+    val cancelled = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> throw cancellation },
+      evaluateVisualContent = { _, _, _, _ -> throw cancellation },
+    )
+    assertThat(assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { cancelled.evaluateTree("tree", "Home") }.message).isEqualTo("caller")
+    assertThat(assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { cancelled.evaluateVisual(Path.of("current.png"), "Home") }.message).isEqualTo("caller")
+  }
+
+  @Test
+  fun `request failures expose only fixed stage diagnostics without raw causes`() = runTest {
+    val raw = "sk-secret Bearer abc.def.ghi HTTP_BODY_SENTINEL HEADER_SENTINEL"
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> error(raw) },
+      evaluateVisualContent = { _, _, _, _ -> error(raw) },
+    )
+    val tree = assertFailsWith<ModelFailureException> { inspector.evaluateTree("tree", "Home") }
+    val visual = assertFailsWith<ModelFailureException> { inspector.evaluateVisual(Path.of("current.png"), "Home") }
+    assertThat(tree.message).isEqualTo("Inspector tree request failed")
+    assertThat(visual.message).isEqualTo("Inspector visual request failed")
+    assertThat(tree.cause).isEqualTo(null)
+    assertThat(visual.cause).isEqualTo(null)
+  }
+
+  @Test
+  fun `reference context is labelled separately from current state`() = runTest {
+    val context = InspectionContext("earlier screen", listOf(Path.of("earlier.png")))
+    var treeMessage = ""
+    var visualMessage = ""
+    var references = emptyList<Path>()
+    var current: Path? = null
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, message, images ->
+        treeMessage = message
+        references = images
+        inspectionReply("""{"passed":true,"reasoning":"","extra":1}""", "unknown")
+      },
+      evaluateVisualContent = { _, message, path, images ->
+        visualMessage = message
+        current = path
+        references = images
+        inspectionReply("""{"passed":false,"reasoning":""}""")
+      },
+    )
+    assertThat(inspector.evaluateTree("current tree", "Home", context).passed).isTrue()
+    assertThat(treeMessage).contains("Reference context")
+    assertThat(treeMessage).contains("earlier screen")
+    assertThat(treeMessage).contains("current tree")
+    assertThat(references).isEqualTo(listOf(Path.of("earlier.png")))
+    assertThat(inspector.evaluateVisual(Path.of("current.png"), "Home", context).passed).isFalse()
+    assertThat(current).isEqualTo(Path.of("current.png"))
+    assertThat(visualMessage).contains("Current screenshot")
+    assertThat(visualMessage).contains("Reference screenshot 1")
+    assertThat(visualMessage).contains("not proof of the current condition")
   }
 }

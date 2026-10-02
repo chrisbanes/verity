@@ -296,6 +296,44 @@ class DryRunPlannerTest {
     )
   }
 
+  @Test
+  fun `complete mapped loop body previews every interaction in order without a navigator`() = runTest {
+    val planner = DryRunPlanner(navigatorFactory = { error("must not create navigator") })
+    val journey = Journey(
+      "Body preview",
+      "example.app",
+      Platform.ANDROID_TV,
+      listOf(JourneyStep.Loop("Press D-pad down; press D-pad right", "visually Settings", 3)),
+    )
+    val report = planner.plan(resolvedJourney(journey))
+    assertThat(report.segments.single().loop?.interactions).isEqualTo(listOf("KeyPress(DPAD_DOWN)", "KeyPress(DPAD_RIGHT)"))
+    val rendered = DryRunRenderer.renderJourney(report)
+    assertThat(rendered).contains("Loop: Press D-pad down; press D-pad right until visually Settings, max 3")
+    assertThat(rendered).contains("Interactions:\n- KeyPress(DPAD_DOWN)\n- KeyPress(DPAD_RIGHT)")
+  }
+
+  @Test
+  fun `mixed loop body generates one complete body preserving the mapped prefix`() = runTest {
+    val generated = mutableListOf<List<String>>()
+    val yaml = "appId: example.app\n---\n- pressKey: Remote Dpad Down\n- tapOn: Settings"
+    val planner = DryRunPlanner(navigatorFactory = {
+      DryRunNavigator { actions, _, _, _ ->
+        generated += actions
+        yaml
+      }
+    })
+    val journey = Journey(
+      "Mixed preview",
+      "example.app",
+      Platform.ANDROID_TV,
+      listOf(JourneyStep.Loop("Press D-pad down; navigate to settings page", "Settings has focus", 3)),
+    )
+    val report = planner.plan(resolvedJourney(journey))
+    assertThat(generated).isEqualTo(listOf(listOf("Press D-pad down", "navigate to settings page")))
+    assertThat(report.segments.single().loop?.kind).isEqualTo(DryRunExecutionKind.SLOW_PATH)
+    assertThat(DryRunRenderer.renderJourney(report)).contains(yaml)
+  }
+
   private fun resolvedJourney(journey: Journey): ResolvedJourney = ResolvedJourney(
     file = java.io.File("${journey.name}.journey.yaml"),
     journey = journey,

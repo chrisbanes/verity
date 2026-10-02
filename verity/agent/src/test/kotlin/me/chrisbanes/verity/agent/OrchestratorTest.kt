@@ -88,8 +88,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { """{"passed": false, "reasoning": "Tree mismatch"}""" } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": false, "reasoning": "Tree mismatch"}""") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -125,7 +125,7 @@ class OrchestratorTest {
           }
         }
       },
-      inspectorFactory = { InspectorAgent(treeAgentFactory = { FakeTextAgent { error("unused") } }, evaluateVisualContent = { _, _, _ -> error("unused") }) },
+      inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
     )
 
     val journey = Journey(
@@ -161,8 +161,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
       artifactRecorder = recorder,
@@ -192,7 +192,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
-      inspectorFactory = { InspectorAgent(treeAgentFactory = { FakeTextAgent { error("unused") } }, evaluateVisualContent = { _, _, _ -> error("unused") }) },
+      inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
     )
 
     val journey = Journey(
@@ -219,7 +219,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
-      inspectorFactory = { InspectorAgent(treeAgentFactory = { FakeTextAgent { error("unused") } }, evaluateVisualContent = { _, _, _ -> error("unused") }) },
+      inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
     )
 
     val journey = Journey(
@@ -249,8 +249,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { """{"passed": true, "reasoning": "Tree matched"}""" } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Tree matched"}""") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
       artifactRecorder = recorder,
@@ -282,8 +282,8 @@ class OrchestratorTest {
         navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
         inspectorFactory = {
           InspectorAgent(
-            treeAgentFactory = { FakeTextAgent { error("unused") } },
-            evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+            evaluateTreeContent = { _, _, _ -> error("unused") },
+            evaluateVisualContent = { _, _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Looks right"}""") },
           )
         },
         artifactRecorder = recorder,
@@ -334,8 +334,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -363,8 +363,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -402,8 +402,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
       artifactRecorder = recorder,
@@ -435,8 +435,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { generatedYaml } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
       artifactRecorder = ThrowingArtifactRecorder(),
@@ -464,8 +464,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { """{"passed": true, "reasoning": "Tree matched"}""" } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Tree matched"}""") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
       artifactRecorder = ThrowingArtifactRecorder(),
@@ -493,8 +493,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> """{"passed": true, "reasoning": "Looks right"}""" },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Looks right"}""") },
         )
       },
       artifactRecorder = ThrowingArtifactRecorder(),
@@ -530,10 +530,10 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, screenshotPath ->
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, screenshotPath, _ ->
             assertThat(screenshotPath).isNotEqualTo(artifactPath)
-            """{"passed": true, "reasoning": "Looks right"}"""
+            inspectionReply("""{"passed": true, "reasoning": "Looks right"}""")
           },
         )
       },
@@ -571,8 +571,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("visual evaluator should not run") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("visual evaluator should not run") },
         )
       },
       artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
@@ -601,8 +601,8 @@ class OrchestratorTest {
       navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, screenshotPath ->
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, screenshotPath, _ ->
             evaluatedPaths.add(screenshotPath)
             error("visual evaluator failed")
           },
@@ -611,7 +611,7 @@ class OrchestratorTest {
       artifactRecorder = StaticScreenshotArtifactRecorder(artifactPath),
     )
 
-    assertFailsWith<IllegalStateException> {
+    assertFailsWith<ModelFailureException> {
       orchestrator.run(
         Journey(
           name = "visual-evaluator-failure",
@@ -640,8 +640,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -669,8 +669,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -699,8 +699,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -727,8 +727,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -758,8 +758,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -801,8 +801,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -835,8 +835,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -863,8 +863,8 @@ class OrchestratorTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
@@ -879,6 +879,212 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: UP"))
+  }
+
+  @Test
+  fun `loop checks immediately and only after complete ordered bodies including final body`() = runTest {
+    val events = mutableListOf<String>()
+    val session = LoopSession(events, Platform.ANDROID_TV)
+    var checks = 0
+    val orchestrator = loopOrchestrator(
+      session,
+      inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ ->
+          events += "check"
+          checks++
+          inspectionReply("""{"passed":${checks == 2},"reasoning":"condition $checks"}""")
+        },
+        evaluateVisualContent = { _, _, _, _ -> error("unused") },
+      ),
+    )
+    val result = orchestrator.run(loopJourney("Press D-pad down; press D-pad right", 1, Platform.ANDROID_TV))
+    val segment = result.segments.single()
+    assertThat(result.passed).isTrue()
+    assertThat(events).containsExactly("check", "Remote Dpad Down", "Remote Dpad Right", "check")
+    assertThat(segment.actions).containsExactly("Press D-pad down", "press D-pad right")
+    assertThat(segment.loop?.iterations).isEqualTo(1)
+    assertThat(segment.loop?.tier).isEqualTo(me.chrisbanes.verity.core.result.ConditionTier.TREE)
+    assertThat(segment.loop?.reasoning).isEqualTo("condition 2")
+  }
+
+  @Test
+  fun `zero permitted bodies still check once and retain positive or negative condition metadata`() = runTest {
+    for (passed in listOf(true, false)) {
+      val events = mutableListOf<String>()
+      val session = LoopSession(events, Platform.ANDROID_TV)
+      val inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ ->
+          events += "check"
+          inspectionReply("""{"passed":$passed,"reasoning":"immediate"}""")
+        },
+        evaluateVisualContent = { _, _, _, _ -> error("unused") },
+      )
+      val result = loopOrchestrator(session, inspector).run(loopJourney("Press down", 0, Platform.ANDROID_TV))
+      assertThat(events).containsExactly("check")
+      assertThat(result.passed).isEqualTo(passed)
+      assertThat(result.segments.single().loop?.iterations).isEqualTo(0)
+      assertThat(result.segments.single().loop?.reasoning).isEqualTo("immediate")
+    }
+  }
+
+  @Test
+  fun `mixed loop body generates the complete ordered body once without a mapped prefix`() = runTest {
+    val events = mutableListOf<String>()
+    val session = LoopSession(events, Platform.ANDROID_TV)
+    val messages = mutableListOf<String>()
+    var checks = 0
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ ->
+        checks++
+        inspectionReply("""{"passed":${checks == 2},"reasoning":"ready"}""")
+      },
+      evaluateVisualContent = { _, _, _, _ -> error("unused") },
+    )
+    val navigator = NavigatorAgent("unused") {
+      FakeTextAgent { message ->
+        messages += message
+        flow("- swipe")
+      }
+    }
+    val recorder = RecordingArtifactRecorder()
+    val result = loopOrchestrator(session, inspector, navigator, recorder).run(loopJourney("Press D-pad down; navigate to settings page", 1, Platform.ANDROID_TV))
+    assertThat(messages).containsExactly("App ID: $APP_ID\n\nGenerate a Maestro YAML flow for these actions:\n1. Press D-pad down\n2. navigate to settings page")
+    assertThat(events).containsExactly("flow")
+    assertThat(result.segments.single().loop?.iterations).isEqualTo(1)
+    assertThat(result.segments.single().generatedFlows).containsExactly("flows/segment-000-loop-000.yaml")
+  }
+
+  @Test
+  fun `failed first or second mapped body command stops without count or another condition check`() = runTest {
+    for (failedCommand in listOf(1, 2)) {
+      val events = mutableListOf<String>()
+      val session = LoopSession(events, Platform.ANDROID_MOBILE, failAt = failedCommand)
+      val inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ ->
+          events += "check"
+          inspectionReply("""{"passed":false,"reasoning":"previous condition"}""")
+        },
+        evaluateVisualContent = { _, _, _, _ -> error("unused") },
+      )
+      val result = loopOrchestrator(session, inspector).run(loopJourney("Scroll down; swipe left; scroll up", 3, Platform.ANDROID_MOBILE))
+      val segment = result.segments.single()
+      assertThat(events).isEqualTo(listOf("check") + List(failedCommand) { "flow" })
+      assertThat(result.passed).isFalse()
+      assertThat(segment.loop?.iterations).isEqualTo(0)
+      assertThat(segment.loop?.reasoning).isEqualTo("previous condition")
+      assertThat(segment.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+      assertThat(segment.reasoning).isEqualTo("Flow execution failed: command failed")
+    }
+  }
+
+  @Test
+  fun `max exhaustion counts complete bodies and retains final condition reasoning and evidence`() = runTest {
+    val events = mutableListOf<String>()
+    val session = LoopSession(events, Platform.ANDROID_TV)
+    var checks = 0
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ ->
+        checks++
+        events += "check"
+        inspectionReply("""{"passed":false,"reasoning":"negative $checks"}""")
+      },
+      evaluateVisualContent = { _, _, _, _ -> error("unused") },
+    )
+    val result = loopOrchestrator(session, inspector, recorder = RecordingArtifactRecorder()).run(loopJourney("Press D-pad down", 2, Platform.ANDROID_TV))
+    val segment = result.segments.single()
+    assertThat(events).containsExactly("check", "Remote Dpad Down", "check", "Remote Dpad Down", "check")
+    assertThat(segment.loop?.iterations).isEqualTo(2)
+    assertThat(segment.loop?.reasoning).isEqualTo("negative 3")
+    assertThat(segment.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+    assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.HIERARCHY)
+  }
+
+  @Test
+  fun `failed automatic scroll interrupts loop without tapping or rechecking`() = runTest {
+    val events = mutableListOf<String>()
+    val session = LoopSession(events, Platform.ANDROID_MOBILE, failAt = 1)
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ ->
+        events += "check"
+        inspectionReply("""{"passed":false,"reasoning":"previous"}""")
+      },
+      evaluateVisualContent = { _, _, _, _ -> error("unused") },
+    )
+    val navigator = NavigatorAgent("unused") { FakeTextAgent { "DOWN" } }
+    val result = loopOrchestrator(session, inspector, navigator).run(loopJourney("Tap Settings; swipe left", 2, Platform.ANDROID_MOBILE))
+    assertThat(events).containsExactly("check", "flow")
+    assertThat(result.segments.single().loop?.iterations).isEqualTo(0)
+    assertThat(result.segments.single().loop?.reasoning).isEqualTo("previous")
+    assertThat(result.segments.single().reasoning).isEqualTo("Flow execution failed: command failed")
+  }
+
+  @Test
+  fun `cancellation during body and model failure during check stop remaining work immediately`() = runTest {
+    for (cancelBody in listOf(true, false)) {
+      val events = mutableListOf<String>()
+      val session = LoopSession(events, Platform.ANDROID_TV, onPress = {
+        if (cancelBody) throw kotlin.coroutines.cancellation.CancellationException("body cancelled")
+      })
+      var checks = 0
+      val inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ ->
+          events += "check"
+          checks++
+          if (checks == 2) error("request failure")
+          inspectionReply("""{"passed":false,"reasoning":"previous"}""")
+        },
+        evaluateVisualContent = { _, _, _, _ -> error("unused") },
+      )
+      val journey = loopJourney("Press D-pad down; press D-pad right", 2, Platform.ANDROID_TV).copy(
+        steps = listOf(JourneyStep.Loop("Press D-pad down; press D-pad right", "page is ready", 2), JourneyStep.Action("Press back")),
+      )
+      if (cancelBody) {
+        assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { loopOrchestrator(session, inspector).run(journey) }
+        assertThat(events).containsExactly("check", "Remote Dpad Down")
+      } else {
+        assertFailsWith<ModelFailureException> { loopOrchestrator(session, inspector).run(journey) }
+        assertThat(events).containsExactly("check", "Remote Dpad Down", "Remote Dpad Right", "check")
+      }
+    }
+  }
+
+  private fun loopJourney(body: String, max: Int, platform: Platform) = Journey(
+    name = "loop-contract",
+    app = APP_ID,
+    platform = platform,
+    steps = listOf(JourneyStep.Loop(body, "page is ready", max)),
+  )
+
+  private fun loopOrchestrator(
+    session: DeviceSession,
+    inspector: InspectorAgent,
+    navigator: NavigatorAgent = NavigatorAgent("unused") { FakeTextAgent { error("unexpected navigator") } },
+    recorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
+  ) = Orchestrator(session, { navigator }, { inspector }, artifactRecorder = recorder)
+
+  private class LoopSession(
+    val events: MutableList<String>,
+    override val platform: Platform,
+    val failAt: Int? = null,
+    val onPress: suspend () -> Unit = {},
+  ) : DeviceSession {
+    var commands = 0
+    override suspend fun executeFlow(yaml: String): FlowResult {
+      if (yaml == LAUNCH_FLOW) return FlowResult(true)
+      commands++
+      events += "flow"
+      return FlowResult(commands != failAt, output = "command failed")
+    }
+    override suspend fun pressKey(keyName: String) {
+      events += keyName
+      onPress()
+    }
+    override suspend fun captureHierarchyTree() = HierarchyNode(attributes = mapOf("text" to "Home"))
+    override suspend fun containsText(text: String, ignoreCase: Boolean) = false
+    override suspend fun captureScreenshot(output: Path) = Unit
+    override suspend fun shell(command: String) = ""
+    override suspend fun waitForAnimationToEnd() = Unit
+    override fun close() = Unit
   }
 
   private class FakeDeviceSession(
