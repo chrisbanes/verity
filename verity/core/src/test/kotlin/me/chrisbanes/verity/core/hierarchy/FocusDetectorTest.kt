@@ -8,6 +8,33 @@ import kotlin.test.Test
 class FocusDetectorTest {
 
   @Test
+  fun `focused predicate uses only the focused state`() {
+    assertThat(FocusDetector.isFocused(HierarchyNode(states = setOf("focused")))).isTrue()
+    assertThat(FocusDetector.isFocused(HierarchyNode(attributes = mapOf("focused" to "true")))).isFalse()
+    assertThat(FocusDetector.isFocused(HierarchyNode(states = setOf("selected")))).isFalse()
+    assertThat(FocusDetector.isFocused(HierarchyNode())).isFalse()
+  }
+
+  @Test
+  fun `tree focus preserves leaf container descendant ancestor and sibling relationships`() {
+    val text = HierarchyNode(attributes = mapOf("text" to "Home"))
+    val focused = HierarchyNode(states = setOf("focused"))
+    val fixtures = listOf(
+      text.copy(states = setOf("focused")),
+      focused.copy(children = listOf(text)),
+      focused.copy(children = listOf(HierarchyNode(children = listOf(text)))),
+      text.copy(children = listOf(focused)),
+      HierarchyNode(children = listOf(focused, text)),
+    )
+    for (tree in fixtures) {
+      assertThat(FocusDetector.containsFocused(tree, "home")).isTrue()
+    }
+    assertThat(FocusDetector.containsFocused(text, "Home")).isFalse()
+    assertThat(FocusDetector.containsFocused(text.copy(attributes = text.attributes + ("focused" to "true")), "Home")).isFalse()
+    assertThat(FocusDetector.containsFocused(HierarchyNode(children = listOf(HierarchyNode(children = listOf(focused)), HierarchyNode(children = listOf(text)))), "Home")).isFalse()
+  }
+
+  @Test
   fun `text on focused node`() {
     val hierarchy = """
             [text=Home] (focused)
