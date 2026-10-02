@@ -82,7 +82,7 @@ Use `docs/agents/run-github-project.md` for the verified Project binding and mer
 
 ### Issue tracker
 
-Issues and specs live in GitHub Issues for `chrisbanes/verity`. See `docs/agents/issue-tracker.md`.
+Issues and proposed specs live in GitHub Issues for `chrisbanes/verity`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
