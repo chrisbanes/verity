@@ -62,6 +62,9 @@ class VerityMcpServer(
   private val defaultPlatform: Platform? = null,
   private val defaultDeviceId: String? = null,
   private val defaultDisableAnimations: Boolean = false,
+  private val hierarchyDiffRenderer: suspend (UUID, ResolvedHierarchySnapshotPair) -> String = { sessionId, pair ->
+    HierarchyDiff.render(sessionId, pair)
+  },
 ) {
 
   fun create(): Server {
@@ -82,6 +85,7 @@ class VerityMcpServer(
     registerPressKey(server)
     registerCaptureScreenshot(server)
     registerCaptureHierarchy(server)
+    registerDiffHierarchy(server)
     registerCheckVisible(server)
     registerCheckFocused(server)
     registerRunLoop(server)
@@ -437,6 +441,124 @@ class VerityMcpServer(
         val snapshotId = snapshotStore.add(sessionId, tree)
         val rendered = HierarchyRenderer.render(tree, filter)
         success("snapshot_id: $snapshotId\n\n$rendered")
+      }
+    }
+  }
+
+  private class InvalidDiffArgument(val parameter: String) : IllegalArgumentException("Parameter $parameter must be a canonical UUID string.")
+
+  private fun parseDiffId(args: JsonObject?, parameter: String, required: Boolean = false): UUID? {
+    val value = args?.get(parameter) ?: if (required) throw InvalidDiffArgument(parameter) else return null
+    val primitive = value as? JsonPrimitive ?: throw InvalidDiffArgument(parameter)
+    if (!primitive.isString) throw InvalidDiffArgument(parameter)
+    val id = try {
+      UUID.fromString(primitive.content)
+    } catch (_: IllegalArgumentException) {
+      throw InvalidDiffArgument(parameter)
+    }
+    if (!id.toString().equals(primitive.content, ignoreCase = true)) throw InvalidDiffArgument(parameter)
+    return id
+  }
+
+  private fun unavailableDiffSession(sessionId: UUID): CallToolResult = diffError(
+    code = "session_unavailable",
+    message = "Session $sessionId is unavailable or closed.",
+    remediation = "Open a session and capture hierarchies before diffing.",
+    sessionId = sessionId,
+  )
+
+  private fun diffError(
+    code: String,
+    message: String,
+    remediation: String,
+    sessionId: UUID? = null,
+    parameter: String? = null,
+    snapshotId: UUID? = null,
+    requiredCaptures: Int? = null,
+    availableCaptures: Int? = null,
+  ): CallToolResult = error(
+    buildJsonObject {
+      putJsonObject("error") {
+        put("code", code)
+        put("message", message)
+        put("remediation", remediation)
+        sessionId?.let { put("session_id", it.toString()) }
+        parameter?.let { put("parameter", it) }
+        snapshotId?.let { put("snapshot_id", it.toString()) }
+        requiredCaptures?.let { put("required_captures", it) }
+        availableCaptures?.let { put("available_captures", it) }
+      }
+    }.toString(),
+  )
+
+  private fun registerDiffHierarchy(server: Server) {
+    server.addSafeTool(
+      name = "diff_hierarchy",
+      description = "Compare two captured full hierarchy trees by child-index path without capturing the device",
+      inputSchema = ToolSchema(
+        properties = buildJsonObject {
+          for ((name, description) in listOf(
+            "session_id" to "Session ID returned by open_session",
+            "before_snapshot_id" to "Snapshot from this session; defaults to its previous capture",
+            "after_snapshot_id" to "Snapshot from this session; defaults to its latest capture",
+          )) {
+            putJsonObject(name) {
+              put("type", "string")
+              put("description", description)
+            }
+          }
+        },
+      ),
+      required = listOf("session_id"),
+    ) { args ->
+      val sessionId: UUID
+      val beforeId: UUID?
+      val afterId: UUID?
+      try {
+        sessionId = parseDiffId(args, "session_id", required = true)!!
+        beforeId = parseDiffId(args, "before_snapshot_id")
+        afterId = parseDiffId(args, "after_snapshot_id")
+      } catch (e: InvalidDiffArgument) {
+        return@addSafeTool diffError(
+          code = "invalid_argument",
+          message = e.message!!,
+          remediation = "Supply canonical UUID strings. Omit optional snapshot IDs to use capture defaults.",
+          parameter = e.parameter,
+        )
+      }
+      var callbackEntered = false
+      try {
+        sessionManager.withSession(sessionId) {
+          callbackEntered = true
+          if (!sessionManager.isOpen(sessionId)) return@withSession unavailableDiffSession(sessionId)
+          when (val pair = snapshotStore.resolvePair(sessionId, beforeId, afterId)) {
+            is ResolvedHierarchySnapshotPair -> success(hierarchyDiffRenderer(sessionId, pair))
+
+            is UnavailableHierarchySnapshot -> diffError(
+              code = "snapshot_unavailable",
+              message = "Snapshot ${pair.snapshotId} is missing, evicted, or belongs to another session.",
+              remediation = "Capture again or use a snapshot ID from this session.",
+              sessionId = pair.sessionId,
+              parameter = pair.parameter,
+              snapshotId = pair.snapshotId,
+            )
+
+            is InsufficientHierarchyCaptures -> diffError(
+              code = "insufficient_captures",
+              message = "Resolving ${pair.parameter} requires ${pair.requiredCaptures} captures; this session has ${pair.availableCaptures}.",
+              remediation = "Capture another hierarchy before using this default.",
+              sessionId = pair.sessionId,
+              parameter = pair.parameter,
+              requiredCaptures = pair.requiredCaptures,
+              availableCaptures = pair.availableCaptures,
+            )
+          }
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: IllegalArgumentException) {
+        if (callbackEntered) throw e
+        unavailableDiffSession(sessionId)
       }
     }
   }
