@@ -14,6 +14,13 @@ tasks.shadowJar {
   archiveClassifier.set("")
   isZip64 = true
   mergeServiceFiles()
+  // Let the transformers see every service descriptor and Kotlin module metadata file.
+  filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module")) {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+  }
+  failOnDuplicateEntries = true
+  // The fat JAR exceeds the remote cache upload limit; keep caching compilation and tests.
+  outputs.doNotCacheIf("The fat JAR exceeds the remote build cache upload limit") { true }
   // Exclude POM-only artifacts that have no JAR (Shadow cannot expand them as ZIPs)
   dependencies {
     exclude(dependency("org.graalvm.js:js-community"))

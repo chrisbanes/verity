@@ -615,7 +615,7 @@ class VerityMcpServer(
     val transport = StdioServerTransport(
       System.`in`.asSource().buffered(),
       System.out.asSink().buffered(),
-    )
+    ) {}
     val session = server.createSession(transport)
     val done = Job()
     session.onClose { done.complete() }
