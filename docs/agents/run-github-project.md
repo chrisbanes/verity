@@ -51,6 +51,17 @@
   2. `Medium`: `1625741a`
   3. `Low`: `ee7fe4f2`
 
+The Project `Priority` field is the single source of truth for issue priority.
+Do not create, read, or apply priority labels as a fallback. Add an issue to this
+Project before assigning its priority, and read the field when ordering work.
+An empty field means priority has not been assigned; do not assume `Medium`.
+
+- `High`: foundational or blocking work.
+- `Medium`: important follow-up or enabling workflow.
+- `Low`: later, experimental, or source-dependent work.
+
+Priority does not change queue authorization or triage readiness.
+
 ## Merge Policy
 
 - Method: `squash`
@@ -60,7 +71,7 @@
 - Done automation: `set-status`
 - Automation description: Enabled Project workflows `Item closed` (`120439262`, issues and pull requests) and `Pull request merged` (`120439263`) set Status to `Done`. Enabled `Auto-close issue` (`120439264`) closes issues when their Status becomes `Done`. Auto-archive is disabled; retain Done items in the Project.
 
-Repository validation requirements in `AGENTS.md` still apply, including `./gradlew check --no-scan`. Merge authority is invocation-scoped and must be granted separately.
+Follow the change-specific validation requirements in `AGENTS.md`. Merge authority is invocation-scoped and must be granted separately.
 
 ## Queue authority
 
