@@ -10,6 +10,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL || '' }}
+  ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_USERNAME || '' }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_PASSWORD || '' }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,6 +29,8 @@ jobs:
           java-version: 25.0.4+101.0.LTS
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-home-cache-excludes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
 
       - name: Build
         run: ./gradlew build
@@ -39,6 +47,8 @@ jobs:
           java-version: 25.0.4+101.0.LTS
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-home-cache-excludes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
 
       - name: Enable KVM
         run: |
@@ -67,6 +77,8 @@ jobs:
           java-version: 25.0.4+101.0.LTS
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-home-cache-excludes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
 
       - name: Launch iOS simulator
         uses: futureware-tech/simulator-action@v5

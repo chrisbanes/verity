@@ -1,4 +1,5 @@
 plugins {
+  id("verity.kotlin-jvm")
   application
   alias(libs.plugins.kotlin.serialization)
   alias(libs.plugins.shadow)

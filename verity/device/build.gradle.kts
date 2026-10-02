@@ -1,4 +1,5 @@
 plugins {
+  id("verity.kotlin-jvm")
   `java-test-fixtures`
 }
 
@@ -26,8 +27,7 @@ dependencies {
   testFixturesImplementation(project(":verity:core"))
 }
 
-val grpcVersion: String = rootProject.extensions
-  .getByType<VersionCatalogsExtension>()
+val grpcVersion = extensions.getByType<VersionCatalogsExtension>()
   .named("libs")
   .findVersion("grpc")
   .get()

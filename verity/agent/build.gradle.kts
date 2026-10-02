@@ -1,4 +1,5 @@
 plugins {
+  id("verity.kotlin-jvm")
   `java-test-fixtures`
 }
 
