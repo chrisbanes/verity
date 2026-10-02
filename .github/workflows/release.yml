@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write
 
+env:
+  ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
+  ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -21,6 +27,8 @@ jobs:
           java-version: '25.0.4+101.0.LTS'
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-home-cache-excludes: ${{ secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
 
       - name: Get version from tag
         id: version

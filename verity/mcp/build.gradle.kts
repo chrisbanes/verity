@@ -1,3 +1,7 @@
+plugins {
+  id("verity.kotlin-jvm")
+}
+
 dependencies {
   implementation(project(":verity:core"))
   implementation(project(":verity:device"))

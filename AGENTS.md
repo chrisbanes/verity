@@ -12,7 +12,7 @@ Tasks are only complete once `./gradlew check` is green.
 - Spotless runs on Kotlin, Kotlin Gradle scripts, and other source files
 - CI/CD will fail if code doesn't pass `spotlessCheck`
 - Always run `spotlessApply` before committing code
-- Spotless is configured at the root level and applies to all modules
+- Spotless is configured by the `verity.spotless` convention plugin and applies to all modules
 
 ## Testing
 
@@ -46,7 +46,7 @@ Tasks are only complete once `./gradlew check` is green.
   - `:verity:agent` - LLM agent orchestration
   - `:verity:mcp` - MCP server for IDE/tool integration
   - `:verity:cli` - CLI entry point
-- JVM 21 via toolchain, configured in `verity/build.gradle.kts`
+- JVM 21 via toolchain, configured in `build-logic/src/main/kotlin/verity.kotlin-jvm.gradle.kts`
 - Kotlin serialization for data models; Kaml for YAML parsing
 - **Dependency Injection / Inversion of Control**: Prefer Constructor Injection. For factories or static dependencies, use "Function Injection" by passing functions as constructor parameters with default values pointing to the real implementation (e.g., `private val sessionFactory: (...) -> DeviceSession = DeviceSessionFactory::connect`). This keeps production call sites clean while making it trivial to inject mock implementations during testing.
 
