@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.smoke
 
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -147,18 +148,27 @@ class DeviceLifecycle private constructor(
     }
 
     suspend fun discoverOrBootIos(): DeviceLifecycle = withContext(Dispatchers.IO) {
+      val model = System.getenv("VERITY_SMOKE_IOS_MODEL")
+      val runtime = System.getenv("VERITY_SMOKE_IOS_RUNTIME")
+      val requestedUdid = System.getProperty("verity.smoke.ios.udid")
+        ?: if (model != null || runtime != null) findFirstIosSimulator(model, runtime) else null
       val bootedUdids = discoverBootedIosSimulators()
+      val existingUdid = if (requestedUdid != null) {
+        requestedUdid.takeIf { it in bootedUdids }
+      } else {
+        bootedUdids.firstOrNull()
+      }
 
-      if (bootedUdids.isNotEmpty()) {
+      if (existingUdid != null) {
         return@withContext DeviceLifecycle(
           platform = Platform.IOS,
           bootedByUs = false,
           processToKill = null,
-          simulatorUdid = bootedUdids.first(),
+          simulatorUdid = existingUdid,
         )
       }
 
-      val udid = System.getProperty("verity.smoke.ios.udid") ?: findFirstIosSimulator()
+      val udid = requestedUdid ?: findFirstIosSimulator()
       val bootProcess = ProcessBuilder("xcrun", "simctl", "boot", udid)
         .redirectErrorStream(true)
         .start()
@@ -166,7 +176,7 @@ class DeviceLifecycle private constructor(
       check(bootProcess.waitFor() == 0) { "xcrun simctl boot $udid failed: $bootOutput" }
 
       try {
-        withTimeout(2.minutes) {
+        withTimeout(6.minutes) {
           waitForIosBoot(udid)
         }
       } catch (e: Exception) {
@@ -227,31 +237,53 @@ class DeviceLifecycle private constructor(
       }.distinct()
     }
 
-    private fun findFirstIosSimulator(): String {
+    private fun findFirstIosSimulator(model: String? = null, runtime: String? = null): String {
       val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "available", "-j")
         .redirectErrorStream(true)
         .start()
       val output = process.inputStream.bufferedReader().readText()
       check(process.waitFor() == 0) { "xcrun simctl list failed: $output" }
 
+      return selectIosSimulator(output, model, runtime)
+    }
+
+    internal fun selectIosSimulator(output: String, model: String? = null, runtime: String? = null): String {
       val root = Json.parseToJsonElement(output).jsonObject
       val devices = root["devices"]?.jsonObject ?: error("No simulators found")
       for (entry in devices.entries) {
-        val runtime = entry.key
-        if (!runtime.contains("iPhone") && !runtime.contains("iOS")) continue
+        val runtimePrefix = "com.apple.CoreSimulator.SimRuntime.iOS-"
+        if (!entry.key.startsWith(runtimePrefix)) continue
+        if (runtime != null) {
+          val version = entry.key.removePrefix(runtimePrefix)
+          val requestedVersion = runtime.replace('.', '-')
+          if (version != requestedVersion && !version.startsWith("$requestedVersion-")) continue
+        }
         for (device in entry.value.jsonArray) {
-          val udid = device.jsonObject["udid"]?.jsonPrimitive?.contentOrNull
+          val details = device.jsonObject
+          val name = details["name"]?.jsonPrimitive?.contentOrNull ?: continue
+          if (model != null && name != model) continue
+          if (model == null && !name.startsWith("iPhone")) continue
+          if (details["isAvailable"]?.jsonPrimitive?.contentOrNull == "false") continue
+          val udid = details["udid"]?.jsonPrimitive?.contentOrNull
           if (udid != null) return udid
         }
       }
-      error("No iPhone simulator found. Create one with xcrun simctl.")
+      error("No iPhone simulator found (model: $model, runtime: $runtime). Create one with xcrun simctl.")
     }
 
     private suspend fun waitForIosBoot(udid: String) {
-      while (true) {
-        val booted = discoverBootedIosSimulators()
-        if (udid in booted) break
-        delay(2.seconds)
+      // A simulator can report Booted before SpringBoard and its services are ready.
+      val process = ProcessBuilder("xcrun", "simctl", "bootstatus", udid, "-b")
+        .inheritIO()
+        .start()
+      try {
+        while (process.isAlive) delay(1.seconds)
+        check(process.exitValue() == 0) { "xcrun simctl bootstatus $udid failed" }
+      } finally {
+        if (process.isAlive) {
+          process.destroy()
+          if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly()
+        }
       }
     }
   }

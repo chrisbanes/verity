@@ -11,9 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL || '' }}
-  ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_USERNAME || '' }}
-  ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_PASSWORD || '' }}
+  ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
+  ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
+  ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
   ORG_GRADLE_PROJECT_remoteBuildCachePush: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
@@ -30,10 +30,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-home-cache-excludes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
+          gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Build
-        run: ./gradlew build
+        run: ./gradlew build --no-scan
 
   smoke-android:
     runs-on: ubuntu-latest
@@ -48,7 +48,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-home-cache-excludes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
+          gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Enable KVM
         run: |
@@ -63,7 +63,7 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android
+          script: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android --no-scan
 
   smoke-ios:
     runs-on: xcode-27
@@ -78,18 +78,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-home-cache-excludes: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.GRADLE_REMOTE_CACHE_URL != '' && secrets.GRADLE_REMOTE_CACHE_USERNAME != '' && secrets.GRADLE_REMOTE_CACHE_PASSWORD != '' && 'caches/build-cache-1' || '' }}
-
-      - name: Launch iOS simulator
-        uses: futureware-tech/simulator-action@v5
-        with:
-          os: iOS
-          model: iPhone 17
-          os_version: ">=27.0 <28.0"
-          wait_for_boot: true
-          shutdown_after_job: true
+          gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: iOS smoke tests
         env:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-        run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios
+          VERITY_SMOKE_IOS_MODEL: iPhone 17
+          VERITY_SMOKE_IOS_RUNTIME: "27"
+        run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --no-scan
