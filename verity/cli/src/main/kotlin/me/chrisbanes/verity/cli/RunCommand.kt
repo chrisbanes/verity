@@ -22,6 +22,7 @@ import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
+import me.chrisbanes.verity.agent.redactModelDiagnostic
 import me.chrisbanes.verity.core.context.ContextBundle
 import me.chrisbanes.verity.core.context.ContextLoader
 import me.chrisbanes.verity.core.context.ContextStatus
@@ -206,14 +207,21 @@ class RunCommand(
     }
 
     if (dryRun) {
-      val dryRunReport = dryRunSuiteRunner?.invoke(journeys, resolved.outputPath)
-        ?: runDryRun(
-          parent = parent,
-          config = config,
-          resolved = resolved,
-          path = path,
-          journeys = journeys,
-        )
+      val dryRunReport = try {
+        dryRunSuiteRunner?.invoke(journeys, resolved.outputPath)
+          ?: runDryRun(parent, config, resolved, path, journeys)
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: ModelFailureException) {
+        throw CliktError(redactModelDiagnostic("Dry-run generation failed: ${error.message}"), statusCode = EXIT_MODEL)
+      } catch (error: MaestroFlowValidationInfrastructureException) {
+        throw CliktError(redactModelDiagnostic("Dry-run generation failed: ${error.message}"), statusCode = EXIT_SETUP)
+      } catch (error: CliktError) {
+        if (error.statusCode == EXIT_MODEL || error.statusCode == EXIT_SETUP) throw error
+        throw CliktError("Dry-run setup failed", statusCode = EXIT_SETUP)
+      } catch (_: Exception) {
+        throw CliktError("Dry-run setup failed", statusCode = EXIT_SETUP)
+      }
       echo(DryRunRenderer.renderSuite(dryRunReport))
       return@runBlocking
     }
@@ -327,7 +335,7 @@ class RunCommand(
         ContextLoader.loadProject(directory = contextDir, required = requireContext)
       }
     } catch (e: ContextValidationException) {
-      throw CliktError(e.message ?: "Project context validation failed")
+      throw CliktError(redactModelDiagnostic(e.message ?: "Project context validation failed"), statusCode = EXIT_SETUP)
     }
     projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
 
@@ -340,7 +348,13 @@ class RunCommand(
       },
     )
     val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
-    return DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
+    return try {
+      DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      throw CliktError("Dry-run report write failed", statusCode = EXIT_SETUP)
+    }
   }
 
   private suspend fun createDryRunNavigator(
@@ -366,7 +380,7 @@ class RunCommand(
       includeInspectorModelPreflight = false,
     )
     if (!preflight.report.passed) {
-      throw CliktError(preflight.report.renderPlainText())
+      throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
     }
 
     val provider = checkNotNull(preflight.provider)

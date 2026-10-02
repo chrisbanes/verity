@@ -3,6 +3,8 @@ package me.chrisbanes.verity.cli
 import com.github.ajalt.clikt.core.CliktError
 import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
+import me.chrisbanes.verity.agent.ModelFailureException
+import me.chrisbanes.verity.agent.redactModelDiagnostic
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
@@ -10,6 +12,7 @@ import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
 
 fun interface DryRunNavigator {
   suspend fun generate(
@@ -132,26 +135,33 @@ class DryRunPlanner(
     resolvedJourney: ResolvedJourney,
   ): String {
     val journey = resolvedJourney.journey
+    val activeNavigator = try {
+      navigator()
+    } catch (error: CancellationException) {
+      throw error
+    } catch (error: CliktError) {
+      if (error.statusCode == 3) throw error
+      throw generationError(resolvedJourney, segment, "Navigator setup failed", 3)
+    } catch (_: Exception) {
+      throw generationError(resolvedJourney, segment, "Navigator setup failed", 3)
+    }
     return try {
-      navigator().generate(instructions, journey.app, journey.platform, context)
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: CliktError) {
-      if (e.message.hasDryRunContext(resolvedJourney, segment)) {
-        throw e
-      }
-      throw generationError(resolvedJourney, segment, e.message)
-    } catch (e: Exception) {
-      throw generationError(resolvedJourney, segment, e.message)
+      activeNavigator.generate(instructions, journey.app, journey.platform, context)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (error: ModelFailureException) {
+      throw generationError(resolvedJourney, segment, error.message.orEmpty(), 5)
+    } catch (error: MaestroFlowValidationInfrastructureException) {
+      throw generationError(resolvedJourney, segment, error.message.orEmpty(), 3)
+    } catch (_: Exception) {
+      throw generationError(resolvedJourney, segment, "Preview generation setup failed", 3)
     }
   }
 
-  private fun generationError(resolvedJourney: ResolvedJourney, segment: JourneySegment, message: String?): CliktError = CliktError(
-    "Dry-run YAML generation failed for ${resolvedJourney.file.path} segment ${segment.index}: " +
-      (message ?: "unknown error"),
+  private fun generationError(resolvedJourney: ResolvedJourney, segment: JourneySegment, message: String, status: Int): CliktError = CliktError(
+    redactModelDiagnostic("Dry-run YAML generation failed for ${resolvedJourney.file.path} segment ${segment.index}: $message"),
+    statusCode = status,
   )
-
-  private fun String?.hasDryRunContext(resolvedJourney: ResolvedJourney, segment: JourneySegment): Boolean = this?.contains(resolvedJourney.file.path) == true && contains("segment ${segment.index}")
 
   private suspend fun navigator(): DryRunNavigator = navigator ?: navigatorFactory().also { navigator = it }
 
