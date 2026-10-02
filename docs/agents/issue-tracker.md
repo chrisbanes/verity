@@ -9,6 +9,7 @@ Issues and proposed specs for this repo live as GitHub issues in `chrisbanes/ver
 - **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
+- **Assign / read priority**: use the Verity Project's `Priority` field, not labels. See [the Project binding](run-github-project.md#priority) for the field, options, and priority meanings. Add the issue to the Project before assigning its priority.
 - **Close**: `gh issue close <number> --comment "..."`
 
 Confirm the repo using `git remote -v`; use `--repo chrisbanes/verity` when the working directory does not select it automatically.

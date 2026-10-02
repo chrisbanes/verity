@@ -3,7 +3,12 @@
 ## Build
 
 Use `./gradlew` for all Gradle commands.
-Tasks are only complete once `./gradlew check` is green.
+Source, test, dependency, and build configuration changes are only complete once
+`./gradlew check --no-scan` is green.
+
+Keep validation proportional to the change. Documentation-only changes need
+relevant content, link, and diff checks. GitHub issue, label, and Project changes
+need provider readback of the affected state. These changes do not require Gradle.
 
 ### Code Style (Spotless)
 
