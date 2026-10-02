@@ -66,8 +66,8 @@ Priority does not change queue authorization or triage readiness.
 
 - Method: `squash`
 - Issue closure: `closing-keyword`
-- Required reviews: `none` (no branch protection; repository ruleset `main` is disabled)
-- Required checks: `none` enforced by GitHub (no branch protection; repository ruleset `main` is disabled)
+- Required reviews: `none` (active repository ruleset `main` requires a pull request with zero approving reviews; no classic branch protection)
+- Required checks: `build`, `smoke-android`, and `smoke-ios` (active repository ruleset `main`; strict up-to-date checks disabled)
 - Done automation: `set-status`
 - Automation description: Enabled Project workflows `Item closed` (`120439262`, issues and pull requests) and `Pull request merged` (`120439263`) set Status to `Done`. Enabled `Auto-close issue` (`120439264`) closes issues when their Status becomes `Done`. Auto-archive is disabled; retain Done items in the Project.
 
