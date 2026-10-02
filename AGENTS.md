@@ -76,6 +76,10 @@ Tasks are only complete once `./gradlew check` is green.
 
 ## Agent skills
 
+### GitHub Project workflow
+
+Use `docs/agents/run-github-project.md` for the verified Project binding and merge policy. Current column membership supplies queue authorization; Backlog is human-only, and automatic work begins in Todo and later applicable columns.
+
 ### Issue tracker
 
 Issues and specs live in GitHub Issues for `chrisbanes/verity`. See `docs/agents/issue-tracker.md`.
