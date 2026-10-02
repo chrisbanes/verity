@@ -40,7 +40,7 @@ Build caching, configuration caching, and isolated projects are enabled in `grad
 
 The optional HTTP remote build cache follows Haze's setup. Set all three Gradle properties `remoteBuildCacheUrl`, `remoteBuildCacheUsername`, and `remoteBuildCachePassword` to enable it. Blank or missing values disable it. `remoteBuildCachePush` defaults to false. The local build cache remains enabled for local builds and for CI without a configured remote cache; CI disables the local build cache when the remote cache is enabled.
 
-CI and release workflows map the Actions secrets `GRADLE_REMOTE_CACHE_URL`, `GRADLE_REMOTE_CACHE_USERNAME`, and `GRADLE_REMOTE_CACHE_PASSWORD` to those properties. Only pushes to `main` enable remote cache writes; pull requests and tagged releases read from it. Fork pull requests without secrets use the local cache. The workflows work before the secrets are added.
+CI and release workflows map the Actions secrets `GRADLE_REMOTE_CACHE_URL`, `GRADLE_REMOTE_CACHE_USERNAME`, and `GRADLE_REMOTE_CACHE_PASSWORD` to those properties. Only pushes to `main` receive remote cache credentials and enable writes in CI. Pull requests use the local cache, including same-repository pull requests, so PR-controlled build scripts cannot access write credentials. Tagged releases can read from the remote cache. The workflows work before the secrets are added.
 
 To opt out locally, pass `--no-build-cache`, `--no-isolated-projects`, or `--no-configuration-cache` as appropriate. Disable isolated projects as well when disabling configuration caching.
 
