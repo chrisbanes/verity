@@ -81,4 +81,25 @@ class LoopStepInferrerTest {
     val result = LoopStepInferrer.infer("Go down until Footer")
     assertThat(result).isNotNull()
   }
+
+  @Test
+  fun `supported limits leave only the condition`() {
+    for (limit in listOf("up to 3 times", "max 3", "for up to 3", "3 iterations")) {
+      for (period in listOf("", ".")) {
+        val result = LoopStepInferrer.infer("Press down; press right until Settings $limit$period")!!
+        assertThat(result).isEqualTo(JourneyStep.Loop("Press down; press right", "Settings", 3))
+      }
+    }
+  }
+
+  @Test
+  fun `limits retain case quoting visual prefix and zero behavior`() {
+    assertThat(LoopStepInferrer.infer("PRESS down; tap Settings UNTIL visually 'Home' MAX 0."))
+      .isEqualTo(JourneyStep.Loop("PRESS down; tap Settings", "visually 'Home'", 0))
+    assertThat(LoopStepInferrer.infer("Press down until Home up to 1 time."))
+      .isEqualTo(JourneyStep.Loop("Press down", "Home", 1))
+    assertThat(LoopStepInferrer.infer("Press down until Home."))
+      .isEqualTo(JourneyStep.Loop("Press down", "Home", 20))
+    assertThat(LoopStepInferrer.infer("Press down until Home max 3 then wait")!!.until).isEqualTo("Home max 3 then wait")
+  }
 }

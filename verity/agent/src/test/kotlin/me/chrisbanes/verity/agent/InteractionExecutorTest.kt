@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.interaction.Direction
@@ -75,6 +76,17 @@ class InteractionExecutorTest {
     assertThat(session.waitCount).isEqualTo(2)
   }
 
+  @Test
+  fun `failed mapped flow throws typed result before animation wait`() = runTest {
+    val failure = FlowResult(success = false, output = "tap failed")
+    val session = RecordingDeviceSession().apply { result = failure }
+    val thrown = assertFailsWith<InteractionExecutionFailure> {
+      createExecutor(session).execute(Interaction.TapOnText("Settings"))
+    }
+    assertThat(thrown.flowResult).isEqualTo(failure)
+    assertThat(session.waitCount).isEqualTo(0)
+  }
+
   private companion object {
     const val APP_ID = "com.example.app"
     fun flow(command: String) = "appId: $APP_ID\n---\n$command"
@@ -85,10 +97,11 @@ class InteractionExecutorTest {
     val pressedKeys = mutableListOf<String>()
     val executedFlows = mutableListOf<String>()
     var waitCount = 0
+    var result = FlowResult(success = true)
 
     override suspend fun executeFlow(yaml: String): FlowResult {
       executedFlows += yaml
-      return FlowResult(success = true)
+      return result
     }
 
     override suspend fun pressKey(keyName: String) {

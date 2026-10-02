@@ -34,7 +34,12 @@ object DryRunRenderer {
         appendLine()
         appendLine("Loop: ${loop.action} until ${loop.until}, max ${loop.max}")
         appendLine("Kind: ${loop.kind}")
-        loop.interaction?.let { appendLine("Interaction: $it") }
+        if (loop.interactions.size == 1) {
+          appendLine("Interaction: ${loop.interactions.single()}")
+        } else if (loop.interactions.isNotEmpty()) {
+          appendLine("Interactions:")
+          loop.interactions.forEach { appendLine("- $it") }
+        }
         loop.yaml?.let {
           appendLine("Generated Loop YAML:")
           appendYaml(it)

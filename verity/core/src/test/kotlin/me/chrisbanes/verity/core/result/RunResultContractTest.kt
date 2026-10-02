@@ -195,4 +195,22 @@ class RunResultContractTest {
     assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"journey_failure\""))
       .isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
   }
+
+  @Test
+  fun `optional loop metadata round trips each stable tier and is absent on other segments`() {
+    for ((tier, wire) in listOf(ConditionTier.LITERAL to "literal", ConditionTier.FOCUS to "focus", ConditionTier.TREE to "tree", ConditionTier.VISUAL to "visual")) {
+      val segment = SegmentArtifactResult(0, false, SegmentExecutionMode.LOOP, loop = LoopArtifact("Home", 2, tier, "condition reasoning"))
+      val encoded = json.encodeToString(SegmentArtifactResult.serializer(), segment)
+      assertThat(encoded).contains("\"tier\":\"$wire\"")
+      assertThat(json.decodeFromString(SegmentArtifactResult.serializer(), encoded)).isEqualTo(segment)
+    }
+    val ordinary = json.encodeToString(SegmentArtifactResult.serializer(), SegmentArtifactResult(0, true, SegmentExecutionMode.FAST))
+    assertThat(ordinary.contains("\"loop\"")).isEqualTo(false)
+  }
+
+  @Test
+  fun `model failure has a stable distinct wire value`() {
+    assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.MODEL_FAILURE)).isEqualTo("\"model_failure\"")
+    assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"model_failure\"")).isEqualTo(ArtifactErrorKind.MODEL_FAILURE)
+  }
 }

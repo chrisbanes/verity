@@ -66,8 +66,8 @@ class RunCommandSmokeTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("Inspector tree agent should not be called for VISIBLE assertions") } },
-          evaluateVisualContent = { _, _, _ -> error("Inspector visual should not be called") },
+          evaluateTreeContent = { _, _, _ -> error("Inspector tree agent should not be called for VISIBLE assertions") },
+          evaluateVisualContent = { _, _, _, _ -> error("Inspector visual should not be called") },
         )
       },
     )
@@ -99,8 +99,8 @@ class RunCommandSmokeTest {
       },
       inspectorFactory = {
         InspectorAgent(
-          treeAgentFactory = { FakeTextAgent { error("unused") } },
-          evaluateVisualContent = { _, _, _ -> error("unused") },
+          evaluateTreeContent = { _, _, _ -> error("unused") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
         )
       },
     )
