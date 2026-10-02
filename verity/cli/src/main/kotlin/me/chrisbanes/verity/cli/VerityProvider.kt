@@ -123,7 +123,7 @@ sealed class VerityProvider {
       GoogleModels.Gemini2_5Flash,
       GoogleModels.Gemini2_5FlashLite,
       GoogleModels.Gemini3_Flash_Preview,
-      GoogleModels.Gemini3_Pro_Preview,
+      GoogleModels.Gemini3_1Pro_Preview,
     )
 
     override fun createClient(apiKey: String): GoogleLLMClient = GoogleLLMClient(apiKey)

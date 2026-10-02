@@ -236,6 +236,7 @@ class DeviceSessionProductionReadyTest {
     override fun hideKeyboard() = Unit
     override fun takeScreenshot(out: okio.Sink, compressed: Boolean) = Unit
     override fun startScreenRecording(out: okio.Sink): ScreenRecording = object : ScreenRecording {
+      override val startedAt: java.time.Instant = java.time.Instant.EPOCH
       override fun close() = Unit
     }
     override fun setLocation(latitude: Double, longitude: Double) = Unit

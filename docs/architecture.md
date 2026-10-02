@@ -271,6 +271,8 @@ Verity uses a tiered model strategy via Koog. While Claude models are the recomm
 
 Configured through Koog — can swap providers by updating the executor and model ID.
 
+The Google provider defaults to `gemini-2.5-flash-lite` for navigation and `gemini-2.5-pro` for inspection. `gemini-3.1-pro-preview` is available as an explicit model selection.
+
 ### NavigatorAgent
 
 Converts natural language actions to Maestro YAML. Receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
