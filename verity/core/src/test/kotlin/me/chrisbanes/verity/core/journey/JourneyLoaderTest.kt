@@ -11,6 +11,7 @@ import kotlin.test.assertFailsWith
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.parser.JourneyStepSerializer
 
 class JourneyLoaderTest {
   @Test
@@ -67,6 +68,26 @@ class JourneyLoaderTest {
       assertThat(files).isEmpty()
     } finally {
       tempDir.delete()
+    }
+  }
+
+  @Test
+  fun `loop syntax survives YAML loading and serialization`() {
+    for (limit in listOf("up to 3 times", "max 3", "for up to 3", "3 iterations")) {
+      val yaml = """
+        name: Loop syntax
+        app: example.app
+        platform: android-tv
+        steps:
+          - Press down; tap Settings until visually Home $limit.
+      """.trimIndent()
+      val journey = JourneyLoader.fromYaml(yaml)
+      val loop = journey.steps.single() as JourneyStep.Loop
+      assertThat(loop.actionInstructions).isEqualTo(listOf("Press down", "tap Settings"))
+      assertThat(loop.until).isEqualTo("visually Home")
+      assertThat(loop.max).isEqualTo(3)
+      val encoded = com.charleskorn.kaml.Yaml.default.encodeToString(JourneyStepSerializer, loop)
+      assertThat(com.charleskorn.kaml.Yaml.default.decodeFromString(JourneyStepSerializer, encoded)).isEqualTo(loop)
     }
   }
 }

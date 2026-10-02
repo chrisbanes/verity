@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.preflight.PreflightCodes
 import me.chrisbanes.verity.core.preflight.PreflightIssue
@@ -278,5 +279,35 @@ class VerityMcpServerTest {
     assertThat(capturedPlatform).isEqualTo(Platform.ANDROID_TV)
     assertThat(capturedDeviceId).isEqualTo("configured-device")
     assertThat(capturedDisableAnimations).isEqualTo(true)
+  }
+
+  @Test
+  fun `run_loop retains literal condition and raw key behavior alongside deterministic tools`() = runTest {
+    val session = FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Settings"), states = setOf("focused")))
+    val manager = McpDeviceSessionManager { _, _, _ -> session }
+    val handle = manager.open(Platform.ANDROID_TV, "fake")
+    val server = VerityMcpServer(sessionManager = manager).create()
+    suspend fun call(name: String, text: String): String {
+      val args = buildJsonObject {
+        put("session_id", handle.sessionId.toString())
+        if (name == "run_loop") {
+          put("action", "DPAD_DOWN")
+          put("until", text)
+          put("max", 2)
+          put("wait_ms", 0)
+        } else {
+          put("text", text)
+        }
+      }
+      val result = server.tools[name]!!.handler.invoke(StubClientConnection(), CallToolRequest(CallToolRequestParams(name, arguments = args)))
+      assertThat(result.isError).isIn(null, false)
+      return (result.content.single() as TextContent).text
+    }
+    assertThat(call("check_visible", "Settings")).isEqualTo("true")
+    assertThat(call("check_focused", "Settings")).isEqualTo("true")
+    assertThat(call("run_loop", "Settings")).isEqualTo("SATISFIED after 0 iterations: text 'Settings' found")
+    assertThat(call("run_loop", "Settings is focused")).isEqualTo("NOT SATISFIED after 2 iterations: text 'Settings is focused' not found")
+    assertThat(session.pressedKeys).isEqualTo(listOf("DPAD_DOWN", "DPAD_DOWN"))
+    assertThat(server.tools["run_loop"]!!.tool.inputSchema.properties!!.keys).containsExactlyInAnyOrder("session_id", "action", "until", "max", "wait_ms")
   }
 }

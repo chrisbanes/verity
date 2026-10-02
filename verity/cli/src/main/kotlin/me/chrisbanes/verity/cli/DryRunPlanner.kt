@@ -57,6 +57,7 @@ data class DryRunLoopReport(
   val kind: DryRunExecutionKind,
   val interaction: String? = null,
   val yaml: String? = null,
+  val interactions: List<String> = listOfNotNull(interaction),
 )
 
 data class DryRunAssertionReport(
@@ -85,25 +86,16 @@ class DryRunPlanner(
       index = segment.index,
       actions = planActions(segment.actions.map { it.instruction }, segment, resolvedJourney),
       loop = segment.loop?.let { loop ->
-        val mapper = InteractionMapper.forPlatform(journey.platform)
-        val interaction = mapper.map(loop.action)
-        if (interaction != null) {
-          DryRunLoopReport(
-            action = loop.action,
-            until = loop.until,
-            max = loop.max,
-            kind = DryRunExecutionKind.FAST_PATH,
-            interaction = describeInteraction(interaction),
-          )
-        } else {
-          DryRunLoopReport(
-            action = loop.action,
-            until = loop.until,
-            max = loop.max,
-            kind = DryRunExecutionKind.SLOW_PATH,
-            yaml = generateYaml(listOf(loop.action), segment, resolvedJourney),
-          )
-        }
+        val body = checkNotNull(planActions(loop.actionInstructions, segment, resolvedJourney))
+        DryRunLoopReport(
+          action = loop.action,
+          until = loop.until,
+          max = loop.max,
+          kind = body.kind,
+          interaction = body.interactions.singleOrNull(),
+          interactions = body.interactions,
+          yaml = body.yaml,
+        )
       },
       assertion = segment.assertion?.let { DryRunAssertionReport(it.description, it.mode) },
     )

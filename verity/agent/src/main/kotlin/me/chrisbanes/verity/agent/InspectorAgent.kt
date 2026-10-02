@@ -1,64 +1,56 @@
 package me.chrisbanes.verity.agent
 
-import ai.koog.agents.core.agent.AIAgent
+import ai.koog.prompt.message.Message
 import java.nio.file.Path
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import me.chrisbanes.verity.core.model.InspectionVerdict
 
-/**
- * Evaluates assertions against screen state.
- * Uses a capable model (Sonnet-class) for accuracy.
- * Supports both tree-based (text) and visual (screenshot) evaluation.
- *
- * Tree evaluation uses Koog's `AIAgent.run(message)` (text-only).
- * Visual evaluation uses Koog's prompt DSL with image attachments via
- * `PromptExecutor.execute()` since `AIAgent.run` does not support multimodal input.
- */
+/** One request per check, retaining provider completion metadata until verdict validation. */
 class InspectorAgent(
-  private val treeAgentFactory: () -> AIAgent<String, String>,
-  private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path) -> String,
+  private val evaluateTreeContent: suspend (systemPrompt: String, userMessage: String, references: List<Path>) -> Message.Assistant,
+  private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path, references: List<Path>) -> Message.Assistant,
 ) {
+  suspend fun evaluateTree(hierarchy: String, assertion: String, context: InspectionContext = InspectionContext()): InspectionVerdict = request(ModelRequestStage.INSPECTOR_TREE) {
+    evaluateTreeContent(SYSTEM_PROMPT, withReferences(buildTreeMessage(hierarchy, assertion), context), context.referenceScreenshots)
+  }
 
-  /**
-   * Evaluate an assertion against the accessibility tree text.
-   */
-  suspend fun evaluateTree(hierarchy: String, assertion: String): InspectionVerdict {
-    val message = buildTreeMessage(hierarchy, assertion)
-    val agent = treeAgentFactory()
-    return try {
-      val response = withTimeout(TREE_TIMEOUT) {
-        agent.run(message)
-      }
-      parseVerdict(response)
-    } finally {
-      withContext(NonCancellable) { agent.close() }
+  suspend fun evaluateVisual(screenshotPath: Path, assertion: String, context: InspectionContext = InspectionContext()): InspectionVerdict = request(ModelRequestStage.INSPECTOR_VISUAL) {
+    evaluateVisualContent(SYSTEM_PROMPT, withReferences(buildVisualMessage(assertion), context), screenshotPath, context.referenceScreenshots)
+  }
+
+  private suspend fun request(stage: ModelRequestStage, execute: suspend () -> Message.Assistant): InspectionVerdict {
+    val response = try {
+      withTimeoutOrNull(REQUEST_TIMEOUT) { execute() }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      throw ModelFailureException(stage, ModelFailureKind.REQUEST)
+    } ?: throw ModelFailureException(stage, ModelFailureKind.TIMEOUT)
+    if (response.finishReason?.lowercase() in setOf("length", "max_tokens", "incomplete")) {
+      throw ModelFailureException(stage, ModelFailureKind.TRUNCATED)
     }
+    return parseVerdict(response.textContent(), stage)
   }
 
-  /**
-   * Evaluate an assertion against a screenshot.
-   */
-  suspend fun evaluateVisual(screenshotPath: Path, assertion: String): InspectionVerdict {
-    val message = buildVisualMessage(assertion)
-    val response = evaluateVisualContent(SYSTEM_PROMPT, message, screenshotPath)
-    return parseVerdict(response)
-  }
+  private fun withReferences(message: String, context: InspectionContext): String = buildString {
+    append(message)
+    if (context.referenceText.isNotEmpty() || context.referenceScreenshots.isNotEmpty()) {
+      appendLine()
+      appendLine("Reference context (earlier observations, not proof of the current condition):")
+      if (context.referenceText.isNotEmpty()) appendLine(context.referenceText)
+      context.referenceScreenshots.forEachIndexed { index, _ -> appendLine("Reference screenshot ${index + 1}") }
+    }
+  }.trim()
 
   companion object {
-    private val lenientJson = Json {
-      ignoreUnknownKeys = true
-      isLenient = true
-    }
-
-    /** Timeout for tree-based evaluation (text-only, should be fast). */
-    private val TREE_TIMEOUT = 30.seconds
-
-    /** Maximum length of raw response included in error messages to prevent oversized output. */
-    private const val MAX_RAW_RESPONSE_LENGTH = 500
+    private val strictJson = Json
+    private val REQUEST_TIMEOUT = 30.seconds
 
     const val SYSTEM_PROMPT =
       "You are a visual testing inspector for a mobile/TV app.\n" +
@@ -73,23 +65,21 @@ class InspectorAgent(
       appendLine("Assertion to evaluate: $assertion")
     }.trim()
 
-    fun buildVisualMessage(assertion: String): String = "Evaluate the attached screenshot against this assertion: $assertion"
+    fun buildVisualMessage(assertion: String): String = "Current screenshot: evaluate the attached current screenshot against this assertion: $assertion"
 
-    fun parseVerdict(response: String): InspectionVerdict {
-      val cleaned = response.stripCodeFences()
-      return try {
-        lenientJson.decodeFromString(InspectionVerdict.serializer(), cleaned)
-      } catch (e: Exception) {
-        val truncated = if (cleaned.length > MAX_RAW_RESPONSE_LENGTH) {
-          cleaned.take(MAX_RAW_RESPONSE_LENGTH) + "... [truncated ${cleaned.length - MAX_RAW_RESPONSE_LENGTH} chars]"
-        } else {
-          cleaned
-        }
-        InspectionVerdict(
-          passed = false,
-          reasoning = "Inspector parse error: ${e.message}. Raw response: $truncated",
-        )
+    fun parseVerdict(response: String, stage: ModelRequestStage = ModelRequestStage.INSPECTOR_TREE): InspectionVerdict {
+      if (response.isBlank()) throw ModelFailureException(stage, ModelFailureKind.EMPTY)
+      val objectValue = try {
+        strictJson.parseToJsonElement(response.stripCodeFences()) as? JsonObject
+      } catch (_: Exception) {
+        null
+      } ?: throw ModelFailureException(stage, ModelFailureKind.INVALID_VERDICT)
+      val passed = objectValue["passed"] as? JsonPrimitive
+      val reasoning = objectValue["reasoning"] as? JsonPrimitive
+      if (passed == null || passed.isString || passed.booleanOrNull == null || reasoning == null || !reasoning.isString) {
+        throw ModelFailureException(stage, ModelFailureKind.INVALID_VERDICT)
       }
+      return InspectionVerdict(passed.booleanOrNull!!, reasoning.content)
     }
   }
 }

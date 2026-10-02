@@ -6,17 +6,21 @@ object LoopStepInferrer {
 
   private val LOOP_VERBS = setOf("press", "navigate", "move", "scroll", "go", "step")
 
-  // Matches: <action> until <condition> [up to N times]
-  private val PATTERN = Regex(
-    """^(.+?)\s+until\s+(.+?)(?:\s+up\s+to\s+(\d+)\s+times?)?\s*$""",
+  // Limit suffixes are anchored so prose inside the condition is retained.
+  private val PATTERN = Regex("""^(.+?)\s+until\s+(.+?)\s*$""", RegexOption.IGNORE_CASE)
+  private val LIMIT = Regex(
+    """\s+(?:up\s+to\s+(\d+)\s+times?|max\s+(\d+)|for\s+up\s+to\s+(\d+)|(\d+)\s+iterations)\s*$""",
     RegexOption.IGNORE_CASE,
   )
 
   fun infer(text: String): JourneyStep.Loop? {
-    val match = PATTERN.matchEntire(text.trim()) ?: return null
+    val match = PATTERN.matchEntire(text.trim().removeSuffix(".").trimEnd()) ?: return null
     val action = match.groupValues[1].trim()
-    val until = match.groupValues[2].trim()
-    val max = match.groupValues[3].takeIf { it.isNotEmpty() }?.toInt() ?: 20
+    val condition = match.groupValues[2].trim()
+    val limit = LIMIT.find(condition)
+    val until = if (limit == null) condition else condition.take(limit.range.first).trim()
+    if (until.isEmpty()) return null
+    val max = limit?.groupValues?.drop(1)?.first { it.isNotEmpty() }?.toInt() ?: 20
 
     // First word of action must be an allowed verb
     val verb = action.split("\\s+".toRegex()).firstOrNull()?.lowercase() ?: return null

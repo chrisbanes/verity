@@ -12,7 +12,7 @@ The planner belongs to the CLI and uses segmentation and interaction mapping dir
 
 ## Generated content
 
-The report includes the static application-launch YAML and each segment's actions, loop, and assertion when present. Fully mappable action groups show their interaction descriptions. Other groups invoke the navigator to generate Maestro YAML. A loop shows its action, condition, and maximum repetitions; a slow-path loop includes generated YAML for one action iteration.
+The report includes the static application-launch YAML and each segment's actions, loop, and assertion when present. Fully mappable action groups show their interaction descriptions. Other groups invoke the navigator to generate Maestro YAML. A loop shows its action, condition, and maximum repetitions; a mapped loop shows every interaction in body order, and a slow-path loop includes one generated YAML flow for the complete body. Execution and preview consume the same core-derived semicolon instructions. Conditions, including a `visually` prefix, are reported without capture or evaluation; see [loop conditions](loop-conditions.md).
 
 Navigator creation and provider/navigator-model/credential preflight are deferred until generated YAML is needed. Fast-path-only suites require neither a valid provider configuration nor credentials. Inspector models are not validated because assertions are not evaluated. Slow-path planning may therefore make LLM calls and incur provider costs.
 

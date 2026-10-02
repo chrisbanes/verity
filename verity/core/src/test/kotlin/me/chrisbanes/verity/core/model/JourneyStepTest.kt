@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 
 class JourneyStepTest {
   @Test
@@ -24,5 +25,14 @@ class JourneyStepTest {
   fun `loop step has default max of 20`() {
     val step = JourneyStep.Loop(action = "Press D-pad down", until = "TV Shows")
     assertThat(step.max).isEqualTo(20)
+  }
+
+  @Test
+  fun `loop body preserves ordered trimmed instructions`() {
+    val loop = JourneyStep.Loop(" Press down ; tap Settings ", "Home")
+    assertThat(loop.actionInstructions).isEqualTo(listOf("Press down", "tap Settings"))
+    for (body in listOf("", " ; press down", "press down;", "press down;;tap Settings")) {
+      assertFailsWith<IllegalArgumentException> { JourneyStep.Loop(body, "Home") }
+    }
   }
 }

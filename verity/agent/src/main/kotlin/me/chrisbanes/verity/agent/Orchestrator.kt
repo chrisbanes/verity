@@ -1,12 +1,6 @@
 package me.chrisbanes.verity.agent
 
-import java.io.IOException
-import java.nio.file.Files
 import kotlin.coroutines.cancellation.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
-import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
@@ -15,11 +9,12 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.InspectionVerdict
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
+import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
-import me.chrisbanes.verity.core.result.EvidenceArtifact
-import me.chrisbanes.verity.core.result.EvidenceType
+import me.chrisbanes.verity.core.result.ConditionTier
+import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.device.DeviceSession
 
@@ -48,7 +43,19 @@ class Orchestrator(
       val navigator = navigatorFactory()
       val inspector = inspectorFactory()
 
-      val result = executeSegment(segment, journey.app, journey.platform, navigator, inspector)
+      val result = try {
+        executeSegment(segment, journey.app, journey.platform, navigator, inspector)
+      } catch (e: InteractionExecutionFailure) {
+        val instructions = segment.actions.map { it.instruction }
+        SegmentResult(
+          index = segment.index,
+          passed = false,
+          reasoning = e.message.orEmpty(),
+          executionMode = if (isFastPath(instructions, journey.platform)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
+          actions = instructions,
+          error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, e.message.orEmpty()),
+        )
+      }
       results.add(result)
       if (!result.passed) break
     }
@@ -102,14 +109,16 @@ class Orchestrator(
 
     // Execute loop
     segment.loop?.let { loop ->
-      val loopResult = executeLoop(loop.action, loop.until, loop.max, appId, platform, navigator, segment.index)
+      val loopResult = executeLoop(loop, appId, platform, navigator, inspector, segment.index)
       return SegmentResult(
         index = segment.index,
         passed = loopResult.satisfied,
         reasoning = loopResult.reasoning,
         executionMode = SegmentExecutionMode.LOOP,
-        actions = listOf(loop.action),
+        actions = loop.actionInstructions,
         generatedFlows = loopResult.generatedFlows,
+        evidence = loopResult.evidence,
+        loop = LoopArtifact(loop.until, loopResult.iterations, checkNotNull(loopResult.tier), loopResult.conditionReasoning),
         error = if (loopResult.satisfied) {
           null
         } else {
@@ -235,65 +244,57 @@ class Orchestrator(
   }
 
   private suspend fun executeLoop(
-    action: String,
-    until: String,
-    max: Int,
+    loop: JourneyStep.Loop,
     appId: String,
     platform: Platform,
     navigator: NavigatorAgent,
+    inspector: InspectorAgent,
     segmentIndex: Int,
   ): LoopResult {
-    val mapper = InteractionMapper.forPlatform(platform)
-    val executor = InteractionExecutor(session, appId)
-    val interaction = mapper.map(action)
-    var actionsExecuted = 0
+    val instructions = loop.actionInstructions
+    val fastPath = isFastPath(instructions, platform)
+    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex)
+    var evaluation = evaluator.evaluate(loop.until)
+    var completedBodies = 0
     val generatedFlows = mutableListOf<String>()
 
-    repeat(max) {
-      if (session.containsText(until)) {
-        return LoopResult(
-          satisfied = true,
-          iterations = actionsExecuted,
-          reasoning = "Text '$until' found after $actionsExecuted iterations",
-          generatedFlows = generatedFlows,
-        )
-      }
-
-      if (interaction != null) {
-        executor.execute(interaction)
-        actionsExecuted += 1
+    fun result(executionFailure: String? = null): LoopResult {
+      val satisfied = executionFailure == null && evaluation.verdict.passed
+      val reasoning = executionFailure ?: if (evaluation.tier == ConditionTier.LITERAL && satisfied) {
+        "Text '${loop.until}' found after $completedBodies iterations"
       } else {
-        val label = "loop-${actionsExecuted.toString().padStart(3, '0')}"
-        val slowPathResult = executeSlowPath(listOf(action), appId, platform, navigator, segmentIndex, label)
-        slowPathResult.reference?.let(generatedFlows::add)
-        if (!slowPathResult.flowResult.success) {
-          return LoopResult(
-            satisfied = false,
-            iterations = actionsExecuted,
-            reasoning = "Loop flow execution failed: ${slowPathResult.flowResult.output}",
-            generatedFlows = generatedFlows,
-          )
-        }
-        actionsExecuted += 1
+        "Condition '${loop.until}' ${if (satisfied) "satisfied" else "not satisfied"} after $completedBodies iterations: ${evaluation.verdict.reasoning}"
       }
-    }
-
-    // Final check after max iterations
-    if (session.containsText(until)) {
       return LoopResult(
-        satisfied = true,
-        iterations = actionsExecuted,
-        reasoning = "Text '$until' found after $actionsExecuted iterations",
-        generatedFlows = generatedFlows,
+        satisfied = satisfied,
+        iterations = completedBodies,
+        reasoning = reasoning,
+        generatedFlows = generatedFlows.toList(),
+        tier = evaluation.tier,
+        conditionReasoning = evaluation.verdict.reasoning,
+        evidence = evaluation.evidence,
       )
     }
 
-    return LoopResult(
-      satisfied = false,
-      iterations = actionsExecuted,
-      reasoning = "Text '$until' not found after $actionsExecuted iterations",
-      generatedFlows = generatedFlows,
-    )
+    if (evaluation.verdict.passed) return result()
+    repeat(loop.max) {
+      try {
+        if (fastPath) {
+          executeFastPath(instructions, appId, platform, navigator)
+        } else {
+          val label = "loop-${completedBodies.toString().padStart(3, '0')}"
+          val slowPathResult = executeSlowPath(instructions, appId, platform, navigator, segmentIndex, label)
+          slowPathResult.reference?.let(generatedFlows::add)
+          if (!slowPathResult.flowResult.success) throw InteractionExecutionFailure(slowPathResult.flowResult)
+        }
+      } catch (e: InteractionExecutionFailure) {
+        return result(e.message.orEmpty())
+      }
+      completedBodies++
+      evaluation = evaluator.evaluate(loop.until)
+      if (evaluation.verdict.passed) return result()
+    }
+    return result()
   }
 
   private suspend fun evaluateAssertion(
@@ -301,10 +302,10 @@ class Orchestrator(
     mode: AssertMode,
     inspector: InspectorAgent,
     segmentIndex: Int,
-  ): AssertionEvaluation = when (mode) {
+  ): InspectionEvaluation = when (mode) {
     AssertMode.VISIBLE -> {
       val passed = session.containsText(description)
-      AssertionEvaluation(
+      InspectionEvaluation(
         InspectionVerdict(
           passed = passed,
           reasoning = if (passed) "Text '$description' is visible" else "Text '$description' is not visible",
@@ -314,7 +315,7 @@ class Orchestrator(
 
     AssertMode.FOCUSED -> {
       val passed = session.checkFocused(description)
-      AssertionEvaluation(
+      InspectionEvaluation(
         InspectionVerdict(
           passed = passed,
           reasoning = if (passed) "Text '$description' is focused" else "Text '$description' is not focused",
@@ -322,79 +323,14 @@ class Orchestrator(
       )
     }
 
-    AssertMode.TREE -> {
-      val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
-      val reference = try {
-        artifactRecorder.saveHierarchy(segmentIndex, hierarchy)
-      } catch (e: CancellationException) {
-        throw e
-      } catch (_: Exception) {
-        null
-      }
-      AssertionEvaluation(
-        verdict = inspector.evaluateTree(hierarchy, description),
-        evidence = reference?.let { listOf(EvidenceArtifact(EvidenceType.HIERARCHY, it)) } ?: emptyList(),
-      )
-    }
+    AssertMode.TREE -> ScreenInspection(session, inspector, artifactRecorder, segmentIndex).tree(description)
 
-    AssertMode.VISUAL -> {
-      val artifact = try {
-        artifactRecorder.screenshotPath(segmentIndex)
-      } catch (e: CancellationException) {
-        throw e
-      } catch (_: Exception) {
-        null
-      }
-      if (artifact != null) {
-        val captured = try {
-          session.captureScreenshot(artifact.path)
-          true
-        } catch (e: CancellationException) {
-          throw e
-        } catch (_: IOException) {
-          false
-        } catch (_: SecurityException) {
-          false
-        }
-        if (captured) {
-          AssertionEvaluation(
-            verdict = inspector.evaluateVisual(artifact.path, description),
-            evidence = listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)),
-          )
-        } else {
-          evaluateVisualWithTempFile(inspector, description)
-        }
-      } else {
-        evaluateVisualWithTempFile(inspector, description)
-      }
-    }
-  }
-
-  private suspend fun evaluateVisualWithTempFile(
-    inspector: InspectorAgent,
-    description: String,
-  ): AssertionEvaluation {
-    val tempFile = withContext(Dispatchers.IO) {
-      Files.createTempFile("verity-screenshot-", ".png")
-    }
-    try {
-      session.captureScreenshot(tempFile)
-      return AssertionEvaluation(inspector.evaluateVisual(tempFile, description))
-    } finally {
-      withContext(NonCancellable + Dispatchers.IO) {
-        Files.deleteIfExists(tempFile)
-      }
-    }
+    AssertMode.VISUAL -> ScreenInspection(session, inspector, artifactRecorder, segmentIndex).visual(description)
   }
 
   private data class SlowPathResult(
     val flowResult: FlowResult,
     val reference: String?,
-  )
-
-  private data class AssertionEvaluation(
-    val verdict: InspectionVerdict,
-    val evidence: List<EvidenceArtifact> = emptyList(),
   )
 
   companion object {

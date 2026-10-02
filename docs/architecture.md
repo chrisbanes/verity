@@ -21,9 +21,9 @@ Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation 
 
 | Module | Depends on | Purpose |
 |--------|-----------|---------|
-| `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
+| `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, focus-condition grammar, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
 | `:verity:device` | `:verity:core` | `DeviceSession` interface and platform-specific implementations (Android via Dadb + Maestro gRPC, iOS via Maestro XCTest HTTP) |
-| `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, Orchestrator |
+| `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 12 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
 | `:verity:smoke-tests` | `:verity:cli` | Device smoke tests (Android emulator) |
@@ -131,9 +131,9 @@ The `AssertModeInferrer` selects the cheapest sufficient mode:
 
 ### Loop Inference
 
-The `LoopStepInferrer` matches patterns like `<verb> ... until <condition> [up to N times]`:
-- Leading verb must be: press, navigate, move, scroll, go, step
-- The action part is normalized to platform key names
+The `LoopStepInferrer` matches `<verb> ... until <condition>` with anchored `up to N times`, `max N`, `for up to N` or `N iterations` limits and an optional final period. The default limit is 20; zero still performs one immediate condition check.
+
+The leading verb must be press, navigate, move, scroll, go or step. `Loop.actionInstructions` derives ordered, trimmed semicolon components and rejects empty components. Execution and dry-run consume that same representation; platform interaction mapping remains unchanged. Core's `FocusConditionParser` recognises the three anchored forms documented in [loop conditions](specs/loop-conditions.md).
 
 ---
 
@@ -178,7 +178,7 @@ Each segment is a natural checkpoint: run actions, evaluate assertion, stop on f
 
 Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate Maestro YAML. Assertions are reported without evaluation.
 
-The planner has no device-session dependency and does not invoke `Orchestrator`. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
+Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator`. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
 
 ---
 
@@ -299,11 +299,17 @@ System prompt instructs: generate only valid Maestro YAML, no explanation, add `
 
 ### InspectorAgent
 
-Evaluates assertions against screen state using constructor-injected agent factories (no internal model selection):
-- `evaluateTree(hierarchy, assertion)` — text-only evaluation
-- `evaluateVisual(screenshotPath, assertion)` — vision-enabled evaluation
+Evaluates assertions and semantic conditions using constructor-injected one-shot prompt callbacks returning Koog `Message.Assistant`, with no internal model selection:
+- `evaluateTree(hierarchy, assertion, context)` evaluates the current hierarchy.
+- `evaluateVisual(screenshotPath, assertion, context)` evaluates a current screenshot.
 
-Returns `InspectionVerdict(passed: Boolean, reasoning: String)`. Lenient JSON parsing with code fence stripping.
+Both accept empty-by-default `InspectionContext` reference text and earlier images, labelled separately from current state. Normal runs produce no reference history. Completion metadata is retained until known truncation reasons are rejected, then strict JSON requires boolean `passed` and string `reasoning`; code fences, extra keys and empty reasoning are supported.
+
+Each request owns a 30-second timeout. `ModelFailureException` carries fixed allowlisted stage/failure-class diagnostics without raw request text or causes. An enclosing deadline and caller cancellation propagate. This shared policy covers inspectors; navigator and scroll-direction model-failure classification remains issue #91 work.
+
+### ConditionEvaluator
+
+`evaluate(condition, context)` performs exactly one action-free check. A leading `visually` word is stripped and forces a current screenshot; other conditions use complete-condition literal matching, a recognised deterministic focus form, then CONTENT hierarchy inspection. False recognised focus never falls back to an inspector. Assertions and conditions share current-state capture, optional evidence persistence and temporary screenshot cleanup. The evaluator has no polling, delay or history accumulation, allowing callers to own broader deadlines.
 
 ### Orchestrator
 
@@ -321,6 +327,8 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 | FOCUSED | `checkFocused()` — lenient tree walk | Free |
 | TREE | `InspectorAgent.evaluateTree()` | Medium |
 | VISUAL | `InspectorAgent.evaluateVisual()` | High |
+
+**Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
 
 Each segment creates fresh navigator and inspector instances. Their reasoning is scoped to that segment rather than carrying an accumulated conversation through the journey.
 

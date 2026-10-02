@@ -38,6 +38,14 @@ data class ArtifactError(
 )
 
 @Serializable
+data class LoopArtifact(
+  val condition: String,
+  val iterations: Int,
+  val tier: ConditionTier,
+  val reasoning: String,
+)
+
+@Serializable
 data class SegmentArtifactResult(
   val index: Int,
   val passed: Boolean,
@@ -48,6 +56,7 @@ data class SegmentArtifactResult(
   val generatedFlows: List<String> = emptyList(),
   val evidence: List<EvidenceArtifact> = emptyList(),
   val error: ArtifactError? = null,
+  val loop: LoopArtifact? = null,
 )
 
 @Serializable
@@ -108,6 +117,21 @@ enum class SegmentExecutionMode {
 }
 
 @Serializable
+enum class ConditionTier {
+  @SerialName("literal")
+  LITERAL,
+
+  @SerialName("focus")
+  FOCUS,
+
+  @SerialName("tree")
+  TREE,
+
+  @SerialName("visual")
+  VISUAL,
+}
+
+@Serializable
 enum class EvidenceType {
   @SerialName("flow")
   FLOW,
@@ -129,6 +153,9 @@ enum class ArtifactErrorKind {
 
   @SerialName("journey_failure")
   JOURNEY_FAILURE,
+
+  @SerialName("model_failure")
+  MODEL_FAILURE,
 }
 
 object PlatformWireSerializer : KSerializer<Platform> {
