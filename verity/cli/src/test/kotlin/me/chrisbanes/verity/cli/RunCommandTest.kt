@@ -5,10 +5,10 @@ import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.doesNotContain
 import assertk.assertions.exists
-import assertk.assertions.isEqualTo
 import assertk.assertions.isEmpty
-import assertk.assertions.isTrue
+import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isTrue
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import java.io.File
@@ -21,9 +21,6 @@ import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.Json
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
-import me.chrisbanes.verity.device.validateMaestroFlow
-import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
-import me.chrisbanes.verity.device.MaestroFlowValidationPhase
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.ModelFailureKind
 import me.chrisbanes.verity.agent.ModelRequestStage
@@ -47,6 +44,9 @@ import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.FakeDeviceSession
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
+import me.chrisbanes.verity.device.MaestroFlowValidationPhase
+import me.chrisbanes.verity.device.validateMaestroFlow
 
 class RunCommandTest {
   private val json = Json { ignoreUnknownKeys = true }
@@ -1262,7 +1262,6 @@ class RunCommandTest {
     }
   }
 
-
   @Test fun `actual navigator local validation failure aborts suite with retained setup results`() {
     verifyNavigatorSuite("infrastructure", null)
   }
@@ -1288,7 +1287,8 @@ class RunCommandTest {
       val seen = mutableListOf<String>()
       val sessions = mutableListOf<FakeDeviceSession>()
       val output = File(dir, "output")
-      val command = runCommand(clock = fixedClock(),
+      val command = runCommand(
+        clock = fixedClock(),
         writeSummary = { run, summary -> if (writeFailure == "summary") error("required summary failed") else run.writeSummary(summary) },
         writeJourneyResult = { run, path, result -> if (writeFailure == "journey" && path.contains("002-second")) error("required journey failed") else run.writeJourneyResult(path, result) },
         journeyRunner = { resolved, recorder ->
@@ -1296,18 +1296,31 @@ class RunCommandTest {
           val session = FakeDeviceSession(platform = Platform.ANDROID_MOBILE, hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))).also { sessions += it }
           val navigator = NavigatorAgent("context", validateFlow = { yaml ->
             when (failureType) {
-              "infrastructure-create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(NAVIGATOR_SENTINEL) })
-              "infrastructure-write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(NAVIGATOR_SENTINEL) })
-              "infrastructure-cleanup" -> validateMaestroFlow(yaml, deleteFlow = { java.nio.file.Files.delete(it); throw java.io.IOException(NAVIGATOR_SENTINEL) })
-              "infrastructure-sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(NAVIGATOR_SENTINEL) })
+              "infrastructure-create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(navigatorSentinel) })
+
+              "infrastructure-write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(navigatorSentinel) })
+
+              "infrastructure-cleanup" -> validateMaestroFlow(yaml, deleteFlow = {
+                java.nio.file.Files.delete(it)
+                throw java.io.IOException(navigatorSentinel)
+              })
+
+              "infrastructure-sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(navigatorSentinel) })
+
               "infrastructure-resource" -> validateMaestroFlow("appId: com.example.app\n---\n- runFlow: /unavailable/verity-missing.yaml")
-              "infrastructure" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(NAVIGATOR_SENTINEL) })
+
+              "infrastructure" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(navigatorSentinel) })
+
               else -> validateMaestroFlow(yaml)
             }
           }) { _, _ ->
-            if (failureType.startsWith("infrastructure")) modelReply("appId: com.example.app\n---\n- launchApp")
-            else if (failureType == "invalid") modelReply("appId: com.example.app\n---\n- tapOn: \"$NAVIGATOR_SENTINEL")
-            else error(NAVIGATOR_SENTINEL)
+            if (failureType.startsWith("infrastructure")) {
+              modelReply("appId: com.example.app\n---\n- launchApp")
+            } else if (failureType == "invalid") {
+              modelReply("appId: com.example.app\n---\n- tapOn: \"$navigatorSentinel")
+            } else {
+              error(navigatorSentinel)
+            }
           }
           Orchestrator(session, { navigator }, { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused inspector") }, evaluateVisualContent = { _, _, _, _ -> error("unused inspector") }) }, artifactRecorder = recorder).run(resolved.journey)
         },
@@ -1332,10 +1345,12 @@ class RunCommandTest {
       }
       val outward = result.output + run.walkTopDown().filter { it.isFile }.joinToString("\n") { it.readText() }
       for (sentinel in listOf("sk-private", "credential-private", "eyJprivate.payload.signature", "HTTP_BODY_PRIVATE", "HEADER_PRIVATE")) assertThat(outward).doesNotContain(sentinel)
-    } finally { dir.deleteRecursively() }
+    } finally {
+      dir.deleteRecursively()
+    }
   }
 
-  private val NAVIGATOR_SENTINEL = "sk-private Bearer credential-private eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"
+  private val navigatorSentinel = "sk-private Bearer credential-private eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"
 
   private fun runCommand(
     clock: Clock = Clock.systemUTC(),
