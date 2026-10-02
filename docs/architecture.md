@@ -178,7 +178,7 @@ Each segment is a natural checkpoint: run actions, evaluate assertion, stop on f
 
 Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate Maestro YAML. Assertions are reported without evaluation.
 
-Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator`. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
+Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator` or the inspector. Slow-path generation uses the navigator request and validation policy below. The entire suite is planned before Markdown writing: model failures exit `5`, while provider/context setup, local validation and required report-writing failures exit `3`, without a partial successful report or normal result JSON. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
 
 ---
 
@@ -293,9 +293,13 @@ The Google provider defaults to `gemini-2.5-flash-lite` for navigation and `gemi
 
 ### NavigatorAgent
 
-Converts natural language actions to Maestro YAML. Receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
+Converts natural language actions to Maestro YAML through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
 
 System prompt instructs: generate only valid Maestro YAML, no explanation, add `waitForAnimationToEnd` after navigation, use `extendedWaitUntil` for content that needs loading time.
+
+After completion metadata is checked, generated YAML is validated with the canonical Maestro parser before the navigator returns it for saving, execution or preview. Malformed model syntax is a model failure. Temporary-file I/O, missing referenced resources and ambiguous SDK faults are safe local validation failures and exit `3`; successful validation does not execute the flow or contact a device. Existing nested-flow, script and media references remain supported.
+
+Scroll suggestions accept only a trimmed, case-insensitive `UP`, `DOWN`, `LEFT`, `RIGHT` or `NONE`. A valid `NONE` keeps the ordinary navigation outcome. Explanations or unknown directions are invalid responses, and a failed scroll request stops before fallback interaction or later work.
 
 ### InspectorAgent
 
@@ -305,7 +309,11 @@ Evaluates assertions and semantic conditions using constructor-injected one-shot
 
 Both accept empty-by-default `InspectionContext` reference text and earlier images, labelled separately from current state. Normal runs produce no reference history. Completion metadata is retained until known truncation reasons are rejected, then strict JSON requires boolean `passed` and string `reasoning`; code fences, extra keys and empty reasoning are supported.
 
-Each request owns a 30-second timeout. `ModelFailureException` carries fixed allowlisted stage/failure-class diagnostics without raw request text or causes. An enclosing deadline and caller cancellation propagate. This shared policy covers inspectors; navigator and scroll-direction model-failure classification remains issue #91 work.
+### Shared model request policy
+
+Navigator flow generation and scroll suggestions, plus inspector tree/visual evaluation, share a request-owned 30-second timeout. Failed requests, that owned timeout, known case-insensitive truncation finish reasons (`length`, `max_tokens`, `incomplete`), blank replies and invalid response contracts raise `ModelFailureException`. Completion metadata is checked before decoding, even when truncated text looks valid. Valid negative inspector verdicts remain ordinary failed journey results.
+
+Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, backend exception text, HTTP bodies/headers and raw causes are excluded; authored model diagnostics also redact API keys, bearer tokens and JWTs. Local validation errors remain separate from backend request failures. Caller cancellation and shorter enclosing deadlines propagate rather than becoming completed model failures. An overall wait deadline remains owned by its enclosing wait, while a request that fails before it follows this model-failure policy. The separate smart-planner fallback specified by [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its deterministic recovery policy. MCP callers own their model policy under [ADR-0001](adr/0001-mcp-device-boundary.md).
 
 ### ConditionEvaluator
 
@@ -328,7 +336,7 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 | TREE | `InspectorAgent.evaluateTree()` | Medium |
 | VISUAL | `InspectorAgent.evaluateVisual()` | High |
 
-**Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
+**Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and navigator/inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
 
 Each segment creates fresh navigator and inspector instances. Their reasoning is scoped to that segment rather than carrying an accumulated conversation through the journey.
 
@@ -464,7 +472,7 @@ Orchestrator.run() loops over segments:
     └── Failed? → stop, skip remaining segments
 ```
 
-Directory inputs discover non-recursive `*.journey.yaml` files in filename order and require one resolved platform. A returned failed journey result allows the suite to continue; an execution exception stops it and preserves completed results. See the [directory-suite spec](specs/directory-suite-runs.md).
+Directory inputs discover non-recursive `*.journey.yaml` files in filename order and require one resolved platform. A returned failed journey result allows the suite to continue; an execution exception stops it and preserves completed results. Navigator and inspector model failures abort the suite with exit `5`, retaining completed results and a `model_failure` result for the affected journey and summary. Local validation failures use `setup_failure` and exit `3`. Required result-writing failures take precedence and exit `3`; caller cancellation produces no completed failure result. See the [directory-suite spec](specs/directory-suite-runs.md) and [run-artifact contract](specs/run-artifacts.md).
 
 ### MCP Server
 
