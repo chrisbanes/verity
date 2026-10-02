@@ -5,7 +5,9 @@ Verity is a Kotlin/JVM tool that combines device automation (Maestro SDK) with L
 1. **CLI mode** (`verity run`) — Executes journey YAML files against a connected device, using LLMs to generate Maestro flows and evaluate assertions. `verity run --dry-run` parses, segments, renders fast-path actions, and generates slow-path Maestro YAML without device access.
 2. **MCP server mode** (`verity mcp`) — Exposes device control as MCP tools so an AI agent can interactively drive the device.
 
-LLMs serve two purposes: flow generation (turning English into Maestro YAML) and assertion evaluation (judging whether screen state matches an expectation). Deterministic fast-paths handle both when possible, so LLM calls happen only when necessary.
+LLMs serve two purposes: flow generation (turning English into Maestro YAML) and assertion evaluation (judging whether screen state matches an expectation). Deterministic interactions and assertions bypass those calls when possible.
+
+Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation index](README.md) for behavior specs and ADRs. This file describes module ownership and execution; the specs hold detailed command and result contracts.
 
 ---
 
@@ -19,7 +21,7 @@ LLMs serve two purposes: flow generation (turning English into Maestro YAML) and
 
 | Module | Depends on | Purpose |
 |--------|-----------|---------|
-| `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, segmenter, key mapper, hierarchy renderer, assertion mode inferrer |
+| `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
 | `:verity:device` | `:verity:core` | `DeviceSession` interface and platform-specific implementations (Android via Dadb + Maestro gRPC, iOS via Maestro XCTest HTTP) |
 | `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 12 tools, session manager, snapshot store |
@@ -56,33 +58,9 @@ Maestro SDK uses gRPC with Netty 4.1; Ktor uses Netty 4.2. Resolved by:
 
 ## Project Configuration
 
-Verity reads optional project defaults from `verity/config.yaml`. Missing and empty config files preserve current command defaults.
+The CLI owns loading and resolving `verity/config.yaml`. Shared resolution applies CLI input first, project defaults second, and built-in defaults last; structured LLM settings preserve compatibility with legacy top-level keys. The resolved configuration supplies defaults to `run`, `list`, and the CLI command that starts MCP.
 
-```yaml
-paths:
-  journeys: journeys
-  context: context
-  output: build/verity
-
-device:
-  platform: android-tv
-  id: emulator-5554
-  disable-animations: true
-
-llm:
-  provider: anthropic
-  navigator-model: claude-haiku-4-5
-  inspector-model: claude-sonnet-4-5
-
-assertions:
-  strategy: infer
-```
-
-Precedence is always CLI flag or argument, then config value, then built-in default. Legacy top-level `provider`, `navigator-model`, and `inspector-model` keys remain supported; structured `llm` values win when both forms are present.
-
-`run` uses config for journey fallback, context, output, device, LLM, animation, and assertion strategy defaults. `list` uses `paths.journeys` unless `--path` is provided. `mcp` uses config for default context, journeys, platform, device, and animation handling, while MCP tool arguments still override server defaults.
-
-`assertions.strategy` controls implicit assertion modes only. Explicit prefixes such as `[?visual]` remain authoritative. `infer` preserves current heuristic behavior, while `visible`, `focused`, `tree`, and `visual` force that mode for `[?]` and natural-language inferred assertions.
+See the [project-configuration spec](specs/project-configuration.md) for the schema, per-command settings, validation, and assertion strategy. Runtime project-context loading is separate from the repository's domain glossary; its required/optional behavior is defined in the [project-context spec](specs/project-context.md).
 
 ---
 
@@ -180,9 +158,9 @@ Each segment is a natural checkpoint: run actions, evaluate assertion, stop on f
 
 ### Dry-Run Planning
 
-`verity run --dry-run` reuses normal journey resolution and segmentation, then switches to a CLI-owned planner instead of `Orchestrator`. The planner renders the launch flow, classifies fast-path action groups with `InteractionMapper`, generates Maestro YAML for slow-path action groups with `NavigatorAgent`, and records assertion descriptions and modes without evaluating them.
+Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate Maestro YAML. Assertions are reported without evaluation.
 
-Dry-run always prints a Markdown report and writes per-journey artifacts under `<output-path>/dry-run`. It may call the navigator LLM for slow-path YAML, but it does not run device preflight, create `DeviceSession`, execute flows, capture hierarchy, capture screenshots, or evaluate assertions.
+The planner has no device-session dependency and does not invoke `Orchestrator`. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
 
 ---
 
@@ -235,16 +213,9 @@ Auto-discovers the device if no ID is given. When `disableAnimations` is true, w
 
 ### Preflight Checks
 
-Verity validates the local environment before opening device sessions or constructing LLM clients.
+Core owns shared reports and filesystem checks, device owns platform readiness checks, and the CLI composes provider/model/credential checks with journey/context/device validation. MCP performs device and screenshot-target preflight, without LLM credential checks.
 
-| Module | Responsibility |
-|--------|----------------|
-| `:verity:core` | `PreflightReport`, `PreflightIssue`, issue codes, and path/temp filesystem checks |
-| `:verity:device` | Android ADB checks, iOS `xcrun simctl` checks, and platform routing |
-| `:verity:cli` | CLI-only provider, model, credential, journey path, context path, and selected platform composition |
-| `:verity:mcp` | Device/session preflight for `open_session` and output path checks for screenshot files |
-
-MCP intentionally does not validate LLM provider, model, or credential configuration. The MCP server exposes raw device tools; LLM execution belongs to the external MCP caller.
+The CLI command that starts MCP still uses the shared configuration resolver and may reject invalid provider/model settings before server startup. This differs from MCP tool preflight and does not give the MCP module responsibility for LLM execution. See the [preflight spec](specs/preflight-checks.md) and [ADR-0001](adr/0001-mcp-device-boundary.md).
 
 ### Hierarchy Rendering
 
@@ -273,17 +244,17 @@ Android TV (and sometimes iOS) places `focused=true` on container nodes while te
 - A sibling of a focused node contains the text
 - An ancestor of a text node is focused
 
-### Platform Key Mapper
+### Interaction Mapper
 
-`PlatformKeyMapper` maps natural language to platform key codes. Per-platform implementations, all in `:verity:core` (string-to-string mapping, no device SDK dependency):
+`InteractionMapper` maps instructions to typed interactions such as key presses, taps, scrolls, swipes, and long presses. Platform-specific implementations live in `:verity:core` without a device SDK dependency; `InteractionExecutor` in the agent layer executes the mapped interaction.
 
 | Platform | Example mapping |
 |----------|----------------|
-| Android TV | "press d-pad down" → "Remote Dpad Down" |
-| Android Mobile | "press back" → "back" |
-| iOS | "press home" → home gesture mapping |
+| Android TV | "press d-pad down" → key press "Remote Dpad Down" |
+| Android Mobile | "press back" → key press "back" |
+| iOS | "press home" → key press "home" |
 
-When all actions in a segment map to known keys, the orchestrator bypasses LLM flow generation and presses keys directly.
+When all actions in a segment map to interactions, the orchestrator bypasses flow generation. Named-target interactions may still ask the navigator for a scroll direction when the target is not visible; a fast-path classification does not guarantee zero LLM calls during a real run.
 
 ---
 
@@ -319,7 +290,7 @@ Returns `InspectionVerdict(passed: Boolean, reasoning: String)`. Lenient JSON pa
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
 
 **Action execution (two paths):**
-- Fast path: all actions map via `PlatformKeyMapper` → direct `pressKey()` calls
+- Fast path: all actions map via `InteractionMapper` → `InteractionExecutor`, with scroll-to-find reasoning for off-screen named targets
 - Slow path: `NavigatorAgent` generates Maestro YAML → `executeFlow()`
 
 **Assertion evaluation (four modes):**
@@ -331,7 +302,7 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 | TREE | `InspectorAgent.evaluateTree()` | Medium |
 | VISUAL | `InspectorAgent.evaluateVisual()` | High |
 
-**Context Optimization:** By isolating each segment's reasoning into sequential subagent calls, Verity supports extremely long journeys that would otherwise exceed model context limits or cause "context drift" where the model conflates different parts of a long journey.
+Each segment creates fresh navigator and inspector instances. Their reasoning is scoped to that segment rather than carrying an accumulated conversation through the journey.
 
 ---
 
@@ -365,7 +336,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 
 | Tool | Required params | Returns | Notes |
 |------|----------------|---------|-------|
-| `open_session` | platform | session_id, device info | Optional: device, disable_animations |
+| `open_session` | platform argument or configured default | session_id, device info | Optional: device, disable_animations |
 | `close_session` | session_id | confirmation | Restores animations if disabled |
 | `list_journeys` | — | formatted list | Optional: path |
 | `load_journey` | path | parsed steps | |
@@ -394,11 +365,14 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 
 ```
 --device <id>            Device ID or IP:port (auto-discover if omitted)
---platform <platform>    android-tv | android | ios (default: android-tv)
+--platform <platform>    Override journey/config platform
 --provider <name>        LLM provider (anthropic, openai, google, etc.)
 --navigator-model <id>   Model for flow generation (cheap tier)
 --inspector-model <id>   Model for assertion evaluation (capable tier)
---api-key <key>          LLM API key (or ANTHROPIC_API_KEY env var)
+--api-key <key>          LLM API key (or provider-specific env var)
+--journeys-path <path>   Default journey file or directory
+--output-path <dir>      Root for generated artifacts
+--assertion-strategy <s> infer | visible | focused | tree | visual
 --context-path <dir>     Optional path to additional context markdown files
 --require-context        Fail if project context is missing or contains no markdown files
 --no-animations          Disable device animations during run
@@ -407,46 +381,11 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 
 The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--port` (default: 8080) for HTTP transport.
 
-### Configuration
+### Configuration and Result Contracts
 
-`verity/config.yaml` can provide defaults for provider and model selection:
+CLI defaults and compatibility rules are defined in the [project-configuration spec](specs/project-configuration.md). The [project-context spec](specs/project-context.md) covers `--require-context` and loaded-file reporting.
 
-```yaml
-provider: anthropic
-navigator-model: claude-haiku-4-5
-inspector-model: claude-opus-4-5
-require-context: true
-```
-
-`require-context` makes `--context-path` mandatory for workflows that depend on project context. The CLI `--require-context` flag also enables this behavior for one invocation.
-
-### Run Artifacts And CI Results
-
-`verity run` writes one timestamped artifact directory under `paths.output/runs/` after configuration resolution and output-path validation. The directory name is stable and slugged from the input suite, for example `20260708-143512-login-suite`.
-
-Each run contains:
-
-- `summary.json` — Suite-level CI contract with `formatVersion`, timestamp, input path, pass/fail counts, per-journey result references, error classification, platform, provider, navigator model, and inspector model.
-- `journeys/<index>-<journey>.json` — Journey-level result with identity, pass/fail state, failed segment index, segment execution mode, generated flow references, evidence references, assertions, reasoning, and optional diagnostic error.
-- `flows/<index>-<journey>/...` — Generated Maestro YAML when a segment used LLM flow generation.
-- `evidence/<index>-<journey>/...` — Hierarchy text and screenshots captured for assertions.
-
-Module ownership is split by artifact responsibility:
-
-- `:verity:core` owns the serializable artifact/result DTOs and stable wire values.
-- `:verity:agent` owns segment metadata collection and recorder calls for generated flows and evidence.
-- `:verity:cli` owns run directory layout, JSON writing, summary aggregation, and exit-code mapping.
-
-Exit codes are intentionally stable for CI:
-
-| Code | Classification | Summary error kind |
-|------|----------------|--------------------|
-| `0` | All journeys passed | none |
-| `2` | Input or parser failure | `parser_failure` |
-| `3` | Setup or required artifact write failure | `setup_failure` |
-| `4` | Journey execution or assertion failure | `journey_failure` |
-
-Required suite artifacts (`summary.json` and journey result JSON) are part of the command outcome. Optional evidence writes, such as generated flows, hierarchy captures, and screenshots, are recorded when available but do not fail the journey solely because the artifact path cannot be written.
+Normal runs persist their results under the resolved output root. Core owns the serializable result contract, agent owns segment metadata and recorder calls, and CLI owns directory layout, JSON writing, suite aggregation, and exit-code mapping. [ADR-0002](adr/0002-required-run-artifacts.md) records why required result writing is part of the command outcome; the [run-artifacts spec](specs/run-artifacts.md) defines the schema and failure boundaries.
 
 ---
 
@@ -477,7 +416,7 @@ JourneySegmenter.segment() ──→ List<JourneySegment>
 Orchestrator.run() loops over segments:
     │
     ├── Actions present?
-    │   ├── All map to keys? → direct pressKey() calls
+    │   ├── All map to interactions? → InteractionExecutor
     │   └── Otherwise → NavigatorAgent → executeFlow()
     │
     ├── Assertion present?
@@ -492,7 +431,7 @@ Orchestrator.run() loops over segments:
     └── Failed? → stop, skip remaining segments
 ```
 
-When the input is a directory, `verity run` discovers non-recursive `*.journey.yaml` files in deterministic filename order, executes every journey, and returns a failed process outcome if any journey fails.
+Directory inputs discover non-recursive `*.journey.yaml` files in filename order and require one resolved platform. A returned failed journey result allows the suite to continue; an execution exception stops it and preserves completed results. See the [directory-suite spec](specs/directory-suite-runs.md).
 
 ### MCP Server
 
@@ -521,14 +460,14 @@ VerityMcpServer
 
 1. **Cost-aware assertions**: Free deterministic checks before cheap text LLM before expensive vision LLM. The `AssertModeInferrer` and `[?]` syntax make the cheapest mode the default path.
 
-2. **Fast-path key mapping**: Direct key presses for navigation bypass LLM flow generation entirely. Covers the most common actions (D-pad navigation on TV, basic gestures on mobile).
+2. **Interaction mapping**: Recognised actions bypass LLM flow generation. Off-screen named targets may still require navigator reasoning to find them.
 
 3. **Persistent connections**: Embedded Maestro SDK with persistent gRPC (Android) and HTTP (iOS) connections. No process spawning per operation.
 
 4. **Segment-based execution**: Splitting at assertion boundaries creates natural checkpoints. Each segment is independent — clear failure attribution, debuggable output.
 
-5. **Subagent isolation**: Each segment is executed by an isolated agent session. This drastically reduces context window usage and eliminates the risk of "history hallucination" where the model conflates different parts of a long journey.
+5. **Segment isolation**: Fresh navigator and inspector instances keep reasoning scoped to the current segment.
 
-6. **Platform abstraction**: One `DeviceSession` interface, platform-specific implementations. Core logic (parsing, segmentation, key mapping) is platform-aware but SDK-free.
+6. **Platform abstraction**: One `DeviceSession` interface, platform-specific implementations. Core logic (parsing, segmentation, interaction mapping) is platform-aware but SDK-free.
 
 7. **Dual mode from one core**: The same device and core layers serve both autonomous CLI execution and interactive MCP-driven workflows. Author interactively, run in CI.

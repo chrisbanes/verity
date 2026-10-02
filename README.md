@@ -19,22 +19,23 @@ Journeys are YAML files that describe what a user does and what the app should s
 ```yaml
 name: Launch and browse
 app: com.example.tv
-platform: android_tv
+platform: android-tv
 
 steps:
-  - action: "Launch the app"
-  - action: "Navigate down to the 'Continue Watching' row"
-  - assert: "A 'Continue Watching' row is visible with at least one item"
-  - action: "Select the first item"
-  - assert: "The detail screen shows a title and a 'Play' button"
+  - Navigate down to the 'Continue Watching' row
+  - "[?tree] A 'Continue Watching' row is visible with at least one item"
+  - Select the first item
+  - "[?tree] The detail screen shows a title and a 'Play' button"
 ```
 
-Verity splits each journey into segments, hands each segment to an isolated LLM agent, and drives the device through the Maestro SDK. Assertions use a cost-aware strategy: deterministic checks first, then text-based reasoning, then vision — so you pay only for what each assertion requires.
+Verity splits each journey into segments and drives the device through the Maestro SDK, using mapped interactions or generated flows. Assertions use visible-text or focus checks, accessibility-tree reasoning, or screenshot evaluation according to their selected mode.
 
 ## Modes
 
 - **CLI** (`verity run`) — Run journey files autonomously against connected devices.
 - **MCP server** (`verity mcp`) — Expose device control as MCP tools for interactive AI workflows (e.g., in Claude Code).
+
+See the [documentation index](docs/README.md) for the domain glossary, architecture decisions, and behavior specifications, including suite runs, configuration, dry-run previews, and CI artifacts.
 
 ## Architecture
 
@@ -46,7 +47,7 @@ core  ←  device  ←  agent  ←  cli
 
 | Module | Role |
 |--------|------|
-| `core` | Journey models, YAML parsing, segmentation, key mapping. Zero device or LLM dependencies. |
+| `core` | Journey models, YAML parsing, segmentation, interaction mapping. Zero device or LLM dependencies. |
 | `device` | Device abstraction layer — Android via ADB + Maestro gRPC, iOS via Maestro XCTest HTTP. |
 | `agent` | LLM orchestration — navigator and inspector agents, journey execution. |
 | `mcp` | MCP server exposing raw device tools. Does not depend on `agent`. |
@@ -54,8 +55,8 @@ core  ←  device  ←  agent  ←  cli
 
 ## Key design choices
 
-- **Fast-path key mapping** — Common navigation actions (D-pad, gestures) go straight to the device, bypassing LLM generation entirely.
-- **Subagent isolation** — Each journey segment runs in its own LLM session, keeping context windows small and preventing hallucination from long histories.
+- **Interaction mapping** — Recognised actions use device interactions directly; other actions use generated Maestro flows. Finding an off-screen named target can still require navigator reasoning.
+- **Segment isolation** — Each segment uses fresh navigator and inspector instances, keeping their reasoning scoped to that segment.
 - **Persistent connections** — Embedded Maestro SDK holds persistent gRPC/HTTP connections to devices instead of spawning processes per operation.
 
 ## Manual smoke checklist

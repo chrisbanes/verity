@@ -73,3 +73,19 @@ Tasks are only complete once `./gradlew check` is green.
 ## Harness
 
 - Prefer fd to grep
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for `chrisbanes/verity`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a single-context layout: root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+Implemented behavior specs live in `docs/specs/`. Use `docs/README.md` to find the relevant glossary, architecture, ADRs, and specs.
