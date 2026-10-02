@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.nio.file.Path
 import kotlin.test.Test
@@ -176,5 +177,14 @@ class InspectorAgentTest {
     assertThat(visualMessage).contains("Current screenshot")
     assertThat(visualMessage).contains("Reference screenshot 1")
     assertThat(visualMessage).contains("not proof of the current condition")
+  }
+
+  @Test fun `tree and visual calls preserve explicit caller cancellation identity`() = runTest {
+    val caller = object : kotlin.coroutines.cancellation.CancellationException("caller") {
+      val marker = Any()
+    }
+    val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ -> throw caller }, evaluateVisualContent = { _, _, _, _ -> throw caller })
+    assertThat(runCatching { inspector.evaluateTree("tree", "Home") }.exceptionOrNull()).isSameInstanceAs(caller)
+    assertThat(runCatching { inspector.evaluateVisual(Path.of("current.png"), "Home") }.exceptionOrNull()).isSameInstanceAs(caller)
   }
 }

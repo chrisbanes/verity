@@ -9,10 +9,10 @@ import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
-import me.chrisbanes.verity.agent.FakeTextAgent
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
+import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.core.model.Platform
@@ -60,9 +60,7 @@ class RunCommandSmokeTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _ ->
-          FakeTextAgent { error("Navigator should not be called for key-mapped actions") }
-        }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("Navigator should not be called for key-mapped actions")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -93,9 +91,7 @@ class RunCommandSmokeTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _ ->
-          FakeTextAgent { error("unused") }
-        }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) }
       },
       inspectorFactory = {
         InspectorAgent(

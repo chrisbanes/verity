@@ -17,7 +17,6 @@ import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.Json
-import me.chrisbanes.verity.agent.FakeTextAgent
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.ModelFailureException
@@ -27,6 +26,7 @@ import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.agent.SegmentResult
 import me.chrisbanes.verity.agent.inspectionReply
+import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
@@ -1130,7 +1130,7 @@ class RunCommandTest {
         )
         Orchestrator(
           FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))),
-          { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+          { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
           { inspector },
           artifactRecorder = recorder,
         ).run(resolved.journey)
@@ -1170,7 +1170,7 @@ class RunCommandTest {
         seen += resolved.journey.name
         Orchestrator(
           FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))),
-          { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+          { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
           {
             InspectorAgent(
               evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"menu not ready"}""") },

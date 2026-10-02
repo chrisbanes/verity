@@ -1,24 +1,17 @@
 package me.chrisbanes.verity.agent
 
-import ai.koog.agents.core.agent.AIAgent
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import ai.koog.prompt.message.Message
+import kotlin.coroutines.cancellation.CancellationException
 import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.device.InvalidMaestroFlowResponseException
+import me.chrisbanes.verity.device.validateMaestroFlow
 
-/**
- * Generates Maestro YAML flows from natural language action steps.
- * Uses a cheap model (Haiku-class) since the task is structured generation.
- *
- * The [generate] method delegates to a caller-provided [AIAgent] factory,
- * keeping the module provider-agnostic. Prompt construction, agent invocation,
- * and response cleaning are fully implemented and tested.
- */
+/** Generates device-free validated Maestro flows, retaining completion metadata per request. */
 class NavigatorAgent(
   private val bundledContext: String,
-  private val agentFactory: (systemPrompt: String) -> AIAgent<String, String>,
+  private val validateFlow: suspend (String) -> Unit = { validateMaestroFlow(it) },
+  private val executeRequest: suspend (systemPrompt: String, userMessage: String) -> Message.Assistant,
 ) {
 
   /**
@@ -38,15 +31,15 @@ class NavigatorAgent(
   ): String {
     val systemPrompt = buildSystemPrompt(platform, bundledContext, injectedContext)
     val userMessage = buildUserMessage(actions, appId)
-    val agent = agentFactory(systemPrompt)
-    return try {
-      val response = withTimeout(TIMEOUT) {
-        agent.run(userMessage)
-      }
-      cleanResponse(response)
-    } finally {
-      withContext(NonCancellable) { agent.close() }
+    val response = cleanResponse(requestModelText(ModelRequestStage.NAVIGATOR_FLOW) { executeRequest(systemPrompt, userMessage) })
+    try {
+      validateFlow(response)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: InvalidMaestroFlowResponseException) {
+      throw ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.INVALID_RESPONSE)
     }
+    return response
   }
 
   /**
@@ -63,21 +56,13 @@ class NavigatorAgent(
         "(UP, DOWN, LEFT, or RIGHT) to find it. Respond with ONLY the direction word, or NONE if you believe " +
         "the element cannot be found by scrolling."
     val userMessage = "Target: $target\n\nCurrent screen:\n$hierarchy"
-    val agent = agentFactory(systemPrompt)
-    return try {
-      val response = withTimeout(TIMEOUT) {
-        agent.run(userMessage)
-      }.trim().uppercase()
-      Direction.entries.firstOrNull { it.name == response }
-    } finally {
-      withContext(NonCancellable) { agent.close() }
-    }
+    val response = requestModelText(ModelRequestStage.NAVIGATOR_SCROLL) { executeRequest(systemPrompt, userMessage) }.trim().uppercase()
+    if (response == "NONE") return null
+    return Direction.entries.firstOrNull { it.name == response }
+      ?: throw ModelFailureException(ModelRequestStage.NAVIGATOR_SCROLL, ModelFailureKind.INVALID_RESPONSE)
   }
 
   companion object {
-    /** Timeout for LLM calls - navigator uses cheap models and should be fast. */
-    private val TIMEOUT = 30.seconds
-
     fun buildSystemPrompt(
       platform: Platform,
       bundledContext: String,

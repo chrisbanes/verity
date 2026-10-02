@@ -4,10 +4,10 @@ import assertk.assertThat
 import assertk.assertions.isTrue
 import kotlin.test.Test
 import kotlinx.coroutines.runBlocking
-import me.chrisbanes.verity.agent.FakeTextAgent
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
+import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.device.DeviceSession
 import org.junit.jupiter.api.AfterAll
@@ -63,9 +63,7 @@ class AndroidSettingsSmoke {
   private fun createOrchestrator() = Orchestrator(
     session = session,
     navigatorFactory = {
-      NavigatorAgent("unused") { _ ->
-        FakeTextAgent { "DOWN" }
-      }
+      NavigatorAgent("unused") { _, _ -> modelReply("DOWN") }
     },
     inspectorFactory = {
       InspectorAgent(

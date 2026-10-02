@@ -1,6 +1,5 @@
 package me.chrisbanes.verity.cli
 
-import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
@@ -367,11 +366,13 @@ class RunCommand(
     val executor = MultiLLMPromptExecutor(provider.createClient(preflight.apiKey.orEmpty()))
     val navigatorAgent = NavigatorAgent(
       bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
-      agentFactory = { systemPrompt ->
-        AIAgent(
-          promptExecutor = executor,
-          llmModel = navigatorModel,
-          systemPrompt = systemPrompt,
+      executeRequest = { systemPrompt, userMessage ->
+        executor.execute(
+          prompt("navigator") {
+            system(systemPrompt)
+            user(userMessage)
+          },
+          navigatorModel,
         )
       },
     )
@@ -697,11 +698,13 @@ class RunCommand(
     val navigatorFactory = {
       NavigatorAgent(
         bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
-        agentFactory = { systemPrompt ->
-          AIAgent(
-            promptExecutor = executor,
-            llmModel = navigatorModel,
-            systemPrompt = systemPrompt,
+        executeRequest = { systemPrompt, userMessage ->
+          executor.execute(
+            prompt("navigator") {
+              system(systemPrompt)
+              user(userMessage)
+            },
+            navigatorModel,
           )
         },
       )

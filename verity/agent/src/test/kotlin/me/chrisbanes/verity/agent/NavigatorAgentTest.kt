@@ -3,9 +3,22 @@ package me.chrisbanes.verity.agent
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
+import assertk.assertions.isEmpty
+import assertk.assertions.isEqualTo
+import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
+import java.io.IOException
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
+import me.chrisbanes.verity.device.MaestroFlowValidationPhase
+import me.chrisbanes.verity.device.validateMaestroFlow
 
 class NavigatorAgentTest {
   @Test
@@ -80,12 +93,10 @@ class NavigatorAgentTest {
     var capturedUserMessage = ""
     val agent = NavigatorAgent(
       bundledContext = "Bundled context",
-      agentFactory = { systemPrompt ->
+      executeRequest = { systemPrompt, userMessage ->
         capturedSystemPrompt = systemPrompt
-        FakeTextAgent { userMessage ->
-          capturedUserMessage = userMessage
-          "```yaml\nappId: com.example.app\n---\n- launchApp\n```"
-        }
+        capturedUserMessage = userMessage
+        modelReply("```yaml\nappId: com.example.app\n---\n- launchApp\n```")
       },
     )
 
@@ -101,5 +112,93 @@ class NavigatorAgentTest {
     assertThat(capturedUserMessage).contains("Launch the app")
     assertThat(result).doesNotContain("```")
     assertThat(result).contains("appId: com.example.app")
+  }
+
+  @Test fun `truncated otherwise valid navigator reply is a model failure`() = runTest {
+    val navigator = NavigatorAgent("context", executeRequest = { _, _ -> inspectionReply("appId: com.example\n---\n- launchApp", "length") })
+    val failure = runCatching { navigator.generate(listOf("launch"), "com.example", Platform.IOS) }.exceptionOrNull()
+    assertThat(failure is ModelFailureException).isEqualTo(true)
+  }
+
+  @Test fun `both navigator requests classify backend empty truncated and invalid responses safely`() = runTest {
+    for (scroll in listOf(false, true)) {
+      val stage = if (scroll) ModelRequestStage.NAVIGATOR_SCROLL else ModelRequestStage.NAVIGATOR_FLOW
+      val valid = if (scroll) "DOWN" else VALID
+      val cases = listOf(
+        ModelFailureKind.REQUEST to suspend { throw IllegalStateException(SENTINEL) },
+        ModelFailureKind.TIMEOUT to suspend {
+          delay(30_001)
+          modelReply(valid)
+        },
+        ModelFailureKind.EMPTY to suspend { modelReply(" \n") },
+        ModelFailureKind.INVALID_RESPONSE to suspend { modelReply(if (scroll) "DOWN because the target is below" else "appId: com.example\n---\n- tapOn:") },
+      ) + listOf("length", "LENGTH", "max_tokens", "MAX_TOKENS", "incomplete", "INCOMPLETE").map { reason -> ModelFailureKind.TRUNCATED to suspend { modelReply(valid, reason) } }
+      for ((kind, response) in cases) {
+        val navigator = NavigatorAgent("context") { _, _ -> response() }
+        val failure = runCatching { if (scroll) navigator.suggestScrollDirection("target", "tree") else navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull() as ModelFailureException
+        assertThat(failure.stage).isEqualTo(stage)
+        assertThat(failure.failure).isEqualTo(kind)
+        assertThat(failure.cause).isNull()
+        assertThat(failure.suppressed).isEmpty()
+        assertThat(failure.toString()).doesNotContain(SENTINEL)
+      }
+    }
+  }
+
+  @Test fun `strict directions normalize case and only exact NONE is an ordinary negative result`() = runTest {
+    for (direction in Direction.entries) {
+      assertThat(NavigatorAgent("context") { _, _ -> modelReply(" ${direction.name.lowercase()} \n") }.suggestScrollDirection("target", "tree")).isEqualTo(direction)
+    }
+    assertThat(NavigatorAgent("context") { _, _ -> modelReply(" none ") }.suggestScrollDirection("target", "tree")).isNull()
+    for (reply in listOf("UNKNOWN", "NONE no scrolling needed", "DOWN\nexplanation")) {
+      val error = runCatching { NavigatorAgent("context") { _, _ -> modelReply(reply) }.suggestScrollDirection("target", "tree") }.exceptionOrNull() as ModelFailureException
+      assertThat(error.failure).isEqualTo(ModelFailureKind.INVALID_RESPONSE)
+    }
+  }
+
+  @Test fun `flow validator failures remain outside the backend request classification`() = runTest {
+    for (phase in MaestroFlowValidationPhase.entries) {
+      val infrastructure = MaestroFlowValidationInfrastructureException(phase)
+      val navigator = NavigatorAgent("context", validateFlow = { throw infrastructure }) { _, _ -> modelReply(VALID) }
+      assertThat(runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull()).isSameInstanceAs(infrastructure)
+    }
+    val navigator = NavigatorAgent("context", validateFlow = { validateMaestroFlow(it, writeFlow = { _, _ -> throw IOException(SENTINEL) }) }) { _, _ -> modelReply(VALID) }
+    val error = runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull() as MaestroFlowValidationInfrastructureException
+    assertThat(error.phase).isEqualTo(MaestroFlowValidationPhase.WRITE)
+    assertThat(error.cause).isNull()
+  }
+
+  @Test fun `both navigator requests preserve explicit caller and enclosing timeout cancellation identity`() = runTest {
+    for (scroll in listOf(false, true)) {
+      val caller = CallerCancellation()
+      val cancelled = NavigatorAgent("context") { _, _ -> throw caller }
+      assertThat(runCatching { if (scroll) cancelled.suggestScrollDirection("target", "tree") else cancelled.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull()).isSameInstanceAs(caller)
+      val slow = NavigatorAgent("context") { _, _ ->
+        delay(30_001)
+        modelReply(VALID)
+      }
+      var observed: Throwable? = null
+      val timeout = runCatching {
+        withTimeout(100) {
+          try {
+            if (scroll) slow.suggestScrollDirection("target", "tree") else slow.generate(listOf("navigate"), "com.example", Platform.IOS)
+          } catch (error: CancellationException) {
+            observed = error
+            throw error
+          }
+        }
+      }.exceptionOrNull()
+      assertThat(timeout is TimeoutCancellationException).isEqualTo(true)
+      // Debug stack recovery may wrap timeout objects, but the original timeout identity remains in its cause chain.
+      assertThat(generateSequence(timeout) { it.cause }.last()).isSameInstanceAs(generateSequence(observed) { it.cause }.last())
+    }
+  }
+
+  private class CallerCancellation : CancellationException("caller") {
+    val marker = Any()
+  }
+  companion object {
+    const val VALID = "appId: com.example\n---\n- launchApp"
+    const val SENTINEL = "HTTP-RAW-BODY header Bearer danger sk-secret eyJheader.payload.signature"
   }
 }
