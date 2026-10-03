@@ -368,9 +368,17 @@ Capture-ordered map of full `HierarchyNode` trees, capped at ten per session. `c
 
 Diff admission rechecks `isOpen` inside the acquired session callback. Removal before admission gives structured `session_unavailable`; admitted work finishes from retained trees while close waits for the session mutex. Only a missing-session lookup failure before callback entry is normalized; cancellation and unexpected callback failures preserve existing behavior. The snapshot lock is released before rendering, while the session lock remains held. A defaulted constructor-injected suspend `hierarchyDiffRenderer(UUID, ResolvedHierarchySnapshotPair)` delegates to the pure renderer and supplies a test barrier for this admission/close contract without changing the manager or tool schema.
 
-### Screenshot Compression
+### Screenshots
 
-For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation), encode as JPEG at 0.75 quality, return as base64.
+Both stdio and HTTP use the same `capture_screenshot` registration. Without `save_to_file`, capture a temporary PNG, scale to max 1280px width (bilinear interpolation), encode as JPEG at 0.75 quality, return as base64, and delete the inline temporary files.
+
+The optional string `save_to_file` saves a complete PNG. Relative paths resolve against the server process working directory; success returns `Screenshot saved to: <normalised absolute path>`. The parent must already exist and be writable; no directories are created. Every existing destination entry is refused, including directories and valid or dangling symlinks. A destination appearing during publication is also preserved. Callers choose another path or explicitly remove their own existing output before retrying.
+
+`McpScreenshotFileSaver` captures into a unique sibling temporary file, validates the complete PNG, then publishes with an atomic hard link that never replaces an existing destination. This requires a filesystem supporting hard links. Unsupported or failed publication reports recovery using an existing writable directory on a supported local filesystem, without falling back to partial final-file writes.
+
+Publication admission is the caller-cancellation check immediately before the blocking link operation. Cancellation observed before admission skips publication. Cancellation racing after admission, even before the link syscall, or after publication may leave a complete caller-owned PNG. The saver never deletes a published destination. It attempts deletion of only its staging file on noncancellable IO; a deletion failure reports the staging path that may remain and how to remove only that artifact. The original failure or cancellation remains primary with cleanup diagnostics suppressed; without a primary failure, cleanup failure returns an error instead of a success path.
+
+Saved files survive `close_session`, and callers eventually delete them after use. Reports and debugging use the returned absolute path, following the shared [screenshot evidence procedure](../verity/skills/context/procedures.md#screenshot-evidence). Saved MCP files are caller-owned and are not automatically registered as CLI run artifacts.
 
 ### Tool Catalog (13 tools)
 
@@ -382,7 +390,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 | `load_journey` | path | parsed steps | |
 | `run_flow` | session_id, yaml | SUCCESS/FAILED + output | Optional: await_focus_change |
 | `press_key` | session_id, key | confirmation | Optional focus change result |
-| `capture_screenshot` | session_id | base64 JPEG or file path | Optional: save_to_file |
+| `capture_screenshot` | session_id | base64 JPEG or normalised absolute PNG path | Optional string: save_to_file; no overwrite; caller owns saved file |
 | `capture_hierarchy` | session_id | hierarchy text + snapshot_id | Optional: filter (focus/content/all) |
 | `diff_hierarchy` | session_id | bounded structural/focus JSON + resolved IDs | Optional: before_snapshot_id, after_snapshot_id; previous/latest defaults |
 | `check_visible` | session_id, text | true/false | Deterministic, case-insensitive |
@@ -487,7 +495,9 @@ VerityMcpServer
     ├── open_session → DeviceSessionFactory.connect()
     ├── press_key → session.pressKey()
     ├── run_flow → session.executeFlow()
-    ├── capture_screenshot → session.captureScreenshot() → compress → base64
+    ├── capture_screenshot
+    │   ├── inline → capture PNG → compress → base64 JPEG → delete temporary files
+    │   └── save_to_file → normalise/preflight → sibling PNG → validate → publish → absolute path
     ├── capture_hierarchy → session.captureHierarchyTree() → snapshot store → filtered text
     ├── diff_hierarchy → session admission → snapshotStore.resolvePair() → HierarchyDiff.render()
     ├── check_visible → session.containsText()
