@@ -112,9 +112,11 @@ internal suspend fun prepareIosSettingsFixture(
   clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
   pause: suspend (Long) -> Unit = { delay(it) },
 ): FixtureProbeSummary {
-  if (aboutVisible() && settingsVisible()) returnToSettings()
+  val returnedToSettings = aboutVisible() && settingsVisible()
+  if (returnedToSettings) returnToSettings()
 
   val readinessStarted = clockMillis()
+  if (returnedToSettings) pause(500)
   val initialCapture = capture()
   val initialCaptureElapsed = (clockMillis() - readinessStarted).coerceAtLeast(0)
   val initial = initialCapture.copy(

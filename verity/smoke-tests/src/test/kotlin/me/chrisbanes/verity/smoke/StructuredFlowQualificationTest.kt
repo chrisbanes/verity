@@ -256,6 +256,7 @@ class StructuredFlowQualificationTest {
   @Test
   fun `iOS fixture preparation returns from About only when both safe labels are visible`() = runTest {
     val events = mutableListOf<String>()
+    val samples = mutableListOf<FixtureProbeSummary>()
     val result = prepareIosSettingsFixture(
       capture = {
         events += "capture"
@@ -265,9 +266,12 @@ class StructuredFlowQualificationTest {
       settingsVisible = { true },
       returnToSettings = { events += "back" },
       scrollOnce = { events += "scroll" },
+      onSample = samples::add,
       clockMillis = { testScheduler.currentTime },
     )
 
+    assertThat(samples.first().elapsedMillis).isEqualTo(500L)
+    assertThat(result.elapsedMillis).isEqualTo(1000L)
     assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
     assertThat(events).isEqualTo(listOf("back") + List(7) { "capture" })
 
