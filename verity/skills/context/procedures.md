@@ -53,6 +53,22 @@ Choose tool by assertion type:
 
 **Optimization**: Reuse recent hierarchy captures. If no navigation occurred since the last `capture_hierarchy`, skip re-capture.
 
+## Screenshot Evidence
+
+For a screenshot to view immediately, call `capture_screenshot(session_id)` for inline JPEG content. For a report, authoring reference or debugging evidence that must remain on disk, pass the optional string `save_to_file` and use the absolute path returned in `Screenshot saved to: <normalised absolute path>`.
+
+Relative requests resolve against the MCP server process working directory, not the device or the report directory. The parent directory must already exist and be writable; capture does not create it. Choose an unused destination. Existing files, directories, valid or dangling symlinks, and entries appearing during publication are never overwritten. On a collision, choose another path or explicitly remove your own existing output before retrying.
+
+Capture stages a unique PNG beside the destination, validates the complete image, and publishes it atomically without replacement using a hard link. The filesystem must support hard links. If publication is unsupported or fails, retry with an unused path in an existing writable directory on a supported local filesystem. Do not copy partial staging bytes to the requested destination as a fallback.
+
+Cancellation observed before publication admission does not publish a destination. Admission is the cancellation check immediately before the blocking link operation. Cancellation racing after admission, including before the actual link or after publication, may leave a complete PNG. Do not assume cancellation means no output, and never delete a published destination as rollback for a failed or cancelled capture.
+
+The tool attempts to delete only its own staging file, including on failure or cancellation. If deletion fails, its diagnostic names the staging path that may remain and instructs you to remove only that artifact when permissions/filesystem allow. Keep the primary failure or cancellation and its suppressed cleanup diagnostic together when investigating. A cleanup failure after publication reports an error rather than a success path; the complete destination can remain alongside the staging file. Do not claim either was removed. After inspecting the error, explicitly remove only the reported staging artifact; preserve the published output for its caller.
+
+Saved PNGs survive `close_session`. Reference the actual returned absolute path in reports and keep the file available while those reports or debugging steps need it. The caller is responsible for eventual deletion after use; these files are not automatically registered as CLI run artifacts.
+
 ## Session Cleanup
 
 Always call `close_session` when done. This restores animation scales if they were disabled.
+
+Closing a session does not delete saved screenshot evidence. Follow [Screenshot Evidence](#screenshot-evidence) for eventual caller cleanup.

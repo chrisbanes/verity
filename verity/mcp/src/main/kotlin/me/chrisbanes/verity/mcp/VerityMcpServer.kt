@@ -65,6 +65,7 @@ class VerityMcpServer(
   private val hierarchyDiffRenderer: suspend (UUID, ResolvedHierarchySnapshotPair) -> String = { sessionId, pair ->
     HierarchyDiff.render(sessionId, pair)
   },
+  private val screenshotFileSaver: McpScreenshotFileSaver = McpScreenshotFileSaver(),
 ) {
 
   fun create(): Server {
@@ -359,7 +360,7 @@ class VerityMcpServer(
           }
           putJsonObject("save_to_file") {
             put("type", "string")
-            put("description", "Optional file path to save the screenshot PNG")
+            put("description", "Optional PNG file path relative to the server working directory. Requires an existing writable parent and refuses existing destinations; returns the normalised absolute saved path.")
           }
         },
       ),
@@ -369,11 +370,26 @@ class VerityMcpServer(
       val saveToFile = args.string("save_to_file")
       sessionManager.withSession(sessionId) { session ->
         if (saveToFile != null) {
-          val target = Path.of(saveToFile)
-          val report = pathPreflightChecker.requireWritableFileTarget(target, "Screenshot output")
+          val target = Path.of(saveToFile).toAbsolutePath().normalize()
+          val report = withContext(Dispatchers.IO) {
+            pathPreflightChecker.requireWritableFileTarget(target, "Screenshot output")
+          }
           if (!report.passed) return@withSession preflightError(report)
-          session.captureScreenshot(target)
-          success("Screenshot saved to: $saveToFile")
+          val saved = try {
+            screenshotFileSaver.save(target, session::captureScreenshot)
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Exception) {
+            val cleanupFailures = e.suppressed.filterIsInstance<ScreenshotCleanupException>()
+            if (e !is ScreenshotCleanupException && cleanupFailures.isEmpty()) throw e
+            return@withSession error(
+              buildString {
+                append("${e::class.simpleName}: ${e.message}")
+                cleanupFailures.forEach { append("\n${it.message}") }
+              },
+            )
+          }
+          success("Screenshot saved to: $saved")
         } else {
           // Use a single cleanup block to ensure all temp files are deleted
           val tempFiles = mutableListOf<Path>()
