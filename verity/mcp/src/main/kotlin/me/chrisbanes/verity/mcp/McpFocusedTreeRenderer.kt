@@ -69,9 +69,7 @@ internal object McpFocusedTreeRenderer {
     val failures = mutableMapOf<Int, String>()
     fun serialize(): String {
       val missing = IntArray(entries.size)
-      val retainedPrefix = IntArray(entries.size + 1)
       for (id in entries.indices) {
-        retainedPrefix[id + 1] = retainedPrefix[id] + if (id in selected) 1 else 0
         if (id in candidates && id !in selected) missing[id] = 1 + if (entries[id].parent in candidates) missing[entries[id].parent] else 0
       }
       // Reserve diagnostics for unvisited targets as if the walk ended here. A later
@@ -110,10 +108,19 @@ internal object McpFocusedTreeRenderer {
           }
           for (child in entry.children) {
             if (child !in selected) {
-              val nextReason = if (child in candidates) reason(child) else "outside_context"
-              if (nextReason != omittedReason) flush()
-              omittedReason = nextReason
-              omitted += entries[child].end - child - (retainedPrefix[entries[child].end] - retainedPrefix[child])
+              var omittedId = child
+              while (omittedId < entries[child].end) {
+                if (omittedId in selected) {
+                  // A retained detached region renders its own descendants separately.
+                  omittedId = entries[omittedId].end
+                  continue
+                }
+                val nextReason = if (omittedId in candidates) reason(omittedId) else "outside_context"
+                if (nextReason != omittedReason) flush()
+                omittedReason = nextReason
+                omitted++
+                omittedId++
+              }
             } else {
               flush()
               children.add(child to null)

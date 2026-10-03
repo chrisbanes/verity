@@ -9,6 +9,72 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 
 class McpFocusedTreeRendererTest {
   @Test
+  fun `omitted outside branch separates nested node capped focus region in source order`() {
+    val tree = node("R", node("P", node("F", focused = true)), node("X", node("Y", node("Z", node("W", node("A", node("B", node("G", focused = true))))))), node("tail"))
+    assertThat(McpFocusedTreeRenderer.render(tree, "snapshot", HierarchyFilter.CONTENT, maxNodes = 3)).isEqualTo(
+      """
+      snapshot_id: snapshot
+      focus_status: present
+      focused: total=2 included=1 omitted_node_limit=1 omitted_character_limit=0
+      nodes: included=3 omitted_context=3 outside_context=5 omitted_regions=1
+      focused_labels_filtered: 0
+      truncated: node_limit=true character_limit=false text=false
+      region: node=0 source_depth=0 cut_above=0
+      #0 [text=R]
+        #1 [text=P]
+          #2 [text=F] (focused)
+        [omitted nodes=4 reason=outside_context]
+        [omitted nodes=3 reason=node_limit]
+        [omitted nodes=1 reason=outside_context]
+      """.trimIndent() + "\n",
+    )
+  }
+
+  @Test
+  fun `omitted outside branch separates nested character capped focus region in source order`() {
+    val tree = node("R", node("P", node("F", focused = true)), node("X", node("Y", node("Z", node("W", node("A", node("B", node("G", focused = true))))))), node("tail"))
+    val expected = """
+      snapshot_id: snapshot
+      focus_status: present
+      focused: total=2 included=1 omitted_node_limit=0 omitted_character_limit=1
+      nodes: included=3 omitted_context=3 outside_context=5 omitted_regions=1
+      focused_labels_filtered: 0
+      truncated: node_limit=false character_limit=true text=false
+      region: node=0 source_depth=0 cut_above=0
+      #0 [text=R]
+        #1 [text=P]
+          #2 [text=F] (focused)
+        [omitted nodes=4 reason=outside_context]
+        [omitted nodes=3 reason=character_limit]
+        [omitted nodes=1 reason=outside_context]
+    """.trimIndent() + "\n"
+    assertThat(McpFocusedTreeRenderer.render(tree, "snapshot", HierarchyFilter.CONTENT, maxCharacters = expected.length)).isEqualTo(expected)
+  }
+
+  @Test
+  fun `retained detached region owns its omitted descendants exactly once`() {
+    val tree = node("R", node("P", node("F", focused = true)), node("X", node("Y", node("Z", node("W", node("A", node("B", node("G", focused = true))))))), node("tail"))
+    assertThat(McpFocusedTreeRenderer.render(tree, "snapshot", HierarchyFilter.CONTENT, maxNodes = 4)).isEqualTo(
+      """
+      snapshot_id: snapshot
+      focus_status: present
+      focused: total=2 included=1 omitted_node_limit=1 omitted_character_limit=0
+      nodes: included=4 omitted_context=2 outside_context=5 omitted_regions=0
+      focused_labels_filtered: 0
+      truncated: node_limit=true character_limit=false text=false
+      region: node=0 source_depth=0 cut_above=0
+      #0 [text=R]
+        #1 [text=P]
+          #2 [text=F] (focused)
+        [omitted nodes=5 reason=outside_context]
+      region: node=7 source_depth=5 cut_above=5
+      #7 [text=A]
+        [omitted nodes=2 reason=node_limit]
+      """.trimIndent() + "\n",
+    )
+  }
+
+  @Test
   fun `no state focus reports no focus and preserves snapshot identity`() {
     assertThat(McpFocusedTreeRenderer.render(HierarchyNode(attributes = mapOf("focused" to "true")), "snapshot", HierarchyFilter.CONTENT)).isEqualTo(
       """
