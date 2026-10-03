@@ -1,6 +1,5 @@
 package me.chrisbanes.verity.cli
 
-import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
@@ -23,6 +22,7 @@ import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
+import me.chrisbanes.verity.agent.redactModelDiagnostic
 import me.chrisbanes.verity.core.context.ContextBundle
 import me.chrisbanes.verity.core.context.ContextLoader
 import me.chrisbanes.verity.core.context.ContextStatus
@@ -41,6 +41,7 @@ import me.chrisbanes.verity.core.result.SegmentArtifactResult
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.DeviceSessionFactory
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
 
 private const val EXIT_INPUT = 2
 private const val EXIT_SETUP = 3
@@ -206,14 +207,21 @@ class RunCommand(
     }
 
     if (dryRun) {
-      val dryRunReport = dryRunSuiteRunner?.invoke(journeys, resolved.outputPath)
-        ?: runDryRun(
-          parent = parent,
-          config = config,
-          resolved = resolved,
-          path = path,
-          journeys = journeys,
-        )
+      val dryRunReport = try {
+        dryRunSuiteRunner?.invoke(journeys, resolved.outputPath)
+          ?: runDryRun(parent, config, resolved, path, journeys)
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: ModelFailureException) {
+        throw CliktError(redactModelDiagnostic("Dry-run generation failed: ${error.message}"), statusCode = EXIT_MODEL)
+      } catch (error: MaestroFlowValidationInfrastructureException) {
+        throw CliktError(redactModelDiagnostic("Dry-run generation failed: ${error.message}"), statusCode = EXIT_SETUP)
+      } catch (error: CliktError) {
+        if (error.statusCode == EXIT_MODEL || error.statusCode == EXIT_SETUP) throw error
+        throw CliktError("Dry-run setup failed", statusCode = EXIT_SETUP)
+      } catch (_: Exception) {
+        throw CliktError("Dry-run setup failed", statusCode = EXIT_SETUP)
+      }
       echo(DryRunRenderer.renderSuite(dryRunReport))
       return@runBlocking
     }
@@ -262,7 +270,14 @@ class RunCommand(
         writeSetupFailureSummary(runArtifacts, path.path, artifactMessage, metadata = metadata)
         throw CliktError(artifactMessage, statusCode = EXIT_SETUP)
       }
-      throw CliktError(message, statusCode = if (e.kind == ArtifactErrorKind.MODEL_FAILURE) EXIT_MODEL else EXIT_JOURNEY)
+      throw CliktError(
+        message,
+        statusCode = when (e.kind) {
+          ArtifactErrorKind.SETUP_FAILURE -> EXIT_SETUP
+          ArtifactErrorKind.MODEL_FAILURE -> EXIT_MODEL
+          else -> EXIT_JOURNEY
+        },
+      )
     } catch (e: Exception) {
       val message = e.message ?: "Journey suite setup failed"
       writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
@@ -320,7 +335,7 @@ class RunCommand(
         ContextLoader.loadProject(directory = contextDir, required = requireContext)
       }
     } catch (e: ContextValidationException) {
-      throw CliktError(e.message ?: "Project context validation failed")
+      throw CliktError(redactModelDiagnostic(e.message ?: "Project context validation failed"), statusCode = EXIT_SETUP)
     }
     projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
 
@@ -333,7 +348,13 @@ class RunCommand(
       },
     )
     val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
-    return DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
+    return try {
+      DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: Exception) {
+      throw CliktError("Dry-run report write failed", statusCode = EXIT_SETUP)
+    }
   }
 
   private suspend fun createDryRunNavigator(
@@ -359,7 +380,7 @@ class RunCommand(
       includeInspectorModelPreflight = false,
     )
     if (!preflight.report.passed) {
-      throw CliktError(preflight.report.renderPlainText())
+      throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
     }
 
     val provider = checkNotNull(preflight.provider)
@@ -367,11 +388,13 @@ class RunCommand(
     val executor = MultiLLMPromptExecutor(provider.createClient(preflight.apiKey.orEmpty()))
     val navigatorAgent = NavigatorAgent(
       bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
-      agentFactory = { systemPrompt ->
-        AIAgent(
-          promptExecutor = executor,
-          llmModel = navigatorModel,
-          systemPrompt = systemPrompt,
+      executeRequest = { systemPrompt, userMessage ->
+        executor.execute(
+          prompt("navigator") {
+            system(systemPrompt)
+            user(userMessage)
+          },
+          navigatorModel,
         )
       },
     )
@@ -697,11 +720,13 @@ class RunCommand(
     val navigatorFactory = {
       NavigatorAgent(
         bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
-        agentFactory = { systemPrompt ->
-          AIAgent(
-            promptExecutor = executor,
-            llmModel = navigatorModel,
-            systemPrompt = systemPrompt,
+        executeRequest = { systemPrompt, userMessage ->
+          executor.execute(
+            prompt("navigator") {
+              system(systemPrompt)
+              user(userMessage)
+            },
+            navigatorModel,
           )
         },
       )
@@ -772,7 +797,11 @@ private class JourneyExecutionFailure(
   val resolvedJourney: ResolvedJourney? = null,
   val failedAt: Int? = null,
   val completedResults: List<ResolvedJourneyResult> = emptyList(),
-  val kind: ArtifactErrorKind = if (cause is ModelFailureException) ArtifactErrorKind.MODEL_FAILURE else ArtifactErrorKind.JOURNEY_FAILURE,
+  val kind: ArtifactErrorKind = when (cause) {
+    is ModelFailureException -> ArtifactErrorKind.MODEL_FAILURE
+    is MaestroFlowValidationInfrastructureException -> ArtifactErrorKind.SETUP_FAILURE
+    else -> ArtifactErrorKind.JOURNEY_FAILURE
+  },
 ) : Exception(message, cause)
 
 internal suspend fun runResolvedJourneysWithArtifacts(

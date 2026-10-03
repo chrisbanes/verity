@@ -178,7 +178,7 @@ Each segment is a natural checkpoint: run actions, evaluate assertion, stop on f
 
 Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate Maestro YAML. Assertions are reported without evaluation.
 
-Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator`. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
+Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator` or the inspector. Slow-path generation uses the navigator request and validation policy below. The entire suite is planned before Markdown writing: model failures exit `5`, while provider/context setup, local validation and required report-writing failures exit `3`, without a partial successful report or normal result JSON. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
 
 ---
 
@@ -293,9 +293,13 @@ The Google provider defaults to `gemini-2.5-flash-lite` for navigation and `gemi
 
 ### NavigatorAgent
 
-Converts natural language actions to Maestro YAML. Receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
+Converts natural language actions to Maestro YAML through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
 
 System prompt instructs: generate only valid Maestro YAML, no explanation, add `waitForAnimationToEnd` after navigation, use `extendedWaitUntil` for content that needs loading time.
+
+After completion metadata is checked, generated YAML is validated with the canonical Maestro parser before the navigator returns it for saving, execution or preview. Malformed model syntax is a model failure. Temporary-file I/O, missing referenced resources and ambiguous SDK faults are safe local validation failures and exit `3`; successful validation does not execute the flow or contact a device. Existing nested-flow, script and media references remain supported.
+
+Scroll suggestions accept only a trimmed, case-insensitive `UP`, `DOWN`, `LEFT`, `RIGHT` or `NONE`. A valid `NONE` keeps the ordinary navigation outcome. Explanations or unknown directions are invalid responses, and a failed scroll request stops before fallback interaction or later work.
 
 ### InspectorAgent
 
@@ -305,7 +309,11 @@ Evaluates assertions and semantic conditions using constructor-injected one-shot
 
 Both accept empty-by-default `InspectionContext` reference text and earlier images, labelled separately from current state. Normal runs produce no reference history. Completion metadata is retained until known truncation reasons are rejected, then strict JSON requires boolean `passed` and string `reasoning`; code fences, extra keys and empty reasoning are supported.
 
-Each request owns a 30-second timeout. `ModelFailureException` carries fixed allowlisted stage/failure-class diagnostics without raw request text or causes. An enclosing deadline and caller cancellation propagate. This shared policy covers inspectors; navigator and scroll-direction model-failure classification remains issue #91 work.
+### Shared model request policy
+
+Navigator flow generation and scroll suggestions, plus inspector tree/visual evaluation, share a request-owned 30-second timeout. Failed requests, that owned timeout, known case-insensitive truncation finish reasons (`length`, `max_tokens`, `incomplete`), blank replies and invalid response contracts raise `ModelFailureException`. Completion metadata is checked before decoding, even when truncated text looks valid. Valid negative inspector verdicts remain ordinary failed journey results.
+
+Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, backend exception text, HTTP bodies/headers and raw causes are excluded; authored model diagnostics also redact API keys, bearer tokens and JWTs. Local validation errors remain separate from backend request failures. Caller cancellation and shorter enclosing deadlines propagate rather than becoming completed model failures. An overall wait deadline remains owned by its enclosing wait, while a request that fails before it follows this model-failure policy. The separate smart-planner fallback specified by [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its deterministic recovery policy. MCP callers own their model policy under [ADR-0001](adr/0001-mcp-device-boundary.md).
 
 ### ConditionEvaluator
 
@@ -328,7 +336,7 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 | TREE | `InspectorAgent.evaluateTree()` | Medium |
 | VISUAL | `InspectorAgent.evaluateVisual()` | High |
 
-**Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
+**Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and navigator/inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
 
 Each segment creates fresh navigator and inspector instances. Their reasoning is scoped to that segment rather than carrying an accumulated conversation through the journey.
 
@@ -360,9 +368,17 @@ Capture-ordered map of full `HierarchyNode` trees, capped at ten per session. `c
 
 Diff admission rechecks `isOpen` inside the acquired session callback. Removal before admission gives structured `session_unavailable`; admitted work finishes from retained trees while close waits for the session mutex. Only a missing-session lookup failure before callback entry is normalized; cancellation and unexpected callback failures preserve existing behavior. The snapshot lock is released before rendering, while the session lock remains held. A defaulted constructor-injected suspend `hierarchyDiffRenderer(UUID, ResolvedHierarchySnapshotPair)` delegates to the pure renderer and supplies a test barrier for this admission/close contract without changing the manager or tool schema.
 
-### Screenshot Compression
+### Screenshots
 
-For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation), encode as JPEG at 0.75 quality, return as base64.
+Both stdio and HTTP use the same `capture_screenshot` registration. Without `save_to_file`, capture a temporary PNG, encode as JPEG at 0.75 quality without resizing, return as base64, and delete the inline temporary files.
+
+The optional string `save_to_file` saves a complete PNG. Relative paths resolve against the server process working directory; success returns `Screenshot saved to: <normalised absolute path>`. The parent must already exist and be writable; no directories are created. Every existing destination entry is refused, including directories and valid or dangling symlinks. A destination appearing during publication is also preserved. Callers choose another path or explicitly remove their own existing output before retrying.
+
+`McpScreenshotFileSaver` captures into a unique sibling temporary file, validates the complete PNG, then publishes with an atomic hard link that never replaces an existing destination. This requires a filesystem supporting hard links. Unsupported or failed publication reports recovery using an existing writable directory on a supported local filesystem, without falling back to partial final-file writes.
+
+Publication admission is the caller-cancellation check immediately before the blocking link operation. Cancellation observed before admission skips publication. Cancellation racing after admission, even before the link syscall, or after publication may leave a complete caller-owned PNG. The saver never deletes a published destination. It attempts deletion of only its staging file on noncancellable IO; a deletion failure reports the staging path that may remain and how to remove only that artifact. The original failure or cancellation remains primary with cleanup diagnostics suppressed; without a primary failure, cleanup failure returns an error instead of a success path.
+
+Saved files survive `close_session`, and callers eventually delete them after use. Reports and debugging use the returned absolute path, following the shared [screenshot evidence procedure](../verity/skills/context/procedures.md#screenshot-evidence). Saved MCP files are caller-owned and are not automatically registered as CLI run artifacts.
 
 ### Tool Catalog (13 tools)
 
@@ -374,7 +390,7 @@ For MCP transport: read PNG, scale to max 1280px width (bilinear interpolation),
 | `load_journey` | path | parsed steps | |
 | `run_flow` | session_id, yaml | SUCCESS/FAILED + output | Optional: await_focus_change |
 | `press_key` | session_id, key | confirmation | Optional focus change result |
-| `capture_screenshot` | session_id | base64 JPEG or file path | Optional: save_to_file |
+| `capture_screenshot` | session_id | base64 JPEG or normalised absolute PNG path | Optional string: save_to_file; no overwrite; caller owns saved file |
 | `capture_hierarchy` | session_id | hierarchy text + snapshot_id | Optional: filter (focus/content/all) |
 | `diff_hierarchy` | session_id | bounded structural/focus JSON + resolved IDs | Optional: before_snapshot_id, after_snapshot_id; previous/latest defaults |
 | `check_visible` | session_id, text | true/false | Deterministic, case-insensitive |
@@ -464,7 +480,7 @@ Orchestrator.run() loops over segments:
     └── Failed? → stop, skip remaining segments
 ```
 
-Directory inputs discover non-recursive `*.journey.yaml` files in filename order and require one resolved platform. A returned failed journey result allows the suite to continue; an execution exception stops it and preserves completed results. See the [directory-suite spec](specs/directory-suite-runs.md).
+Directory inputs discover non-recursive `*.journey.yaml` files in filename order and require one resolved platform. A returned failed journey result allows the suite to continue; an execution exception stops it and preserves completed results. Navigator and inspector model failures abort the suite with exit `5`, retaining completed results and a `model_failure` result for the affected journey and summary. Local validation failures use `setup_failure` and exit `3`. Required result-writing failures take precedence and exit `3`; caller cancellation produces no completed failure result. See the [directory-suite spec](specs/directory-suite-runs.md) and [run-artifact contract](specs/run-artifacts.md).
 
 ### MCP Server
 
@@ -479,7 +495,9 @@ VerityMcpServer
     ├── open_session → DeviceSessionFactory.connect()
     ├── press_key → session.pressKey()
     ├── run_flow → session.executeFlow()
-    ├── capture_screenshot → session.captureScreenshot() → compress → base64
+    ├── capture_screenshot
+    │   ├── inline → capture PNG → compress → base64 JPEG → delete temporary files
+    │   └── save_to_file → normalise/preflight → sibling PNG → validate → publish → absolute path
     ├── capture_hierarchy → session.captureHierarchyTree() → snapshot store → filtered text
     ├── diff_hierarchy → session admission → snapshotStore.resolvePair() → HierarchyDiff.render()
     ├── check_visible → session.containsText()
