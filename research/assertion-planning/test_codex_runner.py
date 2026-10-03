@@ -162,9 +162,9 @@ class RunnerTest(unittest.TestCase):
                 methods = [r['method'] for r in records if r['kind'] == 'request' and r['pid'] == pid]
                 self.assertEqual(methods, ['initialize', 'initialized', 'config/read'])
             overrides = launches[1]['argv']
-            self.assertIn(r'mcp_servers."a.b\"\\name".enabled=false', overrides)
-            self.assertIn('plugins."plug.in".enabled=false', overrides)
-            self.assertIn('apps."app.name".enabled=false', overrides)
+            self.assertIn(r'mcp_servers={"a.b\"\\name"={enabled=false}}', overrides)
+            self.assertIn('plugins={"plug.in"={enabled=false}}', overrides)
+            self.assertIn('apps={"_default"={enabled=false},"app.name"={enabled=false}}', overrides)
             self.assertEqual(json.loads(f.ledger.read_text())['runs'][0]['state'], 'STOPPED')
 
     def test_complete_run_uses_later_catalog_page_and_durable_order(self):
@@ -227,7 +227,7 @@ class RunnerTest(unittest.TestCase):
             'tier_echo': ("'serviceTier':'default','reasoningEffort'", "'serviceTier':'fast','reasoningEffort'"),
             'policy_echo': ("'approvalPolicy':'never'", "'approvalPolicy':'on-request'"),
             'repository_instructions': ("'instructionSources':[]", "'instructionSources':[str(pathlib.Path(LEDGER_LITERAL).parent / 'repo/AGENTS.md')]"),
-            'integration_drift': ("reply(request, {'config':policy,'origins':{}})", "policy['mcp_servers'] = {'new-server':{'enabled':True}}\n        reply(request, {'config':policy,'origins':{}})"),
+            'integration_drift': ("reply(request, {'config':dict(policy,tools={}), 'origins':{}, 'layers':[{'name':{'type':'sessionFlags'},'version':'fake','config':policy}]})", "policy['mcp_servers'] = {'new-server':{'enabled':True}}\n        reply(request, {'config':dict(policy,tools={}), 'origins':{}, 'layers':[{'name':{'type':'sessionFlags'},'version':'fake','config':policy}]})"),
         }
         for name, (old, new) in mutations.items():
             with self.subTest(name=name), tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
@@ -388,15 +388,15 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(output['counters']['qualificationAttempts'],1)
             self.assertEqual(output['counters']['caseAttempts'],32)
 
-    def test_startup_recovery_rejects_changed_inputs_cancelled_or_second_recovery(self):
+    def test_startup_recovery_rejects_changed_inputs_cancelled_or_used_turn(self):
         with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
             f = Fixture(d)
             previous = {'grantId':'previous-startup','grantSha256':'a'*64,'requestSha256':f.grant_data['requestSha256'],'freezeSha256':f.grant_data['freezeSha256'],'configurationSha256':f.grant_data['configurationSha256'],'state':'STOPPED','attempts':[]}
-            for mutation in ('requestSha256','freezeSha256','configurationSha256','cancelled','second'):
+            for mutation in ('requestSha256','freezeSha256','cancelled','used'):
                 with self.subTest(mutation=mutation):
                     runs = [copy.deepcopy(previous)]
                     if mutation == 'cancelled':runs[0]['state']='CANCELLED'
-                    elif mutation == 'second':runs.append(dict(previous,grantId='another-startup'))
+                    elif mutation == 'used':runs[0]['attempts']=[{'sequence':1,'kind':'QUALIFICATION','caseId':None,'recordedAt':'synthetic','state':'CONSUMED'}]
                     else:runs[0][mutation]='0'*64
                     f.ledger.write_text(json.dumps({'formatVersion':1,'ledgerId':'fake-ledger','runs':runs}))
                     before=f.ledger.read_bytes()
@@ -404,6 +404,78 @@ class RunnerTest(unittest.TestCase):
                         asyncio.run(f.run())
                     self.assertEqual(f.ledger.read_bytes(),before)
                     self.assertFalse(f.marker.exists())
+
+    def test_literal_cli_paths_and_nonempty_integration_table_values(self):
+        args=runner.launch_overrides(runner.MANIFEST,{'mcp_servers':{'a.b'},'plugins':{'x'},'apps':{'y'}})
+        self.assertIn('model="gpt-6-luna"',args)
+        self.assertIn('features.remote_control=false',args)
+        self.assertIn('tools.update_plan.enabled=false',args)
+        self.assertIn('mcp_servers={"a.b"={enabled=false}}',args)
+        self.assertIn('apps={"_default"={enabled=false},"y"={enabled=false}}',args)
+        self.assertFalse(any(arg.startswith('"') for arg in args))
+
+    def test_disabled_remote_status_is_passive_but_other_states_poison(self):
+        for status in ('disabled','connecting','connected','errored',None):
+            with self.subTest(status=status),tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+                f=Fixture(d)
+                script=FAKE_STUDY.replace("reply(request, {'userAgent':'fake'})", "notify('remoteControl/status/changed',{'status':STATUS_LITERAL,'installationId':'synthetic-private-id','serverName':'synthetic-private-server'})\n        reply(request, {'userAgent':'fake'})").replace('STATUS_LITERAL',repr(status))
+                f.child_script(script.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+                output=asyncio.run(f.run())
+                self.assertEqual(output['completed'],status=='disabled')
+                self.assertEqual(output['counters']['totalAttempts'],33 if status=='disabled' else 0)
+                self.assertTrue(output['cleanupVerified'])
+                self.assertNotIn('synthetic-private',f.output.read_text())
+
+    def test_account_notification_checks_chatgpt_and_discards_plan(self):
+        for auth in ('chatgpt','apikey',None):
+            with self.subTest(auth=auth),tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+                f=Fixture(d)
+                script=FAKE_STUDY.replace("reply(request, {'userAgent':'fake'})", "notify('account/updated',{'authMode':AUTH_LITERAL,'planType':'synthetic-private-plan'})\n        reply(request, {'userAgent':'fake'})").replace('AUTH_LITERAL',repr(auth))
+                f.child_script(script.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+                output=asyncio.run(f.run())
+                self.assertEqual(output['completed'],auth=='chatgpt')
+                self.assertEqual(output['counters']['totalAttempts'],33 if auth=='chatgpt' else 0)
+                self.assertTrue(output['cleanupVerified'])
+                self.assertNotIn('synthetic-private-plan',f.output.read_text())
+        message={'method':'account/updated','params':{'authMode':'chatgpt','planType':'synthetic-private-plan'}}
+        runner.check_event(message)
+        self.assertEqual(message['params'],{'authMode':'chatgpt'})
+
+    def test_read_only_sandbox_accepts_default_or_explicit_false_and_rejects_widening(self):
+        for extra in ({},{'networkAccess':False},{'networkAccess':True},{'networkAccess':0},{'writableRoots':['/synthetic']}):
+            with self.subTest(extra=extra),tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+                f=Fixture(d)
+                script=FAKE_STUDY.replace("'sandbox':{'type':'readOnly'}", "'sandbox':"+repr(dict(type='readOnly',**extra)))
+                f.child_script(script.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+                output=asyncio.run(f.run())
+                expected=not extra or extra=={'networkAccess':False} and type(extra['networkAccess']) is bool
+                self.assertEqual(output['completed'],expected)
+                self.assertEqual(output['counters']['totalAttempts'],33 if expected else 0)
+                self.assertTrue(output['cleanupVerified'])
+
+    def test_hidden_tool_flags_use_highest_active_layer_and_never_retain_raw_layers(self):
+        for enabled,disabled in ((False,False),(True,False),(True,True)):
+            with self.subTest(enabled=enabled,disabled=disabled),tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+                f=Fixture(d)
+                script=FAKE_STUDY.replace("'layers':[{'name':{'type':'sessionFlags'},'version':'fake','config':policy}]", "'layers':[{'name':{'type':'sessionFlags'},'version':'higher','disabledReason':DISABLED_LITERAL,'config':{'tools':{'update_plan':{'enabled':ENABLED_LITERAL}},'secret':'synthetic-private-layer'}},{'name':{'type':'sessionFlags'},'version':'fake','config':policy}]").replace('DISABLED_LITERAL',repr('disabled' if disabled else None)).replace('ENABLED_LITERAL',repr(enabled))
+                f.child_script(script.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+                output=asyncio.run(f.run())
+                expected=not enabled or disabled
+                self.assertEqual(output['completed'],expected)
+                self.assertEqual(output['counters']['totalAttempts'],33 if expected else 0)
+                self.assertNotIn('synthetic-private-layer',f.output.read_text())
+
+    def test_reviewed_startup_profile_can_change_before_first_turn_without_reset(self):
+        with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+            f=Fixture(d)
+            f.child_script(FAKE_STUDY.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+            previous=[{'grantId':'startup-'+str(i),'grantSha256':'a'*64,'requestSha256':f.grant_data['requestSha256'],'freezeSha256':f.grant_data['freezeSha256'],'configurationSha256':'b'*64,'state':'STOPPED','attempts':[]} for i in range(2)]
+            f.ledger.write_text(json.dumps({'formatVersion':1,'ledgerId':'fake-ledger','runs':previous}))
+            output=asyncio.run(f.run())
+            history=json.loads(f.ledger.read_text())
+            self.assertTrue(output['completed'])
+            self.assertEqual(history['runs'][:2],previous)
+            self.assertEqual(sum(len(r['attempts']) for r in history['runs']),33)
 
     def test_qualification_cross_field_mismatch_stops_after_one_attempt(self):
         with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
@@ -549,9 +621,9 @@ for line in sys.stdin:
         assert request['params']['capabilities'] == {'experimentalApi':True,'explicitGatewayOauth':True}
         result = {'userAgent':'fake'}
     elif request['method'] == 'config/read':
-        if any('mcp_servers.' in arg for arg in sys.argv):
+        if any('mcp_servers=' in arg for arg in sys.argv):
             policy['model'] = 'wrong-model'
-        result = {'config':policy,'origins':{}}
+        result = {'config':dict(policy,tools={}), 'origins':{}, 'layers':[{'name':{'type':'sessionFlags'},'version':'fake','config':policy}]}
     else:
         raise AssertionError(request['method'])
     print(json.dumps({'id':request['id'],'result':result}),flush=True)
@@ -593,7 +665,7 @@ for line in sys.stdin:
         assert params['capabilities'] == {'experimentalApi':True,'explicitGatewayOauth':True}
         reply(request, {'userAgent':'fake'})
     elif method == 'config/read':
-        reply(request, {'config':policy,'origins':{}})
+        reply(request, {'config':dict(policy,tools={}), 'origins':{}, 'layers':[{'name':{'type':'sessionFlags'},'version':'fake','config':policy}]})
     elif method == 'account/read':
         assert params == {'refreshToken':False}
         reply(request, {'account':{'type':'chatgpt','email':'synthetic-private@example.invalid','planType':'plus'},'requiresOpenaiAuth':True})

@@ -16,7 +16,7 @@ from collections import deque
 
 PINNED_EXECUTABLE = {"path": "/opt/homebrew/Caskroom/codex/0.159.0/bin/codex", "binarySha256": "e89718aa1969bfc4a471277bdc4679a3a3529293de0a309909822dfd67ddb77a", "cliVersion": "0.159.0"}
 CAPS = {"totalAttempts": 33, "qualificationAttempts": 1, "caseAttempts": 32, "retries": 0, "liveReruns": 0, "wallSeconds": 1200, "startupSeconds": 30, "turnSeconds": 30, "cleanupSeconds": 5}
-DISABLED_FEATURES = "apps plugins remote_plugin plugin_sharing hooks memories shell_tool unified_exec shell_snapshot multi_agent multi_agent_v2 code_mode code_mode_host code_mode_only browser_use browser_use_external browser_use_full_cdp_access computer_use in_app_browser image_generation view_image skill_search skill_mcp_dependency_install tool_suggest default_mode_request_user_input sleep_tool goals workspace_dependencies realtime_conversation in_app_local_automation prevent_idle_sleep request_permissions_tool context_management current_time_reminder deferred_executor standalone_web_search token_budget".split()
+DISABLED_FEATURES = "apps plugins remote_plugin plugin_sharing hooks memories shell_tool unified_exec shell_snapshot multi_agent multi_agent_v2 code_mode code_mode_host code_mode_only browser_use browser_use_external browser_use_full_cdp_access computer_use in_app_browser image_generation view_image skill_search skill_mcp_dependency_install tool_suggest default_mode_request_user_input sleep_tool goals workspace_dependencies realtime_conversation in_app_local_automation prevent_idle_sleep request_permissions_tool context_management current_time_reminder deferred_executor standalone_web_search token_budget remote_control".split()
 MANIFEST = {"model": "gpt-6-luna", "model_reasoning_effort": "low", "service_tier": "default", "model_provider": "openai", "forced_login_method": "chatgpt", "approval_policy": "never", "approvals_reviewer": "user", "sandbox_mode": "read-only", "web_search": "disabled", "agents": {"enabled": False}, "notify": [], "apps": {"_default": {"enabled": False}}, "project_doc_max_bytes": 0, "instructions": "Plan synthetic assertions. Never execute tools or return assertion verdicts.", "developer_instructions": "", "features": {name: False for name in DISABLED_FEATURES}, "tools": {"update_plan": {"enabled": False}, "experimental_request_user_input": {"enabled": False}}, "cloud": {"skills": {"enabled": False}}, "skills": {"include_instructions": False}}
 CANDIDATE_FILES = ["research/assertion-planning/" + name for name in ("codex_runner.py", "test_codex_runner.py", "README.md")]
 
@@ -193,9 +193,8 @@ def validate_history(history, grant):
     if attempts >= CAPS["totalAttempts"]:
         reject("budget")
     if history["runs"]:
-        # A new root grant may recover one stopped startup before any turn was sent.
-        previous = history["runs"][0]
-        if len(history["runs"]) != 1 or attempts != 0 or previous["state"] != "STOPPED" or any(previous[key] != grant[key] for key in ("requestSha256", "freezeSha256", "configurationSha256")):
+        # Startup repair may change the reviewed profile only before any model turn.
+        if attempts != 0 or any(previous["state"] != "STOPPED" or any(previous[key] != grant[key] for key in ("requestSha256", "freezeSha256")) for previous in history["runs"]):
             reject("live rerun")
     return attempts
 
@@ -235,7 +234,7 @@ def atomic_json(path, value, exclusive=False):
 
 class Poisoned(Exception):
     """Transport/isolation poison with no raw payload attached."""
-PASSIVE_EVENTS = {"warning", "configWarning", "deprecationNotice", "account/rateLimits/updated", "thread/started", "thread/status/changed"}
+PASSIVE_EVENTS = {"warning", "configWarning", "deprecationNotice", "account/rateLimits/updated", "thread/started", "thread/status/changed", "remoteControl/status/changed", "account/updated"}
 TURN_DELTAS = {"item/agentMessage/delta", "item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded", "item/reasoning/textDelta"}
 
 
@@ -244,6 +243,16 @@ def check_event(message):
     params = message.get("params")
     if not isinstance(method, str) or not isinstance(params, dict):
         raise Poisoned()
+    if method == "account/updated":
+        if params.get("authMode") != "chatgpt":
+            raise Poisoned()
+        message["params"] = {"authMode": "chatgpt"}
+        return
+    if method == "remoteControl/status/changed":
+        if params.get("status") != "disabled":
+            raise Poisoned()
+        message["params"] = {"status": "disabled"}
+        return
     if method == "error":
         if type(params.get("willRetry")) is not bool:
             raise Poisoned()
@@ -421,15 +430,20 @@ def launch_overrides(manifest, inherited=None):
     result = []
     def flatten(value, prefix):
         for name, item in value.items():
-            key = prefix + ("." if prefix else "") + json.dumps(name, ensure_ascii=False)
+            key = prefix + ("." if prefix else "") + name
             if isinstance(item, dict):
                 flatten(item, key)
             else:
                 result.extend(["-c", key + "=" + json.dumps(item, ensure_ascii=False, separators=(",", ":"))])
     flatten(manifest, "")
     for table, names in (inherited or {}).items():
-        for name in sorted(names):
-            result.extend(["-c", table + "." + json.dumps(name, ensure_ascii=False) + ".enabled=false"])
+        entries = set(names)
+        if table == "apps":
+            entries.add("_default")
+        if entries:
+            # This CLI splits key paths literally; quoted names belong in the TOML value.
+            value = "{" + ",".join(json.dumps(name, ensure_ascii=False) + "={enabled=false}" for name in sorted(entries)) + "}"
+            result.extend(["-c", table + "=" + value])
     return result
 
 
@@ -448,7 +462,30 @@ def inspect_policy(response, inherited=None):
                 verify(value, actual)
             elif type(actual) is not type(value) or actual != value:
                 raise Poisoned()
-    verify(MANIFEST, config)
+    # ConfigRead's ToolsV2 drops these flags; active layers are returned high to low.
+    layers = response.get("layers")
+    if not isinstance(layers, list):
+        raise Poisoned()
+    controls = {}
+    for tool in MANIFEST["tools"]:
+        for layer in layers:
+            if not isinstance(layer, dict):
+                raise Poisoned()
+            if layer.get("disabledReason") is not None:
+                continue
+            raw = layer.get("config")
+            if not isinstance(raw, dict) or not isinstance(raw.get("tools", {}), dict):
+                raise Poisoned()
+            tools = raw.get("tools", {})
+            if tool in tools:
+                setting = tools[tool]
+                if not isinstance(setting, dict) or type(setting.get("enabled")) is not bool:
+                    raise Poisoned()
+                controls[tool] = {"enabled": setting["enabled"]}
+                break
+        if tool not in controls:
+            raise Poisoned()
+    verify(MANIFEST, dict(config, tools=controls))
     names = {}
     for table in ("mcp_servers", "plugins", "apps"):
         entries = config.get(table, {})
@@ -552,8 +589,11 @@ def instruction_counts(paths, root, cwd):
 
 
 def verify_thread(response, child, root):
-    expected = {"model": "gpt-6-luna", "modelProvider": "openai", "approvalPolicy": "never", "approvalsReviewer": "user", "sandbox": {"type": "readOnly"}, "cwd": child.cwd, "serviceTier": "default", "reasoningEffort": "low", "runtimeWorkspaceRoots": []}
+    expected = {"model": "gpt-6-luna", "modelProvider": "openai", "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": child.cwd, "serviceTier": "default", "reasoningEffort": "low", "runtimeWorkspaceRoots": []}
     if not isinstance(response, dict) or any(response.get(k) != v for k, v in expected.items()):
+        raise Poisoned()
+    sandbox = response.get("sandbox")
+    if not isinstance(sandbox, dict) or sandbox.get("type") != "readOnly" or set(sandbox) - {"type", "networkAccess"} or ("networkAccess" in sandbox and sandbox["networkAccess"] is not False):
         raise Poisoned()
     thread = response.get("thread")
     if not isinstance(thread, dict) or not isinstance(thread.get("id"), str) or not thread["id"]:
@@ -702,7 +742,7 @@ async def run_study(requests, output, ledger, grant, *, repository_root=None, ex
             children.append(bootstrap)
             await bootstrap.launch(base_argv + ["app-server"] + launch_overrides(MANIFEST), startup_end)
             await bootstrap.initialize(startup_end)
-            inherited = inspect_policy(await bootstrap.request("config/read", {"includeLayers": False}, startup_end))
+            inherited = inspect_policy(await bootstrap.request("config/read", {"includeLayers": True}, startup_end))
             saved["cleanupVerified"] = await bootstrap.cleanup()
             if not saved["cleanupVerified"]:
                 raise Poisoned()
@@ -710,7 +750,7 @@ async def run_study(requests, output, ledger, grant, *, repository_root=None, ex
             children.append(final)
             await final.launch(base_argv + ["app-server"] + launch_overrides(MANIFEST, inherited), startup_end)
             await final.initialize(startup_end)
-            inspect_policy(await final.request("config/read", {"includeLayers": False}, startup_end), inherited)
+            inspect_policy(await final.request("config/read", {"includeLayers": True}, startup_end), inherited)
             await qualify_metadata(final, startup_end)
             saved["runMetadata"]["startupDurationMillis"] = int((time.monotonic() - started) * 1000)
             def consume(kind, case_id):
