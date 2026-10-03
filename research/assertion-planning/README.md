@@ -1,5 +1,7 @@
 # Assertion-planning research (Issue #59)
 
+[Measured partial findings](findings.md), [replayable saved output](saved-output.json) and [evaluation results](results.json) are retained. The actual subscription run stopped during qualification; no corpus model calls completed. MODEL rows in results are deterministic fallback diagnostics, not model-quality measurements.
+
 This directory holds the frozen 40-case corpus, its synthetic app/control context, the prompt, and the strict response schema. The Kotlin test-runtime host uses the production journey-step parser and hierarchy helpers. It has no model or provider integration; the only supplier is a narrow injected test seam.
 
 Export the approved model-input projection with the test-runtime host:
