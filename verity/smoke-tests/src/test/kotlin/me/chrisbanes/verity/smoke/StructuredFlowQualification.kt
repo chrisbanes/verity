@@ -445,9 +445,12 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
               val tapYaml = if (case == "text") "- tapOn: ${yamlScalar(selector)}" else "- tapOn:\n    id: ${yamlScalar(selector)}"
               val yaml = "appId: ${yamlScalar(appId)}\n---\n- extendedWaitUntil:\n    visible:\n      $selectorYaml\n    timeout: 3000\n$tapYaml\n- waitForAnimationToEnd:\n    timeout: 3000\n- extendedWaitUntil:\n    visible:\n      text: ${yamlScalar(Regex.escape(destination))}\n    timeout: 3000\n"
               recordInputs(details, route, flow, yaml)
-              check(route.execute(session, flow, yaml).success) { "Safe selector destination flow failed" }
-              check(session.containsText(destination, ignoreCase = false)) { "Safe destination not observed" }
-              details["destinationVisible"] = "true"
+              val flowSuccess = route.execute(session, flow, yaml).success
+              details["positiveFlowSuccess"] = flowSuccess.toString()
+              check(flowSuccess) { "Safe selector destination flow failed" }
+              val destinationVisible = session.containsText(destination, ignoreCase = false)
+              details["destinationVisible"] = destinationVisible.toString()
+              check(destinationVisible) { "Safe destination not observed" }
             } else {
               val absent = Regex.escape("VERITY_MISSING_SETTINGS_FIXTURE_107")
               check(!session.containsText("VERITY_MISSING_SETTINGS_FIXTURE_107", ignoreCase = false)) { "Missing fixture unexpectedly visible" }
