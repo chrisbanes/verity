@@ -20,13 +20,15 @@ class ContextValidationException(message: String) : IllegalArgumentException(mes
 object ContextLoader {
 
   private val markdownExtensions = setOf("md", "markdown")
-  private val bundledCache: String by lazy { loadBundledFromClasspath() }
+  private val bundledCache: String by lazy { loadBundledFromClasspath(listOf("maestro.md", "tv-controls.md")) }
+  private val actionsCache: String by lazy { loadBundledFromClasspath(listOf("actions.md")) }
 
   fun loadBundled(): String = bundledCache
 
-  private fun loadBundledFromClasspath(): String {
+  fun loadBundledActions(): String = actionsCache
+
+  private fun loadBundledFromClasspath(files: List<String>): String {
     val resourceDir = "verity/context"
-    val files = listOf("maestro.md", "tv-controls.md")
     return files.mapNotNull { filename ->
       ContextLoader::class.java.classLoader
         ?.getResourceAsStream("$resourceDir/$filename")

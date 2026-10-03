@@ -2,6 +2,7 @@ package me.chrisbanes.verity.device
 
 import java.nio.file.Path
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 
@@ -16,6 +17,12 @@ class FakeDeviceSession(
   var closed = false
   val executedFlows = mutableListOf<String>()
   val pressedKeys = mutableListOf<String>()
+
+  val executedActionFlows = mutableListOf<ActionFlow>()
+  override suspend fun executeActions(flow: ActionFlow): FlowResult {
+    executedActionFlows += flow
+    return FlowResult(success = true)
+  }
 
   override suspend fun executeFlow(yaml: String): FlowResult {
     executedFlows += yaml

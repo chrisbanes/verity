@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ConditionTier
@@ -137,6 +138,12 @@ class ConditionEvaluatorTest {
     val filters = mutableListOf<HierarchyFilter>()
     val screenshots = mutableListOf<Path>()
     var capture: suspend (Path) -> Unit = { path -> withContext<Unit>(Dispatchers.IO) { Files.write(path, byteArrayOf(1)) } }
+    val executedActionFlows = mutableListOf<ActionFlow>()
+    override suspend fun executeActions(flow: ActionFlow): FlowResult {
+      executedActionFlows += flow
+      return FlowResult(success = true)
+    }
+
     override suspend fun executeFlow(yaml: String) = FlowResult(true)
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree() = HierarchyNode(attributes = mapOf("text" to "Settings"), states = if (focused) setOf("focused") else emptySet())

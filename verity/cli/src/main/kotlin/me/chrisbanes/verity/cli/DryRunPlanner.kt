@@ -5,14 +5,17 @@ import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.redactModelDiagnostic
+import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
-import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
+import me.chrisbanes.verity.device.ActionFlowPreparationException
+import me.chrisbanes.verity.device.validateActionFlow
 
 fun interface DryRunNavigator {
   suspend fun generate(
@@ -20,7 +23,7 @@ fun interface DryRunNavigator {
     appId: String,
     platform: Platform,
     context: String,
-  ): String
+  ): ActionFlow
 }
 
 enum class DryRunExecutionKind {
@@ -115,6 +118,13 @@ class DryRunPlanner(
     val mapper = InteractionMapper.forPlatform(journey.platform)
     val interactions = instructions.map { mapper.map(it) }
     return if (interactions.all { it != null }) {
+      try {
+        validateActionFlow(ActionFlow(journey.app, interactions.filterNotNull()))
+      } catch (error: CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        throw generationError(resolvedJourney, segment, "Mapped action preparation failed", 3)
+      }
       DryRunActionGroupReport(
         instructions = instructions,
         kind = DryRunExecutionKind.FAST_PATH,
@@ -146,12 +156,14 @@ class DryRunPlanner(
       throw generationError(resolvedJourney, segment, "Navigator setup failed", 3)
     }
     return try {
-      activeNavigator.generate(instructions, journey.app, journey.platform, context)
+      val selected = activeNavigator.generate(instructions, journey.app, journey.platform, context)
+      validateActionFlow(selected)
+      ActionFlowYamlRenderer.render(selected)
     } catch (error: CancellationException) {
       throw error
     } catch (error: ModelFailureException) {
       throw generationError(resolvedJourney, segment, error.message.orEmpty(), 5)
-    } catch (error: MaestroFlowValidationInfrastructureException) {
+    } catch (error: ActionFlowPreparationException) {
       throw generationError(resolvedJourney, segment, error.message.orEmpty(), 3)
     } catch (_: Exception) {
       throw generationError(resolvedJourney, segment, "Preview generation setup failed", 3)
@@ -165,9 +177,9 @@ class DryRunPlanner(
 
   private suspend fun navigator(): DryRunNavigator = navigator ?: navigatorFactory().also { navigator = it }
 
-  private fun launchYaml(journey: Journey): String = "appId: ${journey.app}\n---\n- launchApp"
+  private fun launchYaml(journey: Journey): String = ActionFlowYamlRenderer.render(ActionFlow(journey.app, listOf(Interaction.LaunchApp())))
 
-  private fun describeInteraction(interaction: Interaction): String = when (interaction) {
+  internal fun describeInteraction(interaction: Interaction): String = when (interaction) {
     is Interaction.KeyPress -> "KeyPress(${describeKeyName(interaction.keyName)})"
     is Interaction.TapOnText -> "TapOnText(${interaction.text})"
     is Interaction.TapOnId -> "TapOnId(${interaction.resourceId})"
@@ -176,6 +188,11 @@ class DryRunPlanner(
     Interaction.LongPressOnFocused -> "LongPressOnFocused"
     is Interaction.LongPressOnText -> "LongPressOnText(${interaction.text})"
     Interaction.PullToRefresh -> "PullToRefresh"
+    is Interaction.LaunchApp -> "LaunchApp(clearState=${interaction.clearState})"
+    is Interaction.InputText -> "InputText(${interaction.text})"
+    Interaction.DefaultScroll -> "DefaultScroll"
+    is Interaction.WaitForAnimation -> "WaitForAnimation(timeoutMs=${interaction.timeoutMs})"
+    is Interaction.WaitUntilVisible -> "WaitUntilVisible(text=${interaction.text}, resourceId=${interaction.resourceId}, timeoutMs=${interaction.timeoutMs})"
   }
 
   private fun describeKeyName(keyName: String): String = when (keyName) {

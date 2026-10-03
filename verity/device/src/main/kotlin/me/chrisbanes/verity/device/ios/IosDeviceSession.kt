@@ -5,9 +5,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import maestro.Maestro
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.executeMaestroActions
 import me.chrisbanes.verity.device.executeMaestroFlow
 
 /**
@@ -17,13 +19,16 @@ import me.chrisbanes.verity.device.executeMaestroFlow
  * with the on-device XCTest runner over HTTP (port 22087).
  */
 class IosDeviceSession(
-  private val maestro: Maestro,
+  internal val maestro: Maestro,
   private val iosDevice: device.IOSDevice,
+  private val onCommandStart: ((Int) -> Unit)? = null,
 ) : DeviceSession {
 
   override val platform: Platform = Platform.IOS
 
-  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
+  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml, onCommandStart)
+
+  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
 
   override suspend fun pressKey(keyName: String): Unit = withContext(Dispatchers.IO) {
     iosDevice.pressKey(keyName)

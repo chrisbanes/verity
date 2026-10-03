@@ -25,7 +25,7 @@ Normal `run` resolves configuration and input, validates project context, and pe
 
 Input/parser failures and setup/preflight failures have different [exit codes](run-artifacts.md#exit-codes-and-failure-boundaries). Expected preflight errors include their codes, messages, and remediation in CLI output.
 
-[Dry run](dry-run.md) never performs device preflight. Provider, navigator-model, and credential preflight is deferred until generated YAML is needed; inspector-model preflight is skipped.
+[Dry run](dry-run.md) never performs device preflight. Provider, navigator-model, and credential preflight is deferred until generated actions are needed; inspector-model preflight is skipped.
 
 ## MCP behavior
 

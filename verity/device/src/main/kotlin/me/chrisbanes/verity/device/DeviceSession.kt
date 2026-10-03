@@ -6,6 +6,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.hierarchy.containsText
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 
@@ -42,6 +43,9 @@ interface DeviceSession : AutoCloseable {
 
   /** Execute a Maestro YAML flow against the device. */
   suspend fun executeFlow(yaml: String): FlowResult
+
+  /** Validate and execute the complete structured action list without YAML parsing. */
+  suspend fun executeActions(flow: ActionFlow): FlowResult
 
   /** Press a single key by its platform key name. */
   suspend fun pressKey(keyName: String)

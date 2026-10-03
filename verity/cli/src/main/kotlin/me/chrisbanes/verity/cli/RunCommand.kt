@@ -29,6 +29,7 @@ import me.chrisbanes.verity.core.context.ContextStatus
 import me.chrisbanes.verity.core.context.ContextValidationException
 import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.core.model.AssertionStrategy
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactError
@@ -40,8 +41,8 @@ import me.chrisbanes.verity.core.result.JourneyArtifactResult
 import me.chrisbanes.verity.core.result.SegmentArtifactResult
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
+import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.DeviceSessionFactory
-import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
 
 private const val EXIT_INPUT = 2
 private const val EXIT_SETUP = 3
@@ -214,7 +215,7 @@ class RunCommand(
         throw error
       } catch (error: ModelFailureException) {
         throw CliktError(redactModelDiagnostic("Dry-run generation failed: ${error.message}"), statusCode = EXIT_MODEL)
-      } catch (error: MaestroFlowValidationInfrastructureException) {
+      } catch (error: ActionFlowPreparationException) {
         throw CliktError(redactModelDiagnostic("Dry-run generation failed: ${error.message}"), statusCode = EXIT_SETUP)
       } catch (error: CliktError) {
         if (error.statusCode == EXIT_MODEL || error.statusCode == EXIT_SETUP) throw error
@@ -387,7 +388,7 @@ class RunCommand(
     val navigatorModel = checkNotNull(preflight.navigatorModel)
     val executor = MultiLLMPromptExecutor(provider.createClient(preflight.apiKey.orEmpty()))
     val navigatorAgent = NavigatorAgent(
-      bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
+      bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
       executeRequest = { systemPrompt, userMessage ->
         executor.execute(
           prompt("navigator") {
@@ -719,7 +720,7 @@ class RunCommand(
     val executor = MultiLLMPromptExecutor(provider.createClient(apiKey))
     val navigatorFactory = {
       NavigatorAgent(
-        bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundled(),
+        bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
         executeRequest = { systemPrompt, userMessage ->
           executor.execute(
             prompt("navigator") {
@@ -799,7 +800,7 @@ private class JourneyExecutionFailure(
   val completedResults: List<ResolvedJourneyResult> = emptyList(),
   val kind: ArtifactErrorKind = when (cause) {
     is ModelFailureException -> ArtifactErrorKind.MODEL_FAILURE
-    is MaestroFlowValidationInfrastructureException -> ArtifactErrorKind.SETUP_FAILURE
+    is ActionFlowPreparationException, is InvalidActionFlowException -> ArtifactErrorKind.SETUP_FAILURE
     else -> ArtifactErrorKind.JOURNEY_FAILURE
   },
 ) : Exception(message, cause)

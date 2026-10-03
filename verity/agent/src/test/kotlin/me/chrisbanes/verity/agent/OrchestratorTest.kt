@@ -7,6 +7,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNotEqualTo
 import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.io.IOException
 import java.nio.file.Files
@@ -14,9 +15,13 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
+import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
@@ -120,7 +125,7 @@ class OrchestratorTest {
       navigatorFactory = {
         NavigatorAgent("unused") { _, userMessage ->
           generatedActions = listOf(userMessage)
-          modelReply("appId: com.example.app\n---\n- scroll")
+          modelReply("""{"actions":[{"type":"defaultScroll"}]}""")
         }
       },
       inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
@@ -138,10 +143,10 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
 
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).isEqualTo(
-      listOf(LAUNCH_FLOW, "appId: com.example.app\n---\n- scroll"),
+    assertThat(session.renderedActionFlows).isEqualTo(
+      listOf(LAUNCH_FLOW, flow("- scroll")),
     )
-    assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate a Maestro YAML flow for these actions:\n1. navigate to settings page")
+    assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate the structured JSON action list for these instructions:\n1. navigate to settings page")
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
   }
 
@@ -155,7 +160,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _, _ -> modelReply(generatedYaml) }
+        NavigatorAgent("unused") { _, _ -> modelReply("""{"actions":[{"type":"defaultScroll"}]}""") }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -206,7 +211,7 @@ class OrchestratorTest {
 
     assertThat(result.passed).isTrue()
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 0 iterations")
-    assertThat(session.executedFlows).isEqualTo(listOf(LAUNCH_FLOW))
+    assertThat(session.renderedActionFlows).isEqualTo(listOf(LAUNCH_FLOW))
   }
 
   @Test
@@ -385,9 +390,10 @@ class OrchestratorTest {
   @Test
   fun `slow path segment records generated flow reference before execution`() = runTest {
     val recorder = RecordingArtifactRecorder()
+    var selected: ActionFlow? = null
     val generatedYaml = flow("- tapOn: \"Settings\"")
     val session = FakeDeviceSession(
-      onExecuteFlow = { yaml ->
+      onExecuteActions = { yaml ->
         if (yaml == generatedYaml) {
           assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
         }
@@ -396,7 +402,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _, _ -> modelReply(generatedYaml) }
+        NavigatorAgent("unused", validateFlow = { selected = it }) { _, _ -> modelReply("""{"actions":[{"type":"tapOnText","text":"Settings"}]}""") }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -421,7 +427,8 @@ class OrchestratorTest {
     assertThat(segment.actions).containsExactly("navigate to settings page")
     assertThat(segment.generatedFlows).containsExactly("flows/segment-000-actions.yaml")
     assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
+    assertThat(session.executedActionFlows.last()).isSameInstanceAs(selected)
   }
 
   @Test
@@ -430,7 +437,7 @@ class OrchestratorTest {
     val session = FakeDeviceSession()
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(generatedYaml) } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply("""{"actions":[{"type":"tapOnText","text":"Settings"}]}""") } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -452,7 +459,7 @@ class OrchestratorTest {
     val segment = result.segments.single()
     assertThat(segment.passed).isTrue()
     assertThat(segment.generatedFlows).isEmpty()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
   }
 
   @Test
@@ -652,7 +659,7 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
     // Should have executed launchApp + scroll flow + tap flow
-    assertThat(session.executedFlows.size).isEqualTo(3)
+    assertThat(session.renderedActionFlows.size).isEqualTo(3)
   }
 
   @Test
@@ -680,7 +687,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows.size).isEqualTo(2) // launchApp + scroll
+    assertThat(session.renderedActionFlows.size).isEqualTo(2) // launchApp + scroll
   }
 
   @Test
@@ -710,7 +717,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn: \"Settings\""))
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn: \"Settings\""))
   }
 
   @Test
@@ -738,7 +745,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: DOWN"))
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: DOWN"))
   }
 
   @Test
@@ -775,7 +782,7 @@ class OrchestratorTest {
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
     // tap Settings + scroll down + tap OK = 3 flows; press back uses pressKey, not executeFlow
-    assertThat(session.executedFlows).containsExactly(
+    assertThat(session.renderedActionFlows).containsExactly(
       LAUNCH_FLOW,
       flow("- tapOn: \"Settings\""),
       flow("- swipe:\n    direction: DOWN"),
@@ -810,7 +817,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(
+    assertThat(session.renderedActionFlows).containsExactly(
       LAUNCH_FLOW,
       flow("- swipe:\n    direction: DOWN"),
       flow("- tapOn: \"Settings\""),
@@ -844,7 +851,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- longPressOn: \"Settings\""))
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, flow("- longPressOn: \"Settings\""))
   }
 
   @Test
@@ -872,7 +879,7 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
-    assertThat(session.executedFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: UP"))
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, flow("- swipe:\n    direction: UP"))
   }
 
   @Test
@@ -936,11 +943,11 @@ class OrchestratorTest {
     )
     val navigator = NavigatorAgent("unused") { _, message ->
       messages += message
-      modelReply(flow("- scroll"))
+      modelReply("""{"actions":[{"type":"defaultScroll"}]}""")
     }
     val recorder = RecordingArtifactRecorder()
     val result = loopOrchestrator(session, inspector, navigator, recorder).run(loopJourney("Press D-pad down; navigate to settings page", 1, Platform.ANDROID_TV))
-    assertThat(messages).containsExactly("App ID: $APP_ID\n\nGenerate a Maestro YAML flow for these actions:\n1. Press D-pad down\n2. navigate to settings page")
+    assertThat(messages).containsExactly("App ID: $APP_ID\n\nGenerate the structured JSON action list for these instructions:\n1. Press D-pad down\n2. navigate to settings page")
     assertThat(events).containsExactly("flow")
     assertThat(result.segments.single().loop?.iterations).isEqualTo(1)
     assertThat(result.segments.single().generatedFlows).containsExactly("flows/segment-000-loop-000.yaml")
@@ -1099,6 +1106,18 @@ class OrchestratorTest {
     assertThat(events).containsExactly("flow")
   }
 
+  @Test fun `invalid final mapped action prevents direct key prefix in actions and loops`() = runTest {
+    for (loop in listOf(false, true)) {
+      val events = mutableListOf<String>()
+      val session = LoopSession(events, Platform.ANDROID_MOBILE)
+      val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"continue"}""") }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+      val steps = if (loop) listOf(JourneyStep.Loop("Press back; Tap [", "ready", 1)) else listOf(JourneyStep.Action("Press back"), JourneyStep.Action("Tap ["))
+      assertFailsWith<InvalidActionFlowException> { loopOrchestrator(session, inspector).run(Journey("invalid", APP_ID, Platform.ANDROID_MOBILE, steps)) }
+      assertThat(events).isEmpty()
+      assertThat(session.executedActionFlows).isEqualTo(listOf(ActionFlow(APP_ID, listOf(Interaction.LaunchApp()))))
+    }
+  }
+
   private fun loopJourney(body: String, max: Int, platform: Platform) = Journey(
     name = "loop-contract",
     app = APP_ID,
@@ -1120,12 +1139,15 @@ class OrchestratorTest {
     val onPress: suspend () -> Unit = {},
   ) : DeviceSession {
     var commands = 0
-    override suspend fun executeFlow(yaml: String): FlowResult {
-      if (yaml == LAUNCH_FLOW) return FlowResult(true)
+    val executedActionFlows = mutableListOf<ActionFlow>()
+    override suspend fun executeActions(flow: ActionFlow): FlowResult {
+      executedActionFlows += flow
+      if (flow.actions == listOf(Interaction.LaunchApp())) return FlowResult(true)
       commands++
       events += "flow"
       return FlowResult(commands != failAt, output = "command failed")
     }
+    override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) {
       events += keyName
       onPress()
@@ -1140,18 +1162,22 @@ class OrchestratorTest {
 
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
-    private val onExecuteFlow: (String) -> Unit = {},
+    private val onExecuteActions: (String) -> Unit = {},
     private val onCaptureScreenshot: (Path) -> Unit = {},
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
-    val executedFlows = mutableListOf<String>()
+    val renderedActionFlows = mutableListOf<String>()
     val capturedScreenshotPaths = mutableListOf<Path>()
 
-    override suspend fun executeFlow(yaml: String): FlowResult {
-      onExecuteFlow(yaml)
-      executedFlows += yaml
+    val executedActionFlows = mutableListOf<ActionFlow>()
+    override suspend fun executeActions(flow: ActionFlow): FlowResult {
+      executedActionFlows += flow
+      val yaml = ActionFlowYamlRenderer.render(flow)
+      onExecuteActions(yaml)
+      renderedActionFlows += yaml
       return FlowResult(success = true)
     }
+    override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
     override suspend fun captureScreenshot(output: Path) {
@@ -1218,8 +1244,8 @@ class OrchestratorTest {
 
   private companion object {
     const val APP_ID = "com.example.app"
-    const val LAUNCH_FLOW = "appId: $APP_ID\n---\n- launchApp"
-    fun flow(command: String) = "appId: $APP_ID\n---\n$command"
+    const val LAUNCH_FLOW = "appId: \"$APP_ID\"\n---\n- launchApp"
+    fun flow(command: String) = "appId: \"$APP_ID\"\n---\n$command"
 
     fun deleteRecursively(path: Path) {
       if (!Files.exists(path)) return

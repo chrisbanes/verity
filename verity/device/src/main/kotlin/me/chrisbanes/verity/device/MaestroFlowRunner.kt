@@ -4,11 +4,15 @@ import java.nio.file.Files
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import maestro.Maestro
+import maestro.orchestra.MaestroCommand
 import maestro.orchestra.Orchestra
 import maestro.orchestra.error.SyntaxError
 import maestro.orchestra.yaml.YamlCommandReader
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 
 /**
@@ -17,7 +21,7 @@ import me.chrisbanes.verity.core.model.FlowResult
  * Shared by [me.chrisbanes.verity.device.android.AndroidDeviceSession] and
  * [me.chrisbanes.verity.device.ios.IosDeviceSession].
  */
-internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowResult {
+internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String, onCommandStart: ((Int) -> Unit)? = null): FlowResult {
   val flowPath = withContext(Dispatchers.IO) {
     Files.createTempFile("verity-flow-", ".yaml")
   }
@@ -26,17 +30,75 @@ internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowRes
       Files.writeString(flowPath, yaml)
       YamlCommandReader.readCommands(flowPath)
     }
-    val result = Orchestra(maestro = maestro).runFlow(commands)
+    val result = Orchestra(maestro = maestro, onCommandStart = { index, _ -> onCommandStart?.invoke(index) }).runFlow(commands)
     FlowResult(success = result.success)
   } catch (error: SyntaxError) {
     FlowResult(success = false, output = error.message)
   } catch (error: CancellationException) {
+    currentCoroutineContext().ensureActive()
     throw error
   } catch (error: Exception) {
     FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
   } finally {
-    withContext(NonCancellable + Dispatchers.IO) {
-      Files.deleteIfExists(flowPath)
+    try {
+      withContext(NonCancellable + Dispatchers.IO) {
+        Files.deleteIfExists(flowPath)
+      }
+    } catch (error: CancellationException) {
+      currentCoroutineContext().ensureActive()
+      throw error
     }
+    currentCoroutineContext().ensureActive()
+  }
+}
+
+/** Preparation completes before the runtime failure boundary or any driver effect. */
+internal suspend fun executeMaestroActions(
+  maestro: Maestro,
+  flow: ActionFlow,
+  runCommands: (suspend (List<MaestroCommand>) -> Boolean)? = null,
+  compile: (ActionFlow) -> List<MaestroCommand> = MaestroActionCompiler::compile,
+  onCommandStart: ((Int) -> Unit)? = null,
+  createOrchestra: (Maestro) -> Orchestra = { Orchestra(maestro = it, onCommandStart = { index, _ -> onCommandStart?.invoke(index) }) },
+): FlowResult {
+  currentCoroutineContext().ensureActive()
+  val commands = try {
+    prepareMaestroActions(flow, compile)
+  } catch (error: CancellationException) {
+    currentCoroutineContext().ensureActive()
+    throw error
+  } catch (error: Exception) {
+    currentCoroutineContext().ensureActive()
+    throw error
+  }
+  currentCoroutineContext().ensureActive()
+  val execute: suspend (List<MaestroCommand>) -> Boolean = if (runCommands != null) {
+    runCommands
+  } else {
+    val orchestra = try {
+      withContext(Dispatchers.IO) { createOrchestra(maestro) }
+    } catch (error: CancellationException) {
+      currentCoroutineContext().ensureActive()
+      throw error
+    } catch (_: Exception) {
+      currentCoroutineContext().ensureActive()
+      throw ActionFlowPreparationException(ActionFlowPreparationPhase.RUNNER_INITIALIZATION)
+    }
+    val sdkRunner: suspend (List<MaestroCommand>) -> Boolean = { selected ->
+      withContext(Dispatchers.IO) { orchestra.runFlow(selected).success }
+    }
+    sdkRunner
+  }
+  currentCoroutineContext().ensureActive()
+  return try {
+    val success = execute(commands)
+    currentCoroutineContext().ensureActive()
+    FlowResult(success = success)
+  } catch (error: CancellationException) {
+    currentCoroutineContext().ensureActive()
+    throw error
+  } catch (error: Exception) {
+    currentCoroutineContext().ensureActive()
+    FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
   }
 }

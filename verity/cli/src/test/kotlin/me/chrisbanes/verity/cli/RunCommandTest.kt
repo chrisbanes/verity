@@ -43,10 +43,10 @@ import me.chrisbanes.verity.core.result.JourneyArtifactResult
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
+import me.chrisbanes.verity.device.ActionFlowPreparationException
+import me.chrisbanes.verity.device.ActionFlowPreparationPhase
 import me.chrisbanes.verity.device.FakeDeviceSession
-import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
-import me.chrisbanes.verity.device.MaestroFlowValidationPhase
-import me.chrisbanes.verity.device.validateMaestroFlow
+import me.chrisbanes.verity.device.validateActionFlow
 
 class RunCommandTest {
   private val json = Json { ignoreUnknownKeys = true }
@@ -1264,6 +1264,7 @@ class RunCommandTest {
 
   @Test fun `actual navigator local validation failure aborts suite with retained setup results`() {
     verifyNavigatorSuite("infrastructure", null)
+    verifyNavigatorSuite("local-invalid", null)
   }
 
   @Test fun `actual navigator model generation and scroll failures stop suite without exposing reply or provider text`() {
@@ -1274,15 +1275,15 @@ class RunCommandTest {
     for (type in listOf("flow", "scroll", "infrastructure")) for (write in listOf("journey", "summary")) verifyNavigatorSuite(type, write)
   }
 
-  @Test fun `actual navigator create write cleanup SDK and missing resource failures stay setup3`() {
-    for (type in listOf("infrastructure-create", "infrastructure-write", "infrastructure-cleanup", "infrastructure-sdk", "infrastructure-resource")) verifyNavigatorSuite(type, null)
+  @Test fun `actual navigator preparation phases stay setup3`() {
+    for (type in listOf("infrastructure-compile", "infrastructure-runner")) verifyNavigatorSuite(type, null)
   }
 
   private fun verifyNavigatorSuite(failureType: String, writeFailure: String?) {
     val dir = createTempDirectory("verity-navigator-suite").toFile()
     try {
       writeJourney(dir, "a.journey.yaml", "First", platform = "android")
-      writeJourneyWithSteps(dir, "b.journey.yaml", "Second", platform = "android", steps = listOf(if (failureType == "scroll") "tap Missing" else "complete onboarding wizard"))
+      writeJourneyWithSteps(dir, "b.journey.yaml", "Second", platform = "android", steps = if (failureType == "local-invalid") listOf("Press back", "Tap [") else listOf(if (failureType == "scroll") "tap Missing" else "complete onboarding wizard"))
       writeJourney(dir, "c.journey.yaml", "Third", platform = "android")
       val seen = mutableListOf<String>()
       val sessions = mutableListOf<FakeDeviceSession>()
@@ -1294,28 +1295,15 @@ class RunCommandTest {
         journeyRunner = { resolved, recorder ->
           seen += resolved.journey.name
           val session = FakeDeviceSession(platform = Platform.ANDROID_MOBILE, hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))).also { sessions += it }
-          val navigator = NavigatorAgent("context", validateFlow = { yaml ->
+          val navigator = NavigatorAgent("context", validateFlow = { flow ->
             when (failureType) {
-              "infrastructure-create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(navigatorSentinel) })
-
-              "infrastructure-write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(navigatorSentinel) })
-
-              "infrastructure-cleanup" -> validateMaestroFlow(yaml, deleteFlow = {
-                java.nio.file.Files.delete(it)
-                throw java.io.IOException(navigatorSentinel)
-              })
-
-              "infrastructure-sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(navigatorSentinel) })
-
-              "infrastructure-resource" -> validateMaestroFlow("appId: com.example.app\n---\n- runFlow: /unavailable/verity-missing.yaml")
-
-              "infrastructure" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(navigatorSentinel) })
-
-              else -> validateMaestroFlow(yaml)
+              "infrastructure", "infrastructure-compile" -> throw ActionFlowPreparationException(ActionFlowPreparationPhase.COMMAND_COMPILATION)
+              "infrastructure-runner" -> throw ActionFlowPreparationException(ActionFlowPreparationPhase.RUNNER_INITIALIZATION)
+              else -> validateActionFlow(flow)
             }
           }) { _, _ ->
             if (failureType.startsWith("infrastructure")) {
-              modelReply("appId: com.example.app\n---\n- launchApp")
+              modelReply("""{"actions":[{"type":"launchApp"}]}""")
             } else if (failureType == "null-options") {
               modelReply("appId: com.example.app\n---\n- tapOn:")
             } else if (failureType == "invalid") {
@@ -1328,10 +1316,10 @@ class RunCommandTest {
         },
       ) { error("unused suite") }
       val result = Verity().subcommands(command).test("--output-path ${output.absolutePath} run ${dir.absolutePath}")
-      val expectedKind = if (failureType.startsWith("infrastructure")) ArtifactErrorKind.SETUP_FAILURE else ArtifactErrorKind.MODEL_FAILURE
-      assertThat(result.statusCode).isEqualTo(if (writeFailure != null || failureType.startsWith("infrastructure")) 3 else 5)
+      val expectedKind = if ((failureType.startsWith("infrastructure") || failureType == "local-invalid")) ArtifactErrorKind.SETUP_FAILURE else ArtifactErrorKind.MODEL_FAILURE
+      assertThat(result.statusCode).isEqualTo(if (writeFailure != null || failureType.startsWith("infrastructure") || failureType == "local-invalid") 3 else 5)
       assertThat(seen).containsExactly("First", "Second")
-      assertThat(sessions[1].executedFlows.size).isEqualTo(1) // Static launch only; no generated flow or fallback tap.
+      assertThat(sessions[1].executedActionFlows.size).isEqualTo(1) // Static launch only; no generated flow or fallback tap.
       assertThat(sessions[1].pressedKeys).isEmpty()
       val run = File(output, "runs").listFiles()!!.single()
       assertThat(readJourney(File(run, "journeys/001-first.json")).passed).isTrue()
@@ -1393,7 +1381,7 @@ class RunCommandTest {
       val file = writeJourney(dir, "single.journey.yaml", "Single")
       val cases = listOf(
         ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.EMPTY) to 5,
-        MaestroFlowValidationInfrastructureException(MaestroFlowValidationPhase.WRITE) to 3,
+        ActionFlowPreparationException(ActionFlowPreparationPhase.COMMAND_COMPILATION) to 3,
         com.github.ajalt.clikt.core.CliktError("Contextual navigator failure segment 0", statusCode = 5) to 5,
         IllegalStateException(navigatorSentinel) to 3,
       )

@@ -10,7 +10,7 @@ Before running any skill:
 
 ## Flow Generation
 
-Generate Maestro YAML using bundled defaults, plus optional injected context from `get_context` when available. Follow these rules:
+For public MCP `run_flow`, generate Maestro YAML using the bundled reference returned by `get_context`, plus any app-specific context. The autonomous CLI uses a separate internal structured-action schema. Follow these rules for supplied YAML:
 
 - Start with `appId: <id>`, then `---`, then commands
 - Add `waitForAnimationToEnd` after navigation actions

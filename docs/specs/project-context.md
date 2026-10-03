@@ -19,7 +19,7 @@ Required context validates file presence, not the content of those files. A blan
 
 The directory resolves from `--context-path`, then `paths.context`. Required context resolves from `--require-context` or `require-context: true`, with optional context as the default.
 
-Normal `run` loads and validates project context before device connection and LLM construction. Required-context failure is a setup failure. A [dry run](dry-run.md) also validates context before any YAML generation. Output reports the status, or the number and ordered paths of loaded files, using paths relative to the working directory where possible.
+Normal `run` loads and validates project context before device connection and LLM construction. Required-context failure is a setup failure. A [dry run](dry-run.md) also validates context before any action generation. Output reports the status, or the number and ordered paths of loaded files, using paths relative to the working directory where possible.
 
 Bundled context remains separately available unless `--no-bundled-context` is supplied. Bundled guidance does not satisfy a requirement for project context.
 
