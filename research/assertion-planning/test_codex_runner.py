@@ -371,6 +371,40 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(f.ledger.read_bytes(),before)
             self.assertFalse(f.marker.exists())
 
+    def test_one_zero_attempt_startup_recovery_preserves_history_and_budget(self):
+        with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+            f = Fixture(d)
+            f.child_script(FAKE_STUDY.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+            previous = {'grantId':'previous-startup','grantSha256':'a'*64,'requestSha256':f.grant_data['requestSha256'],'freezeSha256':f.grant_data['freezeSha256'],'configurationSha256':f.grant_data['configurationSha256'],'state':'STOPPED','attempts':[]}
+            f.ledger.write_text(json.dumps({'formatVersion':1,'ledgerId':'fake-ledger','runs':[previous]}))
+            output = asyncio.run(f.run())
+            history = json.loads(f.ledger.read_text())
+            self.assertTrue(output['completed'])
+            self.assertTrue(output['cleanupVerified'])
+            self.assertEqual(history['runs'][0],previous)
+            self.assertEqual(len(history['runs']),2)
+            self.assertEqual(sum(len(r['attempts']) for r in history['runs']),33)
+            self.assertEqual(history['runs'][1]['attempts'][0]['sequence'],1)
+            self.assertEqual(output['counters']['qualificationAttempts'],1)
+            self.assertEqual(output['counters']['caseAttempts'],32)
+
+    def test_startup_recovery_rejects_changed_inputs_cancelled_or_second_recovery(self):
+        with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+            f = Fixture(d)
+            previous = {'grantId':'previous-startup','grantSha256':'a'*64,'requestSha256':f.grant_data['requestSha256'],'freezeSha256':f.grant_data['freezeSha256'],'configurationSha256':f.grant_data['configurationSha256'],'state':'STOPPED','attempts':[]}
+            for mutation in ('requestSha256','freezeSha256','configurationSha256','cancelled','second'):
+                with self.subTest(mutation=mutation):
+                    runs = [copy.deepcopy(previous)]
+                    if mutation == 'cancelled':runs[0]['state']='CANCELLED'
+                    elif mutation == 'second':runs.append(dict(previous,grantId='another-startup'))
+                    else:runs[0][mutation]='0'*64
+                    f.ledger.write_text(json.dumps({'formatVersion':1,'ledgerId':'fake-ledger','runs':runs}))
+                    before=f.ledger.read_bytes()
+                    with self.assertRaisesRegex(runner.Rejected,'^live rerun$'):
+                        asyncio.run(f.run())
+                    self.assertEqual(f.ledger.read_bytes(),before)
+                    self.assertFalse(f.marker.exists())
+
     def test_qualification_cross_field_mismatch_stops_after_one_attempt(self):
         with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
             f = Fixture(d)

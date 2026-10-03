@@ -193,7 +193,10 @@ def validate_history(history, grant):
     if attempts >= CAPS["totalAttempts"]:
         reject("budget")
     if history["runs"]:
-        reject("live rerun")
+        # A new root grant may recover one stopped startup before any turn was sent.
+        previous = history["runs"][0]
+        if len(history["runs"]) != 1 or attempts != 0 or previous["state"] != "STOPPED" or any(previous[key] != grant[key] for key in ("requestSha256", "freezeSha256", "configurationSha256")):
+            reject("live rerun")
     return attempts
 
 
