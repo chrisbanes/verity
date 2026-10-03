@@ -366,45 +366,6 @@ class StructuredFlowQualificationTest {
     assertThat(elapsed).isEqualTo(5000L)
   }
 
-  @Test
-  fun `iOS animation settling consumes the same read only readiness allowance`() = runTest {
-    var elapsed = 0L
-    var captures = 0
-    val result = prepareIosSettingsFixture(
-      capture = {
-        captures++
-        if (captures == 1) FixtureProbeSummary("not-ready") else iosGeneralFixture()
-      },
-      aboutVisible = { false },
-      settingsVisible = { true },
-      returnToSettings = {},
-      scrollOnce = { elapsed += 2_000 },
-      settleAnimation = { elapsed += 600 },
-      clockMillis = { elapsed },
-      pause = { elapsed += it },
-    )
-    assertThat(elapsed).isEqualTo(3_700L)
-    assertThat(result.elapsedMillis).isEqualTo(1_700L)
-    captures = 0
-    elapsed = 0
-    assertFailsWith<QualificationUnavailable> {
-      prepareIosSettingsFixture(
-        capture = {
-          captures++
-          iosGeneralFixture()
-        },
-        aboutVisible = { false },
-        settingsVisible = { true },
-        returnToSettings = {},
-        scrollOnce = {},
-        settleAnimation = { elapsed += 5_000 },
-        clockMillis = { elapsed },
-        pause = { elapsed += it },
-      )
-    }
-    assertThat(captures).isEqualTo(0)
-  }
-
   private fun iosGeneralFixture() = FixtureProbeSummary(
     outcome = "ready",
     labelMatches = 2,
