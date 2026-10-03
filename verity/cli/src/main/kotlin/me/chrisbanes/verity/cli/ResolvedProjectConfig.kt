@@ -15,6 +15,8 @@ data class ProjectCliOptions(
   val provider: String? = null,
   val navigatorModel: String? = null,
   val inspectorModel: String? = null,
+  val navigatorEffort: String? = null,
+  val inspectorEffort: String? = null,
   val assertionStrategy: String? = null,
 )
 
@@ -29,6 +31,8 @@ data class ResolvedProjectConfig(
   val provider: VerityProvider,
   val navigatorModel: LLModel,
   val inspectorModel: LLModel,
+  val navigatorEffort: String?,
+  val inspectorEffort: String?,
   val assertionStrategy: AssertionStrategy,
 ) {
   companion object {
@@ -59,6 +63,8 @@ data class ResolvedProjectConfig(
           default = provider.defaultInspectorModel,
           provider = provider,
         ),
+        navigatorEffort = cli.navigatorEffort ?: config.effectiveNavigatorEffort,
+        inspectorEffort = cli.inspectorEffort ?: config.effectiveInspectorEffort,
         assertionStrategy = resolveAssertionStrategy(
           cli.assertionStrategy ?: config.assertions?.strategy,
         ),

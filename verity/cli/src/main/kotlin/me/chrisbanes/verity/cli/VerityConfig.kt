@@ -15,6 +15,8 @@ data class VerityConfig(
   val provider: String? = null,
   @SerialName("navigator-model") val navigatorModel: String? = null,
   @SerialName("inspector-model") val inspectorModel: String? = null,
+  @SerialName("navigator-effort") val navigatorEffort: String? = null,
+  @SerialName("inspector-effort") val inspectorEffort: String? = null,
   @SerialName("require-context") val requireContext: Boolean? = null,
 ) {
   val effectiveProvider: String?
@@ -25,6 +27,12 @@ data class VerityConfig(
 
   val effectiveInspectorModel: String?
     get() = llm?.inspectorModel ?: inspectorModel
+
+  val effectiveNavigatorEffort: String?
+    get() = llm?.navigatorEffort ?: navigatorEffort
+
+  val effectiveInspectorEffort: String?
+    get() = llm?.inspectorEffort ?: inspectorEffort
 
   companion object {
     fun fromYaml(yaml: String): VerityConfig = Yaml.default.decodeFromString(serializer(), yaml)
@@ -58,6 +66,8 @@ data class VerityLlmConfig(
   val provider: String? = null,
   @SerialName("navigator-model") val navigatorModel: String? = null,
   @SerialName("inspector-model") val inspectorModel: String? = null,
+  @SerialName("navigator-effort") val navigatorEffort: String? = null,
+  @SerialName("inspector-effort") val inspectorEffort: String? = null,
 )
 
 @Serializable

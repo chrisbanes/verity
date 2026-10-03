@@ -91,6 +91,8 @@ class ConfigResolverTest {
         provider = "anthropic",
         navigatorModel = "claude-haiku-4-5",
         inspectorModel = "claude-sonnet-4-5",
+        navigatorEffort = "config-nav",
+        inspectorEffort = "config-inspector",
       ),
       assertions = VerityAssertionsConfig(strategy = "tree"),
     )
@@ -107,6 +109,7 @@ class ConfigResolverTest {
         provider = "anthropic",
         navigatorModel = "claude-sonnet-4-5",
         inspectorModel = "claude-opus-4-5",
+        navigatorEffort = " high ",
         assertionStrategy = "visual",
       ),
     )
@@ -121,6 +124,8 @@ class ConfigResolverTest {
     assertThat(resolved.provider.name).isEqualTo("anthropic")
     assertThat(resolved.navigatorModel.id).isEqualTo("claude-sonnet-4-5")
     assertThat(resolved.inspectorModel.id).isEqualTo("claude-opus-4-5")
+    assertThat(resolved.navigatorEffort).isEqualTo(" high ")
+    assertThat(resolved.inspectorEffort).isEqualTo("config-inspector")
     assertThat(resolved.assertionStrategy).isEqualTo(AssertionStrategy.VISUAL)
   }
 
@@ -158,7 +163,29 @@ class ConfigResolverTest {
     assertThat(resolved.deviceId).isNull()
     assertThat(resolved.disableAnimations).isEqualTo(false)
     assertThat(resolved.provider.name).isEqualTo("anthropic")
+    assertThat(resolved.navigatorEffort).isNull()
+    assertThat(resolved.inspectorEffort).isNull()
     assertThat(resolved.assertionStrategy).isEqualTo(AssertionStrategy.INFER)
+  }
+
+  @Test
+  fun `cli effort settings override nested and top-level values independently`() {
+    val resolved = ResolvedProjectConfig.resolve(
+      config = VerityConfig(
+        navigatorEffort = "top-nav",
+        inspectorEffort = "top-inspector",
+        llm = VerityLlmConfig(
+          navigatorEffort = "nested-nav",
+          inspectorEffort = "nested-inspector",
+        ),
+      ),
+      cli = ProjectCliOptions(
+        inspectorEffort = "none",
+      ),
+    )
+
+    assertThat(resolved.navigatorEffort).isEqualTo("nested-nav")
+    assertThat(resolved.inspectorEffort).isEqualTo("none")
   }
 
   @Test

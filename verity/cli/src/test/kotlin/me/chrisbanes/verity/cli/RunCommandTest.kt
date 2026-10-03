@@ -46,10 +46,100 @@ import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.ActionFlowPreparationPhase
 import me.chrisbanes.verity.device.FakeDeviceSession
+import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.validateActionFlow
 
 class RunCommandTest {
   private val json = Json { ignoreUnknownKeys = true }
+
+  @Test
+  fun `unsupported navigator effort exits setup before device session or client creation`() {
+    val dir = createTempDirectory("verity-effort-preflight").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      var devicePreflightCalls = 0
+      var sessionCalls = 0
+      var clientCalls = 0
+      val checker = CliPreflightChecker(
+        environment = { null },
+        devicePreflightChecker = DevicePreflightChecker { _, _ ->
+          devicePreflightCalls += 1
+          me.chrisbanes.verity.core.preflight.PreflightReport()
+        },
+      )
+      val command = RunCommand(
+        preflightChecker = { request, config, includeDevice, includeInspector ->
+          checker.check(request, config, includeDevice, includeInspector)
+        },
+        sessionFactory = { _, _, _ ->
+          sessionCalls += 1
+          error("Device session must not be created")
+        },
+        clientFactory = { _, _ ->
+          clientCalls += 1
+          error("LLM client must not be created")
+        },
+      )
+
+      val result = Verity().subcommands(command).test(
+        "--provider openai --api-key test-key --navigator-model gpt-5 --navigator-effort none run ${file.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("provider.effort.unsupported")
+      assertThat(devicePreflightCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+      assertThat(clientCalls).isEqualTo(0)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `generated preview rejects unsupported navigator before client while fast preview stays lazy`() {
+    val dir = createTempDirectory("verity-effort-preview").toFile()
+    try {
+      val generated = writeJourneyWithSteps(dir, "generated.journey.yaml", "Generated", steps = listOf("complete onboarding wizard"))
+      var preflightCalls = 0
+      var clientCalls = 0
+      var sessionCalls = 0
+      val command = RunCommand(
+        preflightChecker = { request, config, includeDevice, includeInspector ->
+          preflightCalls += 1
+          CliPreflightChecker(environment = { "test-key" }).check(request, config, includeDevice, includeInspector)
+        },
+        clientFactory = { _, _ ->
+          clientCalls += 1
+          error("LLM client must not be created")
+        },
+        sessionFactory = { _, _, _ ->
+          sessionCalls += 1
+          error("Device session must not be created")
+        },
+      )
+
+      val rejected = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "generated-output").absolutePath} --provider openai --api-key test-key --navigator-model gpt-5 --navigator-effort none run --dry-run ${generated.absolutePath}",
+      )
+      assertThat(rejected.statusCode).isEqualTo(3)
+      assertThat(rejected.output).contains("provider.effort.unsupported")
+      assertThat(preflightCalls).isEqualTo(1)
+      assertThat(clientCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+
+      preflightCalls = 0
+      val fast = writeJourney(dir, "fast.journey.yaml", "Fast")
+      val accepted = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "fast-output").absolutePath} --provider unknown --navigator-effort invalid --inspector-effort invalid run --dry-run ${fast.absolutePath}",
+      )
+      assertThat(accepted.statusCode).isEqualTo(0)
+      assertThat(preflightCalls).isEqualTo(0)
+      assertThat(clientCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
 
   @Test
   fun `single-file input runs one journey`() {
