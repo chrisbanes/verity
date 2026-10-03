@@ -25,6 +25,8 @@ dependencies {
   implementation(libs.grpc.protobuf)
 
   testFixturesImplementation(project(":verity:core"))
+  testFixturesImplementation(libs.maestro.client)
+  testFixturesImplementation(libs.kotlinx.coroutines.core)
 }
 
 val grpcVersion = extensions.getByType<VersionCatalogsExtension>()

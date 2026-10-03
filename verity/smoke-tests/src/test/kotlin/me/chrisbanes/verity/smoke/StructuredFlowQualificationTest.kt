@@ -74,17 +74,67 @@ class StructuredFlowQualificationTest {
   }
 
   @Test
-  fun `safe fixture needs one exact label and one usable unique identifier`() {
-    val source = HierarchyNode(mapOf("text" to "General", "resource-id" to "safe.id[1]"))
-    assertThat(resolveFixtureSelector(source, "General")).isEqualTo(Regex.escape("safe.id[1]"))
-    for (tree in listOf(
-      HierarchyNode(mapOf("text" to "General")),
-      HierarchyNode(children = listOf(source, source)),
-      HierarchyNode(mapOf("text" to "Another", "resource-id" to "safe.id[1]")),
-      HierarchyNode(children = listOf(source, HierarchyNode(mapOf("text" to "Unrelated", "resource-id" to "safe.id[1]")))),
-    )) {
-      assertFailsWith<QualificationUnavailable> { resolveFixtureSelector(tree, "General") }
+  fun `fixture readiness retries delayed snapshots but missing readiness is unavailable`() = runTest {
+    var attempts = 0
+    var elapsed = 0L
+    val delayed = awaitFixtureReadiness(
+      clockMillis = { elapsed },
+      pause = { elapsed += it },
+      capture = {
+        attempts++
+        FixtureProbeSummary(outcome = if (attempts < 3) "not-ready" else "ready", elapsedMillis = elapsed)
+      },
+    )
+    assertThat(delayed.outcome).isEqualTo("ready")
+    assertThat(attempts).isEqualTo(3)
+    assertThat(elapsed).isEqualTo(500L)
+
+    elapsed = 0
+    attempts = 0
+    assertFailsWith<QualificationUnavailable> {
+      awaitFixtureReadiness(
+        clockMillis = { elapsed },
+        pause = { elapsed += it },
+        capture = {
+          attempts++
+          FixtureProbeSummary(outcome = "not-ready", elapsedMillis = elapsed)
+        },
+      )
     }
+    assertThat(attempts).isEqualTo(21)
+    assertThat(elapsed).isEqualTo(5000L)
+
+    elapsed = 0
+    var late: FixtureProbeSummary? = null
+    assertFailsWith<QualificationUnavailable> {
+      awaitFixtureReadiness(
+        clockMillis = { elapsed },
+        pause = {},
+        onSample = { late = it },
+        capture = {
+          elapsed = 5001
+          FixtureProbeSummary(outcome = "ready", resourceId = "approved.id")
+        },
+      )
+    }
+    assertThat(late?.outcome).isEqualTo("readiness-timeout")
+  }
+
+  @Test
+  fun `fixture readiness does not retry ambiguous or mismatched SDK selection`() = runTest {
+    var attempts = 0
+    val error = assertFailsWith<QualificationUnavailable> {
+      awaitFixtureReadiness(
+        clockMillis = { 0 },
+        pause = {},
+        capture = {
+          attempts++
+          FixtureProbeSummary(outcome = "selection-mismatch", elapsedMillis = 0)
+        },
+      )
+    }
+    assertThat(error.outcome).isEqualTo("unavailable")
+    assertThat(attempts).isEqualTo(1)
   }
 
   @Test

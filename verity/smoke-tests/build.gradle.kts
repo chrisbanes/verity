@@ -5,6 +5,7 @@ plugins {
 dependencies {
   testImplementation(project(":verity:core"))
   testImplementation(project(":verity:device"))
+  testImplementation(testFixtures(project(":verity:device")))
   testImplementation(project(":verity:agent"))
   testImplementation(testFixtures(project(":verity:agent")))
   testImplementation(libs.kotlinx.serialization.json)

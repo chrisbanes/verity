@@ -21,7 +21,7 @@ import me.chrisbanes.verity.device.executeMaestroFlow
  * animations) and owns the connection lifecycle.
  */
 class AndroidDeviceSession(
-  private val maestro: Maestro,
+  internal val maestro: Maestro,
   override val platform: Platform,
   private val onCommandStart: ((Int) -> Unit)?,
   private val executeShell: (String) -> String,

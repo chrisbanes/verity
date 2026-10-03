@@ -28,14 +28,76 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.DeviceSessionFactory
+import me.chrisbanes.verity.device.QualificationSelectorEvidence
+import me.chrisbanes.verity.device.QualificationSelectorProbe
 
 internal class QualificationUnavailable(message: String, val outcome: String = "unavailable") : IllegalStateException(message)
+
+internal data class FixtureProbeSummary(
+  val outcome: String,
+  val labelMatches: Int = 0,
+  val textMatches: Int = 0,
+  val idMatches: Int = 0,
+  val resourceId: String? = null,
+  val selectedPath: String? = null,
+  val selectedBounds: String? = null,
+  val elapsedMillis: Long = 0,
+)
+
+internal suspend fun awaitFixtureReadiness(
+  capture: suspend () -> FixtureProbeSummary,
+  onSample: (FixtureProbeSummary) -> Unit = {},
+  clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+  pause: suspend (Long) -> Unit = { delay(it) },
+): FixtureProbeSummary {
+  val started = clockMillis()
+  var last: FixtureProbeSummary
+  while (true) {
+    val captured = capture()
+    val elapsed = (clockMillis() - started).coerceAtLeast(0)
+    last = captured.copy(
+      outcome = if (elapsed > 5_000) "readiness-timeout" else captured.outcome,
+      elapsedMillis = elapsed,
+    )
+    onSample(last)
+    if (elapsed > 5_000) throw QualificationUnavailable("Safe Settings fixture readiness exceeded 5000 ms")
+    when (last.outcome) {
+      "ready" -> return last
+      "not-ready" -> Unit
+      else -> throw QualificationUnavailable("Safe Settings fixture selector unavailable: ${last.outcome}")
+    }
+    if (elapsed >= 5_000) throw QualificationUnavailable("Safe Settings fixture did not become ready within 5000 ms")
+    pause(minOf(250L, 5_000L - elapsed))
+  }
+}
+
+private fun QualificationSelectorEvidence.toFixtureSummary() = FixtureProbeSummary(
+  outcome = outcome,
+  labelMatches = labelMatches,
+  textMatches = textMatches,
+  idMatches = idMatches,
+  resourceId = resourceId,
+  selectedPath = selectedPath,
+  selectedBounds = selectedBounds,
+  elapsedMillis = elapsedMillis,
+)
+
+private fun MutableMap<String, String>.recordFixtureEvidence(label: String, evidence: FixtureProbeSummary) {
+  put("fixtureLabel", label)
+  put("fixtureOutcome", evidence.outcome)
+  put("fixtureLabelMatches", evidence.labelMatches.toString())
+  put("fixtureTextMatches", evidence.textMatches.toString())
+  put("fixtureIdMatches", evidence.idMatches.toString())
+  put("fixtureProbeElapsedMillis", evidence.elapsedMillis.toString())
+  evidence.resourceId?.let { put("fixtureResourceId", it) }
+  evidence.selectedPath?.let { put("fixtureSelectedPath", it) }
+  evidence.selectedBounds?.let { put("fixtureSelectedBounds", it) }
+}
 
 /** Metadata is checked before the injected connector can touch any device. */
 internal suspend fun connectQualifiedTarget(
@@ -97,20 +159,6 @@ private suspend fun verifyQualificationTarget(platform: Platform, target: String
     throw QualificationUnavailable("Target receipt invalid")
   }
   return metadata
-}
-
-/** Exact fixture label and ID uniqueness are required; no hierarchy is persisted. */
-internal fun resolveFixtureSelector(tree: HierarchyNode, label: String): String {
-  fun nodes(node: HierarchyNode): List<HierarchyNode> = listOf(node) + node.children.flatMap(::nodes)
-  val all = nodes(tree)
-  val matches = all.filter { it.attributes["text"] == label }
-  if (matches.size != 1) throw QualificationUnavailable("Safe Settings source label unavailable or ambiguous")
-  val id = matches.single().attributes["resource-id"]
-    ?.takeIf { it.isNotBlank() } ?: throw QualificationUnavailable("Safe Settings source identifier unavailable")
-  if (all.count { it.attributes["resource-id"] == id } != 1) {
-    throw QualificationUnavailable("Safe Settings source identifier ambiguous")
-  }
-  return Regex.escape(id)
 }
 
 /** Cooperative timeout plus honest cleanup accounting; root supplies the external hard backstop. */
@@ -296,9 +344,11 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
             val resetYaml = "appId: ${yamlScalar(appId)}\n---\n- launchApp:\n    clearState: false\n"
             check(route.execute(session, reset, resetYaml).success) { "Settings reset failed" }
             details["resetInputSha256"] = sha256(if (route == QualificationRoute.TYPED) encodeFlow(reset) else resetYaml)
-            val tree = session.captureHierarchyTree()
-            val resourceRegex = resolveFixtureSelector(tree, source)
-            details["sourceIdRegex"] = resourceRegex
+            val fixture = awaitFixtureReadiness(
+              capture = { QualificationSelectorProbe.capture(session, source).toFixtureSummary() },
+              onSample = { details.recordFixtureEvidence(source, it) },
+            )
+            val resourceRegex = Regex.escape(checkNotNull(fixture.resourceId))
             starts.clear()
             if (case == "text" || case == "id") {
               val selector = if (case == "text") Regex.escape(source) else resourceRegex

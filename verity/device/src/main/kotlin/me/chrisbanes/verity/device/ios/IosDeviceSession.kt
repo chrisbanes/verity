@@ -19,7 +19,7 @@ import me.chrisbanes.verity.device.executeMaestroFlow
  * with the on-device XCTest runner over HTTP (port 22087).
  */
 class IosDeviceSession(
-  private val maestro: Maestro,
+  internal val maestro: Maestro,
   private val iosDevice: device.IOSDevice,
   private val onCommandStart: ((Int) -> Unit)? = null,
 ) : DeviceSession {
