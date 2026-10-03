@@ -44,7 +44,7 @@ For each screenshot, reuse its exact relative link target here and in Summary an
 
 ## Saved evidence
 
-List only files that were saved and verified under this report's `evidence/` directory. Use relative paths and identify the target and evidence type. Do not include `snapshot_id` values. If a screenshot save returned an error or cancellation, do not infer that its destination is absent; follow the shared screenshot procedure and do not link it as a successful capture.
+List only files that were saved and verified under this report's host-created `evidence/` directory. The report and returned text evidence are host-persisted; only a requested saved screenshot PNG requires this path to be visible to the MCP screenshot writer. Use relative paths and identify the target and evidence type. Do not include `snapshot_id` values. If a screenshot save returned an error or cancellation, do not infer that its destination is absent; follow the shared screenshot procedure and do not link it as a successful capture.
 
 | Target | Type | Verified relative path | Contents |
 | --- | --- | --- | --- |
@@ -58,5 +58,7 @@ If none were saved, write `No evidence files were saved.` and remove the empty r
 - **Close attempt:** [Exactly one successful call / Exactly one failed call / Not applicable / Unknown]
 - **Cleanup result:** [what the close result established; do not infer success from a missing response]
 - **Restoration:** [If Android animations were disabled by setup and close succeeded, state only that those setup-changed animation scales were restored. Otherwise state `No restoration success is claimed.`]
+
+If `open_session` returns a server-side preflight failure, record that the session did not open, no close call applied, and every target is `Not inspected`.
 
 Do not claim that the previous app screen, position, focus, or app data was restored.
