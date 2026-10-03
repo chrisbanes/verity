@@ -86,6 +86,7 @@ class VerityMcpServer(
     registerPressKey(server)
     registerCaptureScreenshot(server)
     registerCaptureHierarchy(server)
+    registerCaptureFocusedTree(server)
     registerDiffHierarchy(server)
     registerCheckVisible(server)
     registerCheckFocused(server)
@@ -457,6 +458,43 @@ class VerityMcpServer(
         val snapshotId = snapshotStore.add(sessionId, tree)
         val rendered = HierarchyRenderer.render(tree, filter)
         success("snapshot_id: $snapshotId\n\n$rendered")
+      }
+    }
+  }
+
+  private fun registerCaptureFocusedTree(server: Server) {
+    server.addSafeTool(
+      name = "capture_focused_tree",
+      description = "Capture bounded focused context (100 nodes, 12,000 UTF-16 units) with a full hierarchy snapshot",
+      inputSchema = ToolSchema(
+        properties = buildJsonObject {
+          putJsonObject("session_id") {
+            put("type", "string")
+            put("description", "Session ID returned by open_session")
+          }
+          putJsonObject("filter") {
+            put("type", "string")
+            put("description", "Filter level: focus, content (default), or all")
+            putJsonArray("enum") {
+              add(JsonPrimitive("focus"))
+              add(JsonPrimitive("content"))
+              add(JsonPrimitive("all"))
+            }
+          }
+        },
+      ),
+      required = listOf("session_id"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val filter = when (args.string("filter")) {
+        "focus" -> HierarchyFilter.FOCUS
+        "all" -> HierarchyFilter.ALL
+        else -> HierarchyFilter.CONTENT
+      }
+      sessionManager.withSession(sessionId) { session ->
+        val tree = session.captureHierarchyTree()
+        val snapshotId = snapshotStore.add(sessionId, tree)
+        success(McpFocusedTreeRenderer.render(tree, snapshotId.toString(), filter))
       }
     }
   }

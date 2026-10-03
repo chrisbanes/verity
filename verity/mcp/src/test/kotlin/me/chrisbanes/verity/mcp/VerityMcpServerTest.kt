@@ -35,7 +35,7 @@ class VerityMcpServerTest {
   }
 
   @Test
-  fun `server registers all 13 tools`() {
+  fun `server registers all 14 tools`() {
     val server = VerityMcpServer().create()
     assertThat(server.tools.keys).containsExactlyInAnyOrder(
       "open_session",
@@ -46,6 +46,7 @@ class VerityMcpServerTest {
       "press_key",
       "capture_screenshot",
       "capture_hierarchy",
+      "capture_focused_tree",
       "diff_hierarchy",
       "check_visible",
       "check_focused",
@@ -64,9 +65,9 @@ class VerityMcpServerTest {
   }
 
   @Test
-  fun `tool count is exactly 13`() {
+  fun `tool count is exactly 14`() {
     val server = VerityMcpServer().create()
-    assertThat(server.tools.size).isEqualTo(13)
+    assertThat(server.tools.size).isEqualTo(14)
   }
 
   @Test
