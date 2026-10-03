@@ -445,9 +445,10 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
             val resetYaml = "appId: ${yamlScalar(appId)}\n---\n- launchApp:\n    clearState: false\n"
             check(route.execute(session, reset, resetYaml).success) { "Settings reset failed" }
             details["resetInputSha256"] = sha256(if (route == QualificationRoute.TYPED) encodeFlow(reset) else resetYaml)
+            val captureFixture = QualificationSelectorProbe.captureForSession(session, source)
             val fixture = if (platform == Platform.IOS) {
               prepareIosSettingsFixture(
-                capture = { QualificationSelectorProbe.capture(session, source).toFixtureSummary() },
+                capture = { captureFixture().toFixtureSummary() },
                 aboutVisible = { session.containsText("About", ignoreCase = false) },
                 settingsVisible = { session.containsText("Settings", ignoreCase = false) },
                 returnToSettings = {
@@ -470,7 +471,7 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
               )
             } else {
               awaitFixtureReadiness(
-                capture = { QualificationSelectorProbe.capture(session, source).toFixtureSummary() },
+                capture = { captureFixture().toFixtureSummary() },
                 onSample = { details.recordFixtureEvidence(source, it) },
               )
             }

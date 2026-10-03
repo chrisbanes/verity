@@ -21,6 +21,21 @@ import me.chrisbanes.verity.device.android.AndroidDeviceSession
 
 class QualificationSelectorProbeTest {
   @Test
+  fun `session probe reuses fixed dimensions and refreshes every hierarchy`() = kotlinx.coroutines.test.runTest {
+    val driver = ProbeDriver(TreeNode(children = listOf(node("General", "prefs:general", clickable = true))))
+    val session = AndroidDeviceSession(Maestro(driver), Platform.ANDROID_MOBILE, executeShell = { "" })
+    val capture = QualificationSelectorProbe.captureForSession(session, "General")
+    assertThat(capture().outcome).isEqualTo("ready")
+    val firstInfoCalls = driver.infoCalls
+    driver.root = TreeNode()
+    assertThat(capture().outcome).isEqualTo("not-ready")
+    assertThat(driver.hierarchyCalls).isEqualTo(2)
+    assertThat(driver.infoCalls).isEqualTo(firstInfoCalls + 1)
+    QualificationSelectorProbe.captureForSession(session, "General")()
+    assertThat(driver.infoCalls).isEqualTo(firstInfoCalls + 3)
+  }
+
+  @Test
   fun `SDK selector proves the unique literal node despite a shared ancestor identifier`() {
     val approved = node("Network & internet", "pkg:id/title", clickable = true)
     val root = TreeNode(
@@ -350,14 +365,19 @@ class QualificationSelectorProbeTest {
   )
 
   private class ProbeDriver(
-    private val root: TreeNode,
+    var root: TreeNode,
     private val info: DeviceInfo = DeviceInfo(MaestroPlatform.ANDROID, 100, 100, 100, 100),
   ) : Driver {
+    var infoCalls = 0
+    var hierarchyCalls = 0
     val taps = mutableListOf<Point>()
     override fun name() = "qualification-probe"
     override fun open() = Unit
     override fun close() = Unit
-    override fun deviceInfo() = info
+    override fun deviceInfo(): DeviceInfo {
+      infoCalls++
+      return info
+    }
     override fun launchApp(appId: String, launchArguments: Map<String, Any>) = Unit
     override fun stopApp(appId: String) = Unit
     override fun killApp(appId: String) = Unit
@@ -368,7 +388,10 @@ class QualificationSelectorProbeTest {
     }
     override fun longPress(point: Point) = Unit
     override fun pressKey(code: KeyCode) = Unit
-    override fun contentDescriptor(excludeKeyboardElements: Boolean) = root
+    override fun contentDescriptor(excludeKeyboardElements: Boolean): TreeNode {
+      hierarchyCalls++
+      return root
+    }
     override fun scrollVertical() = Unit
     override fun isKeyboardVisible() = false
     override fun swipe(start: Point, end: Point, durationMs: Long) = Unit

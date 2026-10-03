@@ -36,17 +36,26 @@ object QualificationSelectorProbe {
   private val regexOptions = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL, RegexOption.MULTILINE)
   private val labelAttributes = listOf("text", "accessibilityText", "hintText", "error")
 
+  suspend fun capture(session: DeviceSession, approvedLabel: String): QualificationSelectorEvidence = captureForSession(session, approvedLabel)()
+
+  /** Fixed-orientation qualification cases reuse dimensions, never hierarchy snapshots. */
   @Suppress("DEPRECATION")
-  suspend fun capture(session: DeviceSession, approvedLabel: String): QualificationSelectorEvidence {
-    val started = System.nanoTime()
-    val (root, deviceInfo) = withContext(Dispatchers.IO) {
-      when (session) {
-        is AndroidDeviceSession -> session.maestro.viewHierarchy(false).root to session.maestro.deviceInfo()
-        is IosDeviceSession -> session.maestro.viewHierarchy(false).root to session.maestro.deviceInfo()
-        else -> error("Unsupported qualification session")
-      }
+  fun captureForSession(session: DeviceSession, approvedLabel: String): suspend () -> QualificationSelectorEvidence {
+    val maestro = when (session) {
+      is AndroidDeviceSession -> session.maestro
+      is IosDeviceSession -> session.maestro
+      else -> error("Unsupported qualification session")
     }
-    return inspect(root, approvedLabel, deviceInfo).copy(elapsedMillis = (System.nanoTime() - started) / 1_000_000)
+    var dimensions: DeviceInfo? = null
+    return {
+      val started = System.nanoTime()
+      val (root, deviceInfo) = withContext(Dispatchers.IO) {
+        val root = maestro.viewHierarchy(false).root
+        val info = dimensions ?: maestro.deviceInfo().also { dimensions = it }
+        root to info
+      }
+      inspect(root, approvedLabel, deviceInfo).copy(elapsedMillis = (System.nanoTime() - started) / 1_000_000)
+    }
   }
 
   /** Uses SDK filters over one immutable snapshot; no node text is returned to the caller. */
