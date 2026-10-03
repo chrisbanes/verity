@@ -640,7 +640,8 @@ async def assertion_attempt(child, model_input, row, root, schema, prompt, end, 
                 raise Poisoned()
             if method in TURN_DELTAS or method in ("rawResponseItem/completed", "rawResponse/completed", "turn/started", "thread/tokenUsage/updated", "error"):
                 if method == "turn/started":
-                    if params.get("turn", {}).get("id") != child.turn_id:
+                    turn = params.get("turn")
+                    if not isinstance(turn, dict) or turn.get("id") != child.turn_id:
                         raise Poisoned()
                 elif method != "thread/tokenUsage/updated" and params.get("turnId") != child.turn_id:
                     raise Poisoned()
@@ -658,7 +659,7 @@ async def assertion_attempt(child, model_input, row, root, schema, prompt, end, 
                 if params.get("turnId") != child.turn_id:
                     raise Poisoned()
                 item = params.get("item", {})
-                if item.get("type") not in ("agentMessage", "reasoning", "userMessage"):
+                if not isinstance(item, dict) or item.get("type") not in ("agentMessage", "reasoning", "userMessage"):
                     raise Poisoned()
                 if method == "item/completed" and item.get("type") == "agentMessage" and item.get("phase") == "final_answer":
                     text = item.get("text")
@@ -667,9 +668,9 @@ async def assertion_attempt(child, model_input, row, root, schema, prompt, end, 
                     final_text = text
             elif method == "turn/completed":
                 turn = params.get("turn", {})
-                if turn.get("id") != child.turn_id or not isinstance(turn.get("items"), list):
+                if not isinstance(turn, dict) or turn.get("id") != child.turn_id or not isinstance(turn.get("items"), list):
                     raise Poisoned()
-                if any(item.get("type") not in ("agentMessage", "reasoning", "userMessage") for item in turn["items"]):
+                if any(not isinstance(item, dict) or item.get("type") not in ("agentMessage", "reasoning", "userMessage") for item in turn["items"]):
                     raise Poisoned()
                 if turn.get("status") != "completed" or turn.get("error") is not None:
                     break

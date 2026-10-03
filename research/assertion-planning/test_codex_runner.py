@@ -266,6 +266,28 @@ class RunnerTest(unittest.TestCase):
                     refusals = [json.loads(line) for line in f.marker.read_text().splitlines() if json.loads(line)['kind'] == 'refusal']
                     self.assertEqual(refusals[0]['error'], {'code':-32601,'message':'Research runner refuses server callbacks'})
 
+    def test_malformed_completion_objects_are_poisoned(self):
+        corruptions = [
+            ("notify('turn/completed', {'threadId':params['threadId'],'turn':{'id':tid,'status':'completed','items':[None],'error':None}})"),
+            ("notify('turn/completed', {'threadId':params['threadId'],'turn':{'id':tid,'status':'completed','items':['bad'],'error':None}})"),
+            ("notify('turn/completed', {'threadId':params['threadId'],'turn':None})"),
+            ("notify('item/completed', {'threadId':params['threadId'],'turnId':tid,'item':None})"),
+            ("notify('turn/started', {'threadId':params['threadId'],'turn':None})"),
+        ]
+        for bad in corruptions:
+            with self.subTest(frame=bad), tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+                f = Fixture(d)
+                script = FAKE_STUDY.replace("notify('item/completed',", bad + "\n        notify('item/completed',")
+                f.child_script(script.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+                output = asyncio.run(f.run())
+                self.assertFalse(output['completed'])
+                self.assertEqual(output['stopReason'],'POISONED')
+                self.assertEqual(output['counters']['totalAttempts'],1)
+                self.assertTrue(output['cleanupVerified'])
+                self.assertIsNone(output['qualification']['responseText'])
+                self.assertEqual(json.loads(f.output.read_text())['stopReason'],'POISONED')
+                self.assertTrue(all(row['status'] in ('UNATTEMPTED','BYPASS') for row in output['cases']))
+
     def test_bad_frames_terminal_failures_and_deadlines_preserve_consumption(self):
         corruptions = {
             'malformed': "print('{bad',flush=True)",
