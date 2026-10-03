@@ -781,6 +781,48 @@ class AssertionPlanningResearchTest {
     assertThat(incompleteEvaluation.summaries.single { it.arm == EvaluationArm.MODEL }.unattemptedCases).isEqualTo(1)
   }
 
+  @Test
+  fun `saved timeout and transport failures retain distinct fallback reasons`() {
+    val path = corpusPath()
+    val request = AssertionPlanningResearch.buildRequestEnvelope(path)
+    val requestBytes = Json.encodeToString(request).toByteArray()
+    val output = completeSavedOutput(request, sha256(requestBytes)).let { original ->
+      original.copy(
+        cases = original.cases.map { saved ->
+          val kind = when (saved.caseId) {
+            "text-01" -> SafeFailureKind.TIMEOUT
+            "text-02" -> SafeFailureKind.TRANSPORT
+            else -> null
+          }
+          if (kind == null) {
+            saved
+          } else {
+            saved.copy(
+              status = SavedCaseStatus.FAILURE,
+              responseText = null,
+              storedTextSha256 = null,
+              redactionStatus = null,
+              failureKind = kind,
+            )
+          }
+        },
+      )
+    }
+    val outputBytes = Json.encodeToString(output).toByteArray()
+    listOf(0.0, 0.5, 0.8, 0.95, 1.0).forEach { threshold ->
+      val evaluation = AssertionPlanningResearch.evaluateSavedOutput(path, request, requestBytes, output, outputBytes, threshold)
+      val timeout = evaluation.rows.single { it.caseId == "text-01" && it.arm == EvaluationArm.MODEL }
+      val transport = evaluation.rows.single { it.caseId == "text-02" && it.arm == EvaluationArm.MODEL }
+      assertThat(timeout.fallbackReason).isEqualTo(PlannerFallbackReason.TIMEOUT)
+      assertThat(transport.fallbackReason).isEqualTo(PlannerFallbackReason.SAFE_FAILURE)
+      assertThat(timeout.failed).isEqualTo(true)
+      assertThat(transport.failed).isEqualTo(true)
+      assertThat(evaluation.thresholdReplay.all { it.model.failedCases == 2 }).isEqualTo(true)
+      assertThat(evaluation.thresholdReplay.all { it.model.fallbackCases >= 2 }).isEqualTo(true)
+      assertThat(evaluation.thresholdReplay.all { it.rawOutputSha256 == sha256(outputBytes) }).isEqualTo(true)
+    }
+  }
+
   private fun completeSavedOutput(request: ResearchRequestEnvelope, requestDigest: String): SavedPlannerOutput {
     val response = responseJson("visible", "Home")
     val responseDigest = sha256(response.toByteArray())

@@ -677,6 +677,8 @@ object AssertionPlanningResearch {
     return PlannerAttemptResult(case.id, proposal, validity, guard, fallback, null, effective)
   }
 
+  private fun savedFailureReason(failureKind: SafeFailureKind?): PlannerFallbackReason = if (failureKind == SafeFailureKind.TIMEOUT) PlannerFallbackReason.TIMEOUT else PlannerFallbackReason.SAFE_FAILURE
+
   private fun failedAttempt(
     case: ResearchCase,
     baseline: AssertionPlan,
@@ -999,7 +1001,7 @@ object AssertionPlanningResearch {
             case,
             current,
             saved.failureKind ?: SafeFailureKind.TRANSPORT,
-            PlannerFallbackReason.SAFE_FAILURE,
+            savedFailureReason(saved.failureKind),
           )
 
           else -> PlannerAttemptResult(
@@ -1046,7 +1048,7 @@ object AssertionPlanningResearch {
             case,
             baseline,
             saved.failureKind ?: SafeFailureKind.TRANSPORT,
-            PlannerFallbackReason.SAFE_FAILURE,
+            savedFailureReason(saved.failureKind),
           )
 
           else -> PlannerAttemptResult(
