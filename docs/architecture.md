@@ -370,7 +370,7 @@ Diff admission rechecks `isOpen` inside the acquired session callback. Removal b
 
 ### Screenshots
 
-Both stdio and HTTP use the same `capture_screenshot` registration. Without `save_to_file`, capture a temporary PNG, scale to max 1280px width (bilinear interpolation), encode as JPEG at 0.75 quality, return as base64, and delete the inline temporary files.
+Both stdio and HTTP use the same `capture_screenshot` registration. Without `save_to_file`, capture a temporary PNG, encode as JPEG at 0.75 quality without resizing, return as base64, and delete the inline temporary files.
 
 The optional string `save_to_file` saves a complete PNG. Relative paths resolve against the server process working directory; success returns `Screenshot saved to: <normalised absolute path>`. The parent must already exist and be writable; no directories are created. Every existing destination entry is refused, including directories and valid or dangling symlinks. A destination appearing during publication is also preserved. Callers choose another path or explicitly remove their own existing output before retrying.
 
