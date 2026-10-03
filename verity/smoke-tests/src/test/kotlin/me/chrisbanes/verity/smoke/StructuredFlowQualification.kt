@@ -174,6 +174,8 @@ private fun QualificationSelectorEvidence.toFixtureSummary() = FixtureProbeSumma
 )
 
 private fun MutableMap<String, String>.recordFixtureEvidence(label: String, evidence: FixtureProbeSummary) {
+  val sample = "${evidence.elapsedMillis}:${evidence.outcome}:${evidence.selectedBounds}:${evidence.textSelectedBounds}"
+  put("fixtureSamples", listOfNotNull(get("fixtureSamples"), sample).joinToString(";"))
   put("fixtureLabel", label)
   put("fixtureOutcome", evidence.outcome)
   put("fixtureLabelMatches", evidence.labelMatches.toString())
