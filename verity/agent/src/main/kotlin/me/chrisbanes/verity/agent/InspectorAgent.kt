@@ -2,9 +2,6 @@ package me.chrisbanes.verity.agent
 
 import ai.koog.prompt.message.Message
 import java.nio.file.Path
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -24,19 +21,7 @@ class InspectorAgent(
     evaluateVisualContent(SYSTEM_PROMPT, withReferences(buildVisualMessage(assertion), context), screenshotPath, context.referenceScreenshots)
   }
 
-  private suspend fun request(stage: ModelRequestStage, execute: suspend () -> Message.Assistant): InspectionVerdict {
-    val response = try {
-      withTimeoutOrNull(REQUEST_TIMEOUT) { execute() }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (_: Exception) {
-      throw ModelFailureException(stage, ModelFailureKind.REQUEST)
-    } ?: throw ModelFailureException(stage, ModelFailureKind.TIMEOUT)
-    if (response.finishReason?.lowercase() in setOf("length", "max_tokens", "incomplete")) {
-      throw ModelFailureException(stage, ModelFailureKind.TRUNCATED)
-    }
-    return parseVerdict(response.textContent(), stage)
-  }
+  private suspend fun request(stage: ModelRequestStage, execute: suspend () -> Message.Assistant): InspectionVerdict = parseVerdict(requestModelText(stage, execute), stage)
 
   private fun withReferences(message: String, context: InspectionContext): String = buildString {
     append(message)
@@ -50,7 +35,6 @@ class InspectorAgent(
 
   companion object {
     private val strictJson = Json
-    private val REQUEST_TIMEOUT = 30.seconds
 
     const val SYSTEM_PROMPT =
       "You are a visual testing inspector for a mobile/TV app.\n" +

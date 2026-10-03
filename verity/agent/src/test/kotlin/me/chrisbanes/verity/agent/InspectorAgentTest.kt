@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.nio.file.Path
 import kotlin.test.Test
@@ -176,5 +177,33 @@ class InspectorAgentTest {
     assertThat(visualMessage).contains("Current screenshot")
     assertThat(visualMessage).contains("Reference screenshot 1")
     assertThat(visualMessage).contains("not proof of the current condition")
+  }
+
+  @Test fun `tree and visual calls preserve explicit caller cancellation identity`() = runTest {
+    val caller = object : kotlin.coroutines.cancellation.CancellationException("caller") {
+      val marker = Any()
+    }
+    val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ -> throw caller }, evaluateVisualContent = { _, _, _, _ -> throw caller })
+    assertThat(runCatching { inspector.evaluateTree("tree", "Home") }.exceptionOrNull()).isSameInstanceAs(caller)
+    assertThat(runCatching { inspector.evaluateVisual(Path.of("current.png"), "Home") }.exceptionOrNull()).isSameInstanceAs(caller)
+  }
+
+  @Test fun `tree and visual requests preserve the original shorter outer timeout`() = runTest {
+    for (visual in listOf(false, true)) {
+      var observed: Throwable? = null
+      val request: suspend () -> ai.koog.prompt.message.Message.Assistant = {
+        try {
+          kotlinx.coroutines.delay(30_001)
+          inspectionReply("unused")
+        } catch (error: kotlin.coroutines.cancellation.CancellationException) {
+          observed = error
+          throw error
+        }
+      }
+      val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ -> request() }, evaluateVisualContent = { _, _, _, _ -> request() })
+      val failure = runCatching { kotlinx.coroutines.withTimeout(100) { if (visual) inspector.evaluateVisual(Path.of("current.png"), "Home") else inspector.evaluateTree("tree", "Home") } }.exceptionOrNull()
+      assertThat(failure is kotlinx.coroutines.TimeoutCancellationException).isEqualTo(true)
+      assertThat(generateSequence(failure) { it.cause }.last()).isSameInstanceAs(generateSequence(observed) { it.cause }.last())
+    }
   }
 }

@@ -25,7 +25,7 @@ The output root resolves from `--output-path`, `paths.output`, then `build/verit
 
 Journey keys use a one-based, three-digit index and a slug of the journey name. Segment indexes and slow-path loop-iteration labels are zero-based and padded to three digits in filenames. Artifact references are relative to the run directory; journey identity separately records the input file path.
 
-Generated slow-path action and loop YAML is saved before flow execution when possible. Fast-path interactions are represented by action text and execution mode without manufacturing generated YAML. The static application launch is executed separately and is not currently recorded as a generated segment flow.
+Generated slow-path action and loop YAML passes canonical Maestro validation before it can be saved or executed. Validated YAML is saved before flow execution when possible. Fast-path interactions are represented by action text and execution mode without manufacturing generated YAML. The static application launch is executed separately and is not currently recorded as a generated segment flow.
 
 Tree assertions and conditions save the hierarchy used for evaluation; visual assertions and conditions save the screenshot used for evaluation when possible. Loop evidence represents the final evaluated state, not a history of checks. Visible/focused assertions do not persist evidence files. Maestro runner temporary files remain separate from these durable artifacts.
 
@@ -59,17 +59,21 @@ JSON property names use camelCase. Default values are included; null-valued prop
 | --- | --- | --- |
 | `0` | All journeys passed | Absent |
 | `2` | Input resolution or journey parsing failed, including empty/mixed-platform directories | `parser_failure` |
-| `3` | Configuration, output, preflight, required context, session/client setup, or required result writing failed | `setup_failure`, when a summary can be written |
-| `4` | A journey returned a failed result or threw during execution, apart from a classified model failure | `journey_failure` |
-| `5` | An inspector request failed, timed out, was truncated or returned an empty/invalid verdict | `model_failure` |
+| `3` | Configuration, output, preflight, required context, session/client setup, local flow validation, or required result writing failed | `setup_failure`, when a summary can be written |
+| `4` | A journey returned a failed result or threw during execution, apart from a classified model or local validation failure | `journey_failure` |
+| `5` | A navigator flow/scroll or inspector tree/visual request failed, timed out, was truncated or returned an empty/invalid response | `model_failure` |
 
 Configuration loading/resolution and output validation happen before run-directory creation. Failures there, or failure to create the run directory itself, exit `3` without a summary. Once the directory exists, input failures produce a failed summary with zero executed journeys; setup failures attempt a setup summary. A failure to write the summary cannot itself guarantee another summary.
 
-A failed journey result allows subsequent journeys to run. An execution exception aborts the suite and preserves completed results plus a failure result for the journey that threw. A fatal inspector model failure also aborts the suite, preserves completed results and writes `model_failure` for the affected journey and summary. Diagnostics contain fixed stage/failure-class text without raw replies, request exception text or raw causes. Valid negative inspector verdicts remain ordinary failed journey results. A required result-write failure takes precedence over a journey, input or model failure and exits `3`.
+A failed journey result allows subsequent journeys to run. An execution exception aborts the suite and preserves completed results plus a failure result for the journey that threw. Navigator flow generation, scroll-direction and inspector tree/visual model failures abort the suite, preserve completed results and write `model_failure` for the affected journey and summary. No later journey executes. Valid negative inspector verdicts remain ordinary failed journey results with exit `4`; a valid navigator `NONE` remains an ordinary navigation result.
+
+Temporary-file creation, writing, full-reader/resource resolution, cleanup and ambiguous SDK validation failures use fixed safe local validation diagnostics. They abort the suite with `setup_failure` for the affected journey and summary, retain completed results and exit `3`. A required journey-result or summary-write failure takes precedence over an input, journey, model or local validation failure and exits `3`.
 
 Generated-flow and evidence writes are optional. A failed optional write may omit its reference or use a temporary screenshot for evaluation; it does not independently fail the journey and does not guarantee an artifact diagnostic in the result. Assertions can still fail on their own verdict or execution error.
 
-This model-failure classification currently covers inspector requests. Navigator generation, scroll-direction classification and slow-path dry-run classification remain issue #91 work. Cancellation propagates rather than being converted into a completed run failure. [Dry run](dry-run.md) has a separate report contract.
+Each navigator and inspector request owns a 30-second timeout. Completion reasons `length`, `max_tokens` and `incomplete` are rejected case-insensitively before decoding; blank replies and invalid YAML, directions or verdicts are model failures. Diagnostics contain fixed stage/failure-class text without raw replies, backend exception text, HTTP bodies/headers or raw causes. Authored model diagnostics redact API keys, bearer tokens and JWTs.
+
+Caller cancellation and shorter enclosing deadlines propagate without producing completed failure results. An overall wait-deadline expiry remains a wait timeout; a model request that fails before that deadline follows the model-failure contract. The separate smart-planner policy in [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its deterministic fallback. [Dry run](dry-run.md) uses the same navigator model policy through its separate report contract.
 
 ## Ownership and coverage
 

@@ -4,17 +4,38 @@ import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
 import assertk.assertions.messageContains
+import com.github.ajalt.clikt.core.CliktError
 import kotlin.test.Test
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import me.chrisbanes.verity.agent.NavigatorAgent
+import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
+import me.chrisbanes.verity.device.validateMaestroFlow
 
 class DryRunPlannerTest {
+  @Test fun `actual slow navigator model failure has contextual preview exit5`() = runTest {
+    val navigator = NavigatorAgent("context") { _, _ -> modelReply("appId: com.example\n---\n- tapOn:") }
+    val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })
+    val journey = Journey("Preview", "com.example", Platform.IOS, listOf(JourneyStep.Action("complete onboarding wizard")))
+    val failure = runCatching { planner.plan(resolvedJourney(journey)) }.exceptionOrNull() as CliktError
+    assertThat(failure.statusCode).isEqualTo(5)
+    assertThat(failure.message.orEmpty()).contains("Preview.journey.yaml")
+    assertThat(failure.message.orEmpty()).contains("segment 0")
+    assertThat(failure.message.orEmpty()).contains("Navigator flow response was invalid")
+  }
+
   @Test
   fun `fast path actions are represented without invoking navigator`() = runTest {
     var navigatorCalls = 0
@@ -96,7 +117,7 @@ class DryRunPlannerTest {
     }
     failure.messageContains("Slow journey.journey.yaml")
     failure.messageContains("segment 0")
-    failure.messageContains("navigator exploded")
+    failure.messageContains("Preview generation setup failed")
   }
 
   @Test
@@ -167,7 +188,7 @@ class DryRunPlannerTest {
     }
     failure.messageContains("Slow loop journey.journey.yaml")
     failure.messageContains("segment 0")
-    failure.messageContains("loop navigator exploded")
+    failure.messageContains("Preview generation setup failed")
   }
 
   @Test
@@ -333,6 +354,90 @@ class DryRunPlannerTest {
     assertThat(report.segments.single().loop?.kind).isEqualTo(DryRunExecutionKind.SLOW_PATH)
     assertThat(DryRunRenderer.renderJourney(report)).contains(yaml)
   }
+
+  @Test fun `action and complete loop previews classify every actual navigator failure safely`() = runTest {
+    for (loop in listOf(false, true)) {
+      for (type in listOf("request", "timeout", "truncated", "empty", "invalid", "create", "write", "read", "cleanup", "resource", "sdk")) {
+        val navigator = NavigatorAgent("context", validateFlow = { yaml ->
+          when (type) {
+            "create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(previewSentinel) })
+
+            "write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(previewSentinel) })
+
+            "read" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(previewSentinel) })
+
+            "cleanup" -> validateMaestroFlow(yaml, deleteFlow = {
+              java.nio.file.Files.delete(it)
+              throw java.io.IOException(previewSentinel)
+            })
+
+            "resource" -> validateMaestroFlow("appId: com.example\n---\n- runFlow: /unavailable/missing-verity.yaml")
+
+            "sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(previewSentinel) })
+
+            else -> validateMaestroFlow(yaml)
+          }
+        }) { _, _ ->
+          when (type) {
+            "request" -> error(previewSentinel)
+
+            "timeout" -> {
+              delay(30_001)
+              modelReply("unused")
+            }
+
+            "truncated" -> modelReply("appId: com.example\n---\n- launchApp", "length")
+
+            "empty" -> modelReply(" ")
+
+            "invalid" -> modelReply("appId: com.example\n---\n- tapOn: \"$previewSentinel")
+
+            else -> modelReply("appId: com.example\n---\n- launchApp")
+          }
+        }
+        val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })
+        val journey = Journey("Preview", "com.example", Platform.IOS, listOf(if (loop) JourneyStep.Loop("Press back; complete onboarding wizard", "ready", 2) else JourneyStep.Action("complete onboarding wizard")))
+        val failure = runCatching { planner.plan(resolvedJourney(journey)) }.exceptionOrNull() as CliktError
+        assertThat(failure.statusCode).isEqualTo(if (type in listOf("request", "timeout", "truncated", "empty", "invalid")) 5 else 3)
+        assertThat(failure.message.orEmpty()).contains("Preview.journey.yaml")
+        assertThat(failure.message.orEmpty()).contains("segment 0")
+        assertThat(failure.message.orEmpty()).doesNotContain(previewSentinel)
+        assertThat(failure.cause).isNull()
+      }
+    }
+  }
+
+  @Test fun `preview preserves caller cancellation and shorter enclosing timeout`() = runTest {
+    val caller = object : kotlin.coroutines.cancellation.CancellationException("caller") {
+      val marker = Any()
+    }
+    for (loop in listOf(false, true)) {
+      val journey = Journey("Preview", "com.example", Platform.IOS, listOf(if (loop) JourneyStep.Loop("complete onboarding wizard", "ready", 2) else JourneyStep.Action("complete onboarding wizard")))
+      val navigator = NavigatorAgent("context") { _, _ -> throw caller }
+      val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })
+      assertThat(runCatching { planner.plan(resolvedJourney(journey)) }.exceptionOrNull()).isSameInstanceAs(caller)
+      val slow = NavigatorAgent("context") { _, _ ->
+        delay(30_001)
+        modelReply("unused")
+      }
+      val timeout = runCatching { withTimeout(100) { DryRunPlanner(navigatorFactory = { DryRunNavigator(slow::generate) }).plan(resolvedJourney(journey)) } }.exceptionOrNull()
+      assertThat(timeout is TimeoutCancellationException).isEqualTo(true)
+    }
+  }
+
+  @Test fun `navigator creation and unknown host generation failure remain safe preview setup3`() = runTest {
+    for (creation in listOf(false, true)) {
+      val planner = DryRunPlanner(navigatorFactory = {
+        if (creation) error(previewSentinel)
+        DryRunNavigator { _, _, _, _ -> error(previewSentinel) }
+      })
+      val failure = runCatching { planner.plan(resolvedJourney(Journey("Preview", "com.example", Platform.IOS, listOf(JourneyStep.Action("complete onboarding wizard"))))) }.exceptionOrNull() as CliktError
+      assertThat(failure.statusCode).isEqualTo(3)
+      assertThat(failure.message.orEmpty()).doesNotContain(previewSentinel)
+    }
+  }
+
+  private val previewSentinel = "sk-private Bearer private-credential eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"
 
   private fun resolvedJourney(journey: Journey): ResolvedJourney = ResolvedJourney(
     file = java.io.File("${journey.name}.journey.yaml"),
