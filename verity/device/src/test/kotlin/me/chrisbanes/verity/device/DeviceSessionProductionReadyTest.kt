@@ -15,6 +15,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -38,6 +39,88 @@ import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 
 class DeviceSessionProductionReadyTest {
+
+  @Test
+  fun `both routes report actual SDK command indices before driver admission on both adapters`() = runTest {
+    for (ios in listOf(false, true)) {
+      for (typed in listOf(false, true)) {
+        val driver = RecordingDriver()
+        val starts = mutableListOf<Int>()
+        driver.onInput = { assertThat(starts).isEqualTo(listOf(0, 1, 2)) }
+        val observer: (Int) -> Unit = { starts += it }
+        val session = if (ios) {
+          IosDeviceSession(Maestro(driver), FakeIosDevice(), onCommandStart = observer)
+        } else {
+          AndroidDeviceSession(Maestro(driver), Platform.ANDROID_MOBILE, onCommandStart = observer) { "" }
+        }
+        val result = if (typed) {
+          session.executeActions(ActionFlow("app", listOf(Interaction.LaunchApp(false), Interaction.InputText("fixture"), Interaction.KeyPress("HOME"))))
+        } else {
+          session.executeFlow("appId: app\n---\n- launchApp:\n    clearState: false\n- inputText: fixture\n- pressKey: HOME\n")
+        }
+        assertThat(result).isEqualTo(FlowResult(success = true))
+        assertThat(starts).isEqualTo(listOf(0, 1, 2, 3))
+        assertThat(driver.pressedKeys).isEqualTo(listOf(KeyCode.HOME))
+      }
+    }
+  }
+
+  @Test
+  fun `SDK observer reports failing command admission but never subsequent sentinel`() = runTest {
+    for (typed in listOf(false, true)) {
+      val driver = RecordingDriver().apply { inputFailure = IllegalStateException("fixture failure") }
+      val starts = mutableListOf<Int>()
+      val session = AndroidDeviceSession(Maestro(driver), Platform.ANDROID_MOBILE, onCommandStart = { starts += it }) { "" }
+      val result = if (typed) {
+        session.executeActions(ActionFlow("app", listOf(Interaction.InputText("fixture"), Interaction.KeyPress("HOME"))))
+      } else {
+        session.executeFlow("appId: app\n---\n- inputText: fixture\n- pressKey: HOME\n")
+      }
+      assertThat(result.success).isEqualTo(false)
+      assertThat(starts).isEqualTo(listOf(0, 1))
+      assertThat(driver.pressedKeys).isEqualTo(emptyList())
+    }
+  }
+
+  @Test
+  fun `both SDK routes cancel an admitted visible wait with the same caller exception and no sentinel`() = runTest {
+    for (ios in listOf(false, true)) {
+      for (typed in listOf(false, true)) {
+        val driver = RecordingDriver()
+        val starts = java.util.concurrent.ConcurrentLinkedQueue<Int>()
+        val admitted = CompletableDeferred<Unit>()
+        val observer: (Int) -> Unit = { index ->
+          starts.add(index)
+          if (index == 1) admitted.complete(Unit)
+        }
+        val session = if (ios) {
+          IosDeviceSession(Maestro(driver), FakeIosDevice(), onCommandStart = observer)
+        } else {
+          AndroidDeviceSession(Maestro(driver), Platform.ANDROID_MOBILE, onCommandStart = observer) { "" }
+        }
+        val cancellation = CancellationException("cancel admitted wait")
+        var observed: CancellationException? = null
+        val worker = launch {
+          observed = assertFailsWith<CancellationException> {
+            if (typed) {
+              session.executeActions(ActionFlow("app", listOf(Interaction.WaitUntilVisible(text = "absent fixture", timeoutMs = 3000), Interaction.KeyPress("HOME"))))
+            } else {
+              session.executeFlow("appId: app\n---\n- extendedWaitUntil:\n    visible: absent fixture\n    timeout: 3000\n- pressKey: HOME\n")
+            }
+          }
+        }
+        admitted.await()
+        worker.cancel(cancellation)
+        worker.join()
+        // Virtual-time supplement only; tagged native qualification uses a real delay.
+        delay(2000)
+        assertThat(observed, "ios=$ios typed=$typed recoveredCauseIsCaller=${observed?.cause === cancellation}").isSameInstanceAs(cancellation)
+        assertThat(worker.isCancelled && worker.isCompleted).isEqualTo(true)
+        assertThat(starts.toList()).isEqualTo(listOf(0, 1))
+        assertThat(driver.pressedKeys).isEqualTo(emptyList())
+      }
+    }
+  }
 
   @Test
   fun `both platform adapters execute typed configuration and launch through Orchestra`() = runTest {

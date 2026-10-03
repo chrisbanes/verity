@@ -23,12 +23,15 @@ import me.chrisbanes.verity.device.executeMaestroFlow
 class AndroidDeviceSession(
   private val maestro: Maestro,
   override val platform: Platform,
+  private val onCommandStart: ((Int) -> Unit)?,
   private val executeShell: (String) -> String,
 ) : DeviceSession {
+  constructor(maestro: Maestro, platform: Platform, executeShell: (String) -> String) :
+    this(maestro, platform, null, executeShell)
 
-  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
+  override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml, onCommandStart)
 
-  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow)
+  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
 
   override suspend fun pressKey(keyName: String) = withContext(Dispatchers.IO) {
     val keyCode = checkNotNull(KeyCode.Companion.getByName(keyName)) {

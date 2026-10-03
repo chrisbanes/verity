@@ -30,12 +30,25 @@ tasks.test {
   // Simulator selection affects the test result, but the runner's ephemeral UDID does not.
   inputs.property("iosSimulatorModel", providers.environmentVariable("VERITY_SMOKE_IOS_MODEL").orElse(""))
   inputs.property("iosSimulatorRuntime", providers.environmentVariable("VERITY_SMOKE_IOS_RUNTIME").orElse(""))
+  for (name in listOf(
+    "VERITY_QUALIFICATION_ANDROID_SERIAL",
+    "VERITY_QUALIFICATION_IOS_UDID",
+    "VERITY_QUALIFICATION_TARGET_RECEIPT",
+    "VERITY_QUALIFICATION_EVENTS",
+    "VERITY_QUALIFICATION_RUN_ID",
+    "VERITY_QUALIFICATION_HEAD",
+  )) {
+    inputs.property(name, providers.environmentVariable(name).orElse(""))
+  }
+  providers.environmentVariable("VERITY_QUALIFICATION_TARGET_RECEIPT").orNull?.let { receipt ->
+    inputs.file(receipt).withPropertyName("qualificationTargetReceiptContents")
+  }
   useJUnitPlatform {
     val tags = includeTags.orNull
     if (tags != null) {
       includeTags(tags)
     } else {
-      excludeTags("android", "ios")
+      excludeTags("android", "ios", "qualification-android", "qualification-ios")
     }
   }
 }

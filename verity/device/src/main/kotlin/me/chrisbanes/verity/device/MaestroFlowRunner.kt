@@ -21,7 +21,7 @@ import me.chrisbanes.verity.core.model.FlowResult
  * Shared by [me.chrisbanes.verity.device.android.AndroidDeviceSession] and
  * [me.chrisbanes.verity.device.ios.IosDeviceSession].
  */
-internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowResult {
+internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String, onCommandStart: ((Int) -> Unit)? = null): FlowResult {
   val flowPath = withContext(Dispatchers.IO) {
     Files.createTempFile("verity-flow-", ".yaml")
   }
@@ -30,18 +30,25 @@ internal suspend fun executeMaestroFlow(maestro: Maestro, yaml: String): FlowRes
       Files.writeString(flowPath, yaml)
       YamlCommandReader.readCommands(flowPath)
     }
-    val result = Orchestra(maestro = maestro).runFlow(commands)
+    val result = Orchestra(maestro = maestro, onCommandStart = { index, _ -> onCommandStart?.invoke(index) }).runFlow(commands)
     FlowResult(success = result.success)
   } catch (error: SyntaxError) {
     FlowResult(success = false, output = error.message)
   } catch (error: CancellationException) {
+    currentCoroutineContext().ensureActive()
     throw error
   } catch (error: Exception) {
     FlowResult(success = false, output = error.message ?: error::class.simpleName.orEmpty())
   } finally {
-    withContext(NonCancellable + Dispatchers.IO) {
-      Files.deleteIfExists(flowPath)
+    try {
+      withContext(NonCancellable + Dispatchers.IO) {
+        Files.deleteIfExists(flowPath)
+      }
+    } catch (error: CancellationException) {
+      currentCoroutineContext().ensureActive()
+      throw error
     }
+    currentCoroutineContext().ensureActive()
   }
 }
 
@@ -51,7 +58,8 @@ internal suspend fun executeMaestroActions(
   flow: ActionFlow,
   runCommands: (suspend (List<MaestroCommand>) -> Boolean)? = null,
   compile: (ActionFlow) -> List<MaestroCommand> = MaestroActionCompiler::compile,
-  createOrchestra: (Maestro) -> Orchestra = { Orchestra(maestro = it) },
+  onCommandStart: ((Int) -> Unit)? = null,
+  createOrchestra: (Maestro) -> Orchestra = { Orchestra(maestro = it, onCommandStart = { index, _ -> onCommandStart?.invoke(index) }) },
 ): FlowResult {
   currentCoroutineContext().ensureActive()
   val commands = try {

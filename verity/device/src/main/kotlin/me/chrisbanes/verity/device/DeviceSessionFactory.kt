@@ -40,16 +40,17 @@ object DeviceSessionFactory {
     platform: Platform,
     deviceId: String? = null,
     disableAnimations: Boolean = false,
+    onCommandStart: ((Int) -> Unit)? = null,
   ): DeviceSession = when (platform) {
     Platform.ANDROID_TV,
     Platform.ANDROID_MOBILE,
-    -> connectAndroid(platform, deviceId, disableAnimations)
+    -> connectAndroid(platform, deviceId, disableAnimations, onCommandStart)
 
     Platform.IOS -> {
       if (disableAnimations) {
         System.err.println("Warning: disableAnimations is not supported on iOS, ignoring")
       }
-      connectIos(deviceId)
+      connectIos(deviceId, onCommandStart)
     }
   }
 
@@ -57,6 +58,7 @@ object DeviceSessionFactory {
     platform: Platform,
     deviceId: String?,
     disableAnimations: Boolean,
+    onCommandStart: ((Int) -> Unit)?,
   ): DeviceSession {
     val connection = resolveAndroidConnection(
       deviceId = deviceId,
@@ -69,6 +71,7 @@ object DeviceSessionFactory {
     val session = AndroidDeviceSession(
       maestro = maestro,
       platform = platform,
+      onCommandStart = onCommandStart,
       executeShell = { command -> connection.shell(command).output },
     )
 
@@ -110,7 +113,7 @@ object DeviceSessionFactory {
     }
   }
 
-  private suspend fun connectIos(deviceId: String?): DeviceSession {
+  private suspend fun connectIos(deviceId: String?, onCommandStart: ((Int) -> Unit)?): DeviceSession {
     val resolvedId = resolveIosDeviceId(deviceId)
     val simctlDevice = SimctlIOSDevice(resolvedId)
 
@@ -141,7 +144,7 @@ object DeviceSessionFactory {
 
     val driver = IOSDriver(iosDevice)
     val maestro = Maestro.ios(driver, openDriver = true)
-    return IosDeviceSession(maestro, iosDevice)
+    return IosDeviceSession(maestro, iosDevice, onCommandStart)
   }
 
   private suspend fun discoverBootedIosSimulatorIds(): List<String> = withContext(Dispatchers.IO) {
