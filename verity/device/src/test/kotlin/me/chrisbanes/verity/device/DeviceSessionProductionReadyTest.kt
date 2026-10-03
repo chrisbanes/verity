@@ -4,8 +4,19 @@ import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNull
+import assertk.assertions.isSameInstanceAs
 import assertk.assertions.messageContains
+import java.util.concurrent.CountDownLatch
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import maestro.DeviceInfo
 import maestro.Driver
@@ -16,12 +27,373 @@ import maestro.ScreenRecording
 import maestro.SwipeDirection
 import maestro.device.DeviceOrientation
 import maestro.device.Platform as MaestroPlatform
+import maestro.orchestra.Orchestra
+import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.model.ActionFlow
+import me.chrisbanes.verity.core.model.ActionFlowInvalidReason
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 
 class DeviceSessionProductionReadyTest {
+
+  @Test
+  fun `both platform adapters execute typed configuration and launch through Orchestra`() = runTest {
+    val androidDriver = RecordingDriver()
+    val iosDriver = RecordingDriver()
+    val sessions = listOf(
+      AndroidDeviceSession(Maestro(androidDriver), Platform.ANDROID_MOBILE) { "" },
+      IosDeviceSession(Maestro(iosDriver), FakeIosDevice()),
+    )
+    for (session in sessions) {
+      assertThat(session.executeActions(ActionFlow("com.example.app", listOf(Interaction.LaunchApp(false)))))
+        .isEqualTo(FlowResult(success = true))
+    }
+    assertThat(androidDriver.launchedApps).isEqualTo(listOf("com.example.app"))
+    assertThat(iosDriver.launchedApps).isEqualTo(listOf("com.example.app"))
+  }
+
+  @Test
+  fun `invalid final key or selector prevents callbacks and every adapter effect`() = runTest {
+    for (invalid in listOf(Interaction.KeyPress("PRIVATE_UNSUPPORTED_KEY"), Interaction.TapOnText("["))) {
+      val flow = ActionFlow("com.example.app", listOf(Interaction.LaunchApp(false), invalid))
+      var callbackRan = false
+      assertFailsWith<InvalidActionFlowException> {
+        executeMaestroActions(Maestro(FakeDriver()), flow, runCommands = {
+          callbackRan = true
+          true
+        })
+      }
+      assertThat(callbackRan).isEqualTo(false)
+      for (platform in listOf(Platform.ANDROID_TV, Platform.ANDROID_MOBILE, Platform.IOS)) {
+        val driver = RecordingDriver()
+        val session: DeviceSession = if (platform == Platform.IOS) {
+          IosDeviceSession(Maestro(driver), FakeIosDevice())
+        } else {
+          AndroidDeviceSession(Maestro(driver), platform) { error("no shell effect permitted") }
+        }
+        assertFailsWith<InvalidActionFlowException> { session.executeActions(flow) }
+        assertThat(driver.launchedApps).isEqualTo(emptyList())
+        assertThat(driver.pressedKeys).isEqualTo(emptyList())
+      }
+    }
+  }
+
+  @Test
+  fun `unexpected preparation fault is safe and remains outside runtime failure conversion`() = runTest {
+    var callbackRan = false
+    val error = assertFailsWith<ActionFlowPreparationException> {
+      executeMaestroActions(
+        Maestro(FakeDriver()),
+        ActionFlow("app", emptyList()),
+        runCommands = {
+          callbackRan = true
+          true
+        },
+        compile = { error("PRIVATE_INPUT_OR_CAUSE") },
+      )
+    }
+    assertThat(error.message).isEqualTo("Action flow preparation failed: command compilation")
+    assertThat(error.cause).isNull()
+    assertThat(callbackRan).isEqualTo(false)
+  }
+
+  @Test
+  fun `SDK runner initialization fault is a safe preparation failure before execution`() = runTest {
+    val driver = RecordingDriver()
+    val thrown = assertFailsWith<ActionFlowPreparationException> {
+      executeMaestroActions(
+        Maestro(driver),
+        ActionFlow("com.example.app", listOf(Interaction.LaunchApp(false))),
+        createOrchestra = { error("PRIVATE_RUNNER_INITIALIZATION_CAUSE") },
+      )
+    }
+    assertThat(thrown.message).isEqualTo("Action flow preparation failed: runner initialization")
+    assertThat(thrown.cause).isNull()
+    assertThat(driver.launchedApps).isEqualTo(emptyList())
+  }
+
+  @Test
+  fun `invalid list never initializes the SDK runner`() = runTest {
+    var initialized = false
+    assertFailsWith<InvalidActionFlowException> {
+      executeMaestroActions(
+        Maestro(FakeDriver()),
+        ActionFlow("app", listOf(Interaction.KeyPress("UNSUPPORTED_KEY"))),
+        createOrchestra = {
+          initialized = true
+          error("must not initialize")
+        },
+      )
+    }
+    assertThat(initialized).isEqualTo(false)
+  }
+
+  @Test
+  fun `caller cancellation on SDK constructor return wins before any driver action`() = runTest {
+    val cancellation = CancellationException("cancel constructor return")
+    val driver = RecordingDriver()
+    var observed: CancellationException? = null
+    val job = launch {
+      val owner = currentCoroutineContext().job
+      observed = assertFailsWith<CancellationException> {
+        executeMaestroActions(
+          Maestro(driver),
+          ActionFlow("app", listOf(Interaction.LaunchApp(false))),
+          createOrchestra = {
+            owner.cancel(cancellation)
+            Orchestra(maestro = it)
+          },
+        )
+      }
+    }
+    job.join()
+    assertThat(observed).isSameInstanceAs(cancellation)
+    assertThat(driver.launchedApps).isEqualTo(emptyList())
+  }
+
+  @Test
+  fun `caller cancellation during compiler fault wins over preparation failure`() = runTest {
+    val cancellation = CancellationException("cancel during compilation")
+    var observed: CancellationException? = null
+    val job = launch {
+      val owner = currentCoroutineContext().job
+      observed = assertFailsWith<CancellationException> {
+        executeMaestroActions(Maestro(FakeDriver()), ActionFlow("app", emptyList()), compile = {
+          owner.cancel(cancellation)
+          error("PRIVATE_PREPARATION_FAULT")
+        })
+      }
+    }
+    job.join()
+    assertThat(observed).isSameInstanceAs(cancellation)
+  }
+
+  @Test
+  fun `Orchestra runtime failure interrupts remaining typed actions on both adapters`() = runTest {
+    for (platform in listOf(Platform.ANDROID_MOBILE, Platform.IOS)) {
+      val driver = RecordingDriver().apply { inputFailure = IllegalStateException("boom") }
+      val session: DeviceSession = if (platform == Platform.IOS) {
+        IosDeviceSession(Maestro(driver), FakeIosDevice())
+      } else {
+        AndroidDeviceSession(Maestro(driver), platform) { "" }
+      }
+      val result = session.executeActions(
+        ActionFlow(
+          "com.example.app",
+          listOf(
+            Interaction.LaunchApp(false),
+            Interaction.InputText("test"),
+            Interaction.KeyPress("BACK"),
+          ),
+        ),
+      )
+      assertThat(result.success).isEqualTo(false)
+      assertThat(driver.inputCount).isEqualTo(1)
+      assertThat(driver.pressedKeys).isEqualTo(emptyList())
+    }
+  }
+
+  @Test
+  fun `caller cancellation during actual Orchestra input joins preserves identity and stops sentinel`() = runTest {
+    for (platform in listOf(Platform.ANDROID_MOBILE, Platform.IOS)) {
+      val cancellation = CancellationException("caller cancellation")
+      val admitted = CompletableDeferred<Unit>()
+      val terminated = CompletableDeferred<Unit>()
+      val release = CountDownLatch(1)
+      val driver = RecordingDriver().apply {
+        onInput = {
+          admitted.complete(Unit)
+          try {
+            release.await()
+          } finally {
+            terminated.complete(Unit)
+          }
+        }
+      }
+      val session: DeviceSession = if (platform == Platform.IOS) {
+        IosDeviceSession(Maestro(driver), FakeIosDevice())
+      } else {
+        AndroidDeviceSession(Maestro(driver), platform) { "" }
+      }
+      var observed: CancellationException? = null
+      val job = launch {
+        observed = assertFailsWith<CancellationException> {
+          session.executeActions(
+            ActionFlow(
+              "com.example.app",
+              listOf(
+                Interaction.LaunchApp(false),
+                Interaction.InputText("test"),
+                Interaction.KeyPress("BACK"),
+              ),
+            ),
+          )
+        }
+      }
+      try {
+        admitted.await()
+        job.cancel(cancellation)
+        job.join()
+        assertThat(terminated.isCompleted).isEqualTo(true)
+        assertThat(driver.inputCount).isEqualTo(1)
+        assertThat(observed).isSameInstanceAs(cancellation)
+        assertThat(driver.pressedKeys).isEqualTo(emptyList())
+      } finally {
+        release.countDown()
+        job.cancel()
+        job.join()
+      }
+    }
+  }
+
+  @Test
+  fun `caller cancellation before preparation performs no compilation or execution`() = runTest {
+    val cancellation = CancellationException("cancel before preparation")
+    var observed: CancellationException? = null
+    var compiled = false
+    var ran = false
+    val job = launch {
+      currentCoroutineContext().cancel(cancellation)
+      observed = assertFailsWith<CancellationException> {
+        executeMaestroActions(
+          Maestro(FakeDriver()),
+          ActionFlow("app", emptyList()),
+          runCommands = {
+            ran = true
+            true
+          },
+          compile = {
+            compiled = true
+            emptyList()
+          },
+        )
+      }
+    }
+    job.join()
+    assertThat(observed).isSameInstanceAs(cancellation)
+    assertThat(compiled).isEqualTo(false)
+    assertThat(ran).isEqualTo(false)
+  }
+
+  @Test
+  fun `caller cancellation during runner joins and preserves the same exception`() = runTest {
+    val cancellation = CancellationException("cancel during runner")
+    val admitted = CompletableDeferred<Unit>()
+    var observed: CancellationException? = null
+    val job = launch {
+      observed = assertFailsWith<CancellationException> {
+        executeMaestroActions(Maestro(FakeDriver()), ActionFlow("app", emptyList()), runCommands = {
+          admitted.complete(Unit)
+          awaitCancellation()
+        })
+      }
+    }
+    admitted.await()
+    job.cancel(cancellation)
+    job.join()
+    assertThat(observed).isSameInstanceAs(cancellation)
+    assertThat(job.isCompleted).isEqualTo(true)
+  }
+
+  @Test
+  fun `cancellation immediately after SDK return cannot become a successful result`() = runTest {
+    val cancellation = CancellationException("cancel at return")
+    var observed: CancellationException? = null
+    val job = launch {
+      observed = assertFailsWith<CancellationException> {
+        executeMaestroActions(Maestro(FakeDriver()), ActionFlow("app", emptyList()), runCommands = {
+          currentCoroutineContext().cancel(cancellation)
+          true
+        })
+      }
+    }
+    job.join()
+    assertThat(observed).isSameInstanceAs(cancellation)
+  }
+
+  @Test
+  fun `injected runner cancellation while caller is active preserves original exception`() = runTest {
+    val cancellation = CancellationException("runner cancellation")
+    val observed = assertFailsWith<CancellationException> {
+      executeMaestroActions(
+        Maestro(FakeDriver()),
+        ActionFlow("app", emptyList()),
+        runCommands = { throw cancellation },
+      )
+    }
+    assertThat(observed).isSameInstanceAs(cancellation)
+  }
+
+  @Test
+  fun `SDK origin cancellation without cancelling caller preserves legacy unsuccessful result`() = runTest {
+    val typedDriver = RecordingDriver().apply { inputFailure = CancellationException("SDK origin") }
+    val legacyDriver = RecordingDriver().apply { inputFailure = CancellationException("SDK origin") }
+    val typedSession = AndroidDeviceSession(Maestro(typedDriver), Platform.ANDROID_MOBILE) { "" }
+    val legacySession = AndroidDeviceSession(Maestro(legacyDriver), Platform.ANDROID_MOBILE) { "" }
+    val typed = typedSession.executeActions(
+      ActionFlow(
+        "com.example.app",
+        listOf(
+          Interaction.LaunchApp(false),
+          Interaction.InputText("test"),
+          Interaction.KeyPress("BACK"),
+        ),
+      ),
+    )
+    val legacy = legacySession.executeFlow(
+      """
+      appId: com.example.app
+      ---
+      - launchApp:
+          clearState: false
+      - inputText: test
+      - pressKey: BACK
+      """.trimIndent(),
+    )
+    assertThat(typedDriver.inputCount).isEqualTo(1)
+    assertThat(legacyDriver.inputCount).isEqualTo(1)
+    assertThat(typed).isEqualTo(legacy)
+    assertThat(typed.success).isEqualTo(false)
+    assertThat(typedDriver.pressedKeys).isEqualTo(emptyList())
+    assertThat(legacyDriver.pressedKeys).isEqualTo(emptyList())
+  }
+
+  @Test
+  fun `preparation cancellation preserves identity and never invokes execution`() = runTest {
+    val cancellation = CancellationException("cancel compiler")
+    val observed = assertFailsWith<CancellationException> {
+      executeMaestroActions(
+        Maestro(FakeDriver()),
+        ActionFlow("app", emptyList()),
+        runCommands = { error("must not run") },
+        compile = { throw cancellation },
+      )
+    }
+    assertThat(observed).isSameInstanceAs(cancellation)
+  }
+
+  private class RecordingDriver : FakeDriver() {
+    val launchedApps = mutableListOf<String>()
+    val pressedKeys = mutableListOf<KeyCode>()
+    var inputFailure: Exception? = null
+    var inputCount = 0
+    var onInput: () -> Unit = {}
+    override fun contentDescriptor(excludeKeyboardElements: Boolean): maestro.TreeNode = maestro.TreeNode()
+    override fun pressKey(code: KeyCode) {
+      pressedKeys += code
+    }
+    override fun inputText(text: String) {
+      inputCount++
+      onInput()
+      inputFailure?.let { throw it }
+    }
+    override fun launchApp(appId: String, launchArguments: Map<String, Any>) {
+      launchedApps += appId
+    }
+  }
 
   @Test
   fun `android executeFlow returns success for valid flow`() = runTest {

@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
@@ -1120,6 +1121,12 @@ class OrchestratorTest {
     val onPress: suspend () -> Unit = {},
   ) : DeviceSession {
     var commands = 0
+    val executedActionFlows = mutableListOf<ActionFlow>()
+    override suspend fun executeActions(flow: ActionFlow): FlowResult {
+      executedActionFlows += flow
+      return FlowResult(success = true)
+    }
+
     override suspend fun executeFlow(yaml: String): FlowResult {
       if (yaml == LAUNCH_FLOW) return FlowResult(true)
       commands++
@@ -1146,6 +1153,12 @@ class OrchestratorTest {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val executedFlows = mutableListOf<String>()
     val capturedScreenshotPaths = mutableListOf<Path>()
+
+    val executedActionFlows = mutableListOf<ActionFlow>()
+    override suspend fun executeActions(flow: ActionFlow): FlowResult {
+      executedActionFlows += flow
+      return FlowResult(success = true)
+    }
 
     override suspend fun executeFlow(yaml: String): FlowResult {
       onExecuteFlow(yaml)

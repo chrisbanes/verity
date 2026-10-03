@@ -167,7 +167,7 @@ class DryRunPlanner(
 
   private fun launchYaml(journey: Journey): String = "appId: ${journey.app}\n---\n- launchApp"
 
-  private fun describeInteraction(interaction: Interaction): String = when (interaction) {
+  internal fun describeInteraction(interaction: Interaction): String = when (interaction) {
     is Interaction.KeyPress -> "KeyPress(${describeKeyName(interaction.keyName)})"
     is Interaction.TapOnText -> "TapOnText(${interaction.text})"
     is Interaction.TapOnId -> "TapOnId(${interaction.resourceId})"
@@ -176,6 +176,11 @@ class DryRunPlanner(
     Interaction.LongPressOnFocused -> "LongPressOnFocused"
     is Interaction.LongPressOnText -> "LongPressOnText(${interaction.text})"
     Interaction.PullToRefresh -> "PullToRefresh"
+    is Interaction.LaunchApp -> "LaunchApp(clearState=${interaction.clearState})"
+    is Interaction.InputText -> "InputText(${interaction.text})"
+    Interaction.DefaultScroll -> "DefaultScroll"
+    is Interaction.WaitForAnimation -> "WaitForAnimation(timeoutMs=${interaction.timeoutMs})"
+    is Interaction.WaitUntilVisible -> "WaitUntilVisible(text=${interaction.text}, resourceId=${interaction.resourceId}, timeoutMs=${interaction.timeoutMs})"
   }
 
   private fun describeKeyName(keyName: String): String = when (keyName) {

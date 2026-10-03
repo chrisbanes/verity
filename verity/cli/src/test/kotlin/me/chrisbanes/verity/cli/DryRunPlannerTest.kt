@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.modelReply
+import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
@@ -25,6 +26,33 @@ import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
 import me.chrisbanes.verity.device.validateMaestroFlow
 
 class DryRunPlannerTest {
+  @Test
+  fun `new interaction descriptions are pure and do not initialize the unmigrated navigator`() {
+    val planner = DryRunPlanner(navigatorFactory = { error("must not initialize navigator") })
+    val descriptions = listOf(
+      Interaction.LaunchApp(),
+      Interaction.LaunchApp(false),
+      Interaction.InputText("  café  "),
+      Interaction.DefaultScroll,
+      Interaction.WaitForAnimation(),
+      Interaction.WaitForAnimation(500),
+      Interaction.WaitUntilVisible(text = "Next.*", timeoutMs = 1000),
+      Interaction.WaitUntilVisible(resourceId = "app:id/next", timeoutMs = 2000),
+    ).map(planner::describeInteraction)
+    assertThat(descriptions).isEqualTo(
+      listOf(
+        "LaunchApp(clearState=null)",
+        "LaunchApp(clearState=false)",
+        "InputText(  café  )",
+        "DefaultScroll",
+        "WaitForAnimation(timeoutMs=null)",
+        "WaitForAnimation(timeoutMs=500)",
+        "WaitUntilVisible(text=Next.*, resourceId=null, timeoutMs=1000)",
+        "WaitUntilVisible(text=null, resourceId=app:id/next, timeoutMs=2000)",
+      ),
+    )
+  }
+
   @Test fun `actual slow navigator model failure has contextual preview exit5`() = runTest {
     val navigator = NavigatorAgent("context") { _, _ -> modelReply("appId: com.example\n---\n- tapOn:") }
     val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })

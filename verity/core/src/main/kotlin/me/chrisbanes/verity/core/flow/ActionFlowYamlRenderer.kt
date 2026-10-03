@@ -9,6 +9,7 @@ object ActionFlowYamlRenderer {
     flow.validate()
     return buildString {
       append("appId: ${scalar(flow.appId)}\n---")
+      if (flow.actions.isEmpty()) append("\n[]")
       for (action in flow.actions) {
         append('\n')
         append(

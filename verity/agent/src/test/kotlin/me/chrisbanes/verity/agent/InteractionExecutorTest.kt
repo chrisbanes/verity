@@ -9,7 +9,10 @@ import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.model.ActionFlow
+import me.chrisbanes.verity.core.model.ActionFlowInvalidReason
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
 
@@ -87,6 +90,26 @@ class InteractionExecutorTest {
     assertThat(session.waitCount).isEqualTo(0)
   }
 
+  @Test
+  fun `new vocabulary is rejected safely by unmigrated executor before any session operation`() = runTest {
+    for (interaction in listOf(
+      Interaction.LaunchApp(),
+      Interaction.InputText("private"),
+      Interaction.DefaultScroll,
+      Interaction.WaitForAnimation(),
+      Interaction.WaitUntilVisible(text = "private", timeoutMs = 1000),
+    )) {
+      val session = RecordingDeviceSession()
+      val error = assertFailsWith<InvalidActionFlowException> { createExecutor(session).execute(interaction) }
+      assertThat(error.reason).isEqualTo(ActionFlowInvalidReason.UNSUPPORTED_INTERACTION)
+      assertThat(error.message).isEqualTo("Invalid action flow: UNSUPPORTED_INTERACTION")
+      assertThat(session.pressedKeys).isEqualTo(emptyList())
+      assertThat(session.executedFlows).isEqualTo(emptyList())
+      assertThat(session.executedActionFlows).isEqualTo(emptyList())
+      assertThat(session.waitCount).isEqualTo(0)
+    }
+  }
+
   private companion object {
     const val APP_ID = "com.example.app"
     fun flow(command: String) = "appId: $APP_ID\n---\n$command"
@@ -98,6 +121,12 @@ class InteractionExecutorTest {
     val executedFlows = mutableListOf<String>()
     var waitCount = 0
     var result = FlowResult(success = true)
+
+    val executedActionFlows = mutableListOf<ActionFlow>()
+    override suspend fun executeActions(flow: ActionFlow): FlowResult {
+      executedActionFlows += flow
+      return FlowResult(success = true)
+    }
 
     override suspend fun executeFlow(yaml: String): FlowResult {
       executedFlows += yaml

@@ -5,9 +5,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import maestro.Maestro
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.executeMaestroActions
 import me.chrisbanes.verity.device.executeMaestroFlow
 
 /**
@@ -24,6 +26,8 @@ class IosDeviceSession(
   override val platform: Platform = Platform.IOS
 
   override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml)
+
+  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow)
 
   override suspend fun pressKey(keyName: String): Unit = withContext(Dispatchers.IO) {
     iosDevice.pressKey(keyName)

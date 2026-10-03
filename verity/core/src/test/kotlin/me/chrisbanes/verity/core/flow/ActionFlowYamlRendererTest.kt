@@ -9,6 +9,12 @@ import me.chrisbanes.verity.core.model.ActionFlow
 
 class ActionFlowYamlRendererTest {
   @Test
+  fun `empty selected list renders explicit empty command section`() {
+    assertThat(ActionFlowYamlRenderer.render(ActionFlow("app", emptyList())))
+      .isEqualTo("appId: \"app\"\n---\n[]")
+  }
+
+  @Test
   fun `compatibility YAML preserves app context selected sequence and defaults`() {
     val flow = ActionFlow(
       "app: #雪",

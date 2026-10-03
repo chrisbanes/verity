@@ -1,6 +1,8 @@
 package me.chrisbanes.verity.agent
 
 import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.model.ActionFlowInvalidReason
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.device.DeviceSession
 
 class InteractionExecutor(
@@ -29,6 +31,11 @@ class InteractionExecutor(
       is Interaction.LongPressOnFocused -> executeCommand("- longPressOn:\n    focused: true")
 
       is Interaction.LongPressOnText -> executeCommand("- longPressOn: ${escapeYaml(interaction.text)}")
+
+      is Interaction.LaunchApp, is Interaction.InputText, Interaction.DefaultScroll,
+      is Interaction.WaitForAnimation, is Interaction.WaitUntilVisible,
+      ->
+        throw InvalidActionFlowException(ActionFlowInvalidReason.UNSUPPORTED_INTERACTION)
 
       // Pull-to-refresh is a swipe down from near the top
       Interaction.PullToRefresh -> executeCommand("- swipe:\n    direction: UP")
