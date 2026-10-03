@@ -183,7 +183,7 @@ class StructuredFlowQualificationTest {
     assertThat(result.outcome).isEqualTo("ready")
     assertThat(captures).isEqualTo(7)
     assertThat(scrolls).isEqualTo(1)
-    assertThat(elapsed).isEqualTo(500L)
+    assertThat(elapsed).isEqualTo(1_000L)
   }
 
   @Test
@@ -213,7 +213,7 @@ class StructuredFlowQualificationTest {
     }
 
     assertThat(scrolls).isEqualTo(1)
-    assertThat(captures).isEqualTo(22)
+    assertThat(captures).isEqualTo(17)
     assertThat(elapsed).isEqualTo(6_000L)
     assertThat(samples.last().elapsedMillis).isEqualTo(5_000L)
   }
@@ -249,8 +249,8 @@ class StructuredFlowQualificationTest {
     assertThat(result.outcome).isEqualTo("ready")
     assertThat(scrolls).isEqualTo(1)
     assertThat(captures).isEqualTo(5)
-    assertThat(elapsed).isEqualTo(6_300L)
-    assertThat(samples.last().elapsedMillis).isEqualTo(4_300L)
+    assertThat(elapsed).isEqualTo(6_800L)
+    assertThat(samples.last().elapsedMillis).isEqualTo(4_800L)
   }
 
   @Test
@@ -317,7 +317,7 @@ class StructuredFlowQualificationTest {
       )
     }
     assertThat(scrolls).isEqualTo(1)
-    assertThat(captures).isEqualTo(52)
+    assertThat(captures).isEqualTo(47)
     assertThat(elapsed).isEqualTo(5000L)
   }
 

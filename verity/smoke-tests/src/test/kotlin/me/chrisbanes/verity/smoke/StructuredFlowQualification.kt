@@ -129,7 +129,13 @@ internal suspend fun prepareIosSettingsFixture(
   }
   if (initialCaptureElapsed >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture did not become ready within 5000 ms")
 
-  if (initial.outcome == "not-ready") scrollOnce()
+  var readinessElapsed = initialCaptureElapsed
+  if (initial.outcome == "not-ready") {
+    scrollOnce()
+    val pauseStarted = clockMillis()
+    pause(minOf(500, 5_000 - readinessElapsed))
+    readinessElapsed += (clockMillis() - pauseStarted).coerceAtLeast(0)
+  }
   // Settings can relayout the row after its first accessibility snapshot. Admit a tap only
   // after both SDK-selected text and ID geometry remain unchanged for half a second.
   return requireIosGeneralFixture(
@@ -140,7 +146,7 @@ internal suspend fun prepareIosSettingsFixture(
       onSample = onSample,
       clockMillis = clockMillis,
       pause = pause,
-      elapsedOffsetMillis = initialCaptureElapsed,
+      elapsedOffsetMillis = readinessElapsed,
       stableForMillis = 500,
       initialReady = initial.takeIf { it.outcome == "ready" },
       pollIntervalMillis = 100,
