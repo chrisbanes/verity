@@ -7,10 +7,15 @@ import assertk.assertions.isInstanceOf
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermission
+import java.security.MessageDigest
 import kotlin.test.Test
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import me.chrisbanes.verity.core.model.AssertMode
 
 class AssertionPlanningResearchTest {
@@ -73,7 +78,234 @@ class AssertionPlanningResearchTest {
     assertFailure { main(emptyArray()) }.isInstanceOf<IllegalArgumentException>()
     assertFailure { main(arrayOf("compare", "ignored", "ignored")) }
       .isInstanceOf<IllegalArgumentException>()
+    assertFailure { main(arrayOf("evaluate", "missing-corpus.json")) }
+      .isInstanceOf<IllegalArgumentException>()
   }
+
+  @Test
+  fun `strict response validation retains literal response fields and rejects extra properties`() {
+    val (proposal, validity) = AssertionPlanningResearch.parsePlannerResponse(
+      """{"mode":"visible","target":"Home","confidence":0.9,"uncertain":false,"reason":"preserves literal label"}""",
+    )
+    assertThat(validity).isEqualTo(ResponseValidity.VALID)
+    assertThat(proposal?.mode).isEqualTo(AssertMode.VISIBLE)
+    assertThat(proposal?.target).isEqualTo("Home")
+    assertThat(proposal?.confidence).isEqualTo(0.9)
+    assertThat(proposal?.uncertain).isEqualTo(false)
+    assertThat(proposal?.reason).isEqualTo("preserves literal label")
+
+    val (invalid, invalidity) = AssertionPlanningResearch.parsePlannerResponse(
+      """{"mode":"visible","target":"Home","confidence":0.9,"uncertain":false,"reason":"ok","extra":true}""",
+    )
+    assertThat(invalid).isEqualTo(null)
+    assertThat(invalidity).isEqualTo(ResponseValidity.WRONG_SHAPE)
+  }
+
+  @Test
+  fun `strict response validation rejects duplicate top-level fields`() {
+    val duplicate = """{"mode":"visible","mode":"visible","target":"Home","confidence":0.9,"uncertain":false,"reason":"ok"}"""
+    val escapedDuplicate = """{"mode":"visible","m\u006fde":"visible","target":"Home","confidence":0.9,"uncertain":false,"reason":"ok"}"""
+
+    assertThat(AssertionPlanningResearch.parsePlannerResponse(duplicate).second)
+      .isEqualTo(ResponseValidity.WRONG_SHAPE)
+    assertThat(AssertionPlanningResearch.parsePlannerResponse(escapedDuplicate).second)
+      .isEqualTo(ResponseValidity.WRONG_SHAPE)
+  }
+
+  @Test
+  fun `strict response contract enforces all mode shapes types and bounds`() {
+    val validModes = listOf(
+      responseJson("visible", "Home"),
+      responseJson("focused", "Home"),
+      responseJson("tree", null),
+      responseJson("visual", null),
+    )
+    validModes.forEach { response ->
+      assertThat(AssertionPlanningResearch.parsePlannerResponse(response).second).isEqualTo(ResponseValidity.VALID)
+    }
+
+    val invalidValues = listOf(
+      "" to ResponseValidity.EMPTY,
+      "  \n" to ResponseValidity.EMPTY,
+      "{" to ResponseValidity.INVALID_JSON,
+      "[]" to ResponseValidity.INVALID_JSON,
+      """{"mode":"visible","confidence":0.9,"uncertain":false,"reason":"missing target"}""" to ResponseValidity.WRONG_SHAPE,
+      responseJson("unknown", "Home") to ResponseValidity.INVALID_VALUE,
+      responseJson("visible", null) to ResponseValidity.INVALID_VALUE,
+      responseJson("focused", " ") to ResponseValidity.INVALID_VALUE,
+      responseJson("visible", "\u00a0") to ResponseValidity.INVALID_VALUE,
+      """{"mode":"visible","target":"\u001c","confidence":0.9,"uncertain":false,"reason":"ok"}""" to ResponseValidity.INVALID_VALUE,
+      """{"mode":"tree","target":null,"confidence":0.9,"uncertain":false,"reason":" \t\u00a0"}""" to ResponseValidity.INVALID_VALUE,
+      """{"mode":"tree","target":null,"confidence":0.9,"uncertain":false,"reason":"\u001c"}""" to ResponseValidity.INVALID_VALUE,
+      """{"mode":"visible","target":7,"confidence":0.9,"uncertain":false,"reason":"bad target"}""" to ResponseValidity.INVALID_VALUE,
+      """{"mode":"tree","target":"Home","confidence":0.9,"uncertain":false,"reason":"bad tree target"}""" to ResponseValidity.INVALID_VALUE,
+      responseJson("visual", "Backdrop") to ResponseValidity.INVALID_VALUE,
+      """{"mode":"visible","target":"Home","confidence":"0.9","uncertain":false,"reason":"bad confidence type"}""" to ResponseValidity.INVALID_VALUE,
+      responseJson("tree", null, confidence = "-0.01") to ResponseValidity.INVALID_VALUE,
+      responseJson("tree", null, confidence = "1.01") to ResponseValidity.INVALID_VALUE,
+      responseJson("tree", null, confidence = "1e9999") to ResponseValidity.INVALID_VALUE,
+      """{"mode":"tree","target":null,"confidence":0.9,"uncertain":"false","reason":"bad uncertainty type"}""" to ResponseValidity.INVALID_VALUE,
+      """{"mode":"tree","target":null,"confidence":0.9,"uncertain":false,"reason":1}""" to ResponseValidity.INVALID_VALUE,
+      responseJson("tree", null, reason = "r".repeat(513)) to ResponseValidity.INVALID_VALUE,
+    )
+    invalidValues.forEach { (response, expected) ->
+      assertThat(AssertionPlanningResearch.parsePlannerResponse(response).second).isEqualTo(expected)
+    }
+    assertThat(AssertionPlanningResearch.parsePlannerResponse(responseJson("visible", "H".repeat(257))).second)
+      .isEqualTo(ResponseValidity.INVALID_VALUE)
+    assertThat(AssertionPlanningResearch.parsePlannerResponse("x".repeat(16 * 1024 + 1)).second)
+      .isEqualTo(ResponseValidity.OVERSIZED)
+    val escapedContent = """{"mode":"visible","target":"Home","confidence":0.9,"uncertain":false,"reason":"literal } and , and \"mode\" text"}"""
+    assertThat(AssertionPlanningResearch.parsePlannerResponse(escapedContent).second).isEqualTo(ResponseValidity.VALID)
+    assertThat(AssertionPlanningResearch.parsePlannerResponse(responseJson("visible", "\ufeff")).second)
+      .isEqualTo(ResponseValidity.VALID)
+  }
+
+  @Test
+  fun `runtime guard rejects presence reductions using only parsed description and mode`() {
+    val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
+    val ordinary = AssertionPlanningResearch.currentPlan(corpus.cases.single { it.id == "text-01" }).check.originalExpectation
+    val positive = PlannerResponse(AssertMode.VISIBLE, "Home", 0.9, false, "literal")
+    assertThat(AssertionPlanningResearch.structuralGuard(ordinary.parsedDescription, ordinary.parsedMode, positive))
+      .isEqualTo(StructuralGuardResult.ACCEPTED)
+
+    val negation = AssertionPlanningResearch.currentPlan(corpus.cases.single { it.id == "negation-01" }).check.originalExpectation
+    val compound = AssertionPlanningResearch.currentPlan(corpus.cases.single { it.id == "compound-01" }).check.originalExpectation
+    val visual = AssertionPlanningResearch.currentPlan(corpus.cases.single { it.id == "visual-01" }).check.originalExpectation
+    assertThat(AssertionPlanningResearch.structuralGuard(negation.parsedDescription, negation.parsedMode, positive))
+      .isEqualTo(StructuralGuardResult.REJECT_NEGATION)
+    assertThat(AssertionPlanningResearch.structuralGuard(compound.parsedDescription, compound.parsedMode, positive.copy(mode = AssertMode.FOCUSED)))
+      .isEqualTo(StructuralGuardResult.REJECT_COMPOUND)
+    val conditional = AssertionPlanningResearch.currentPlan(
+      corpus.cases.single { it.id == "text-01" }.copy(rawStep = "[?] If Connected Home is visible"),
+    ).check.originalExpectation
+    assertThat(AssertionPlanningResearch.structuralGuard(conditional.parsedDescription, conditional.parsedMode, positive))
+      .isEqualTo(StructuralGuardResult.REJECT_CONDITION)
+    assertThat(AssertionPlanningResearch.structuralGuard(visual.parsedDescription, visual.parsedMode, positive))
+      .isEqualTo(StructuralGuardResult.REJECT_VISUAL_PROPERTY)
+    assertThat(AssertionPlanningResearch.structuralGuard(visual.parsedDescription, visual.parsedMode, positive.copy(mode = AssertMode.VISUAL, target = null)))
+      .isEqualTo(StructuralGuardResult.ACCEPTED)
+  }
+
+  @Test
+  fun `evaluator separates genuine semantic weakening from guard rejection and literal errors`() {
+    val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
+    val focus = corpus.cases.single { it.id == "focus-01" }
+    val negation = corpus.cases.single { it.id == "negation-01" }
+    val compound = corpus.cases.single { it.id == "compound-01" }
+    val visual = corpus.cases.single { it.id == "visual-01" }
+    val ordinaryLiteralMismatch = corpus.cases.single { it.id == "text-03" }
+
+    assertThat(AssertionPlanningResearch.semanticWeakening(focus, AssertMode.VISIBLE, "Home")).isEqualTo(true)
+    assertThat(AssertionPlanningResearch.semanticWeakening(negation, AssertMode.VISIBLE, "Home")).isEqualTo(true)
+    assertThat(AssertionPlanningResearch.semanticWeakening(negation, AssertMode.TREE, null)).isEqualTo(false)
+    assertThat(AssertionPlanningResearch.semanticWeakening(compound, AssertMode.VISIBLE, "Home")).isEqualTo(true)
+    assertThat(AssertionPlanningResearch.semanticWeakening(visual, AssertMode.VISIBLE, "Home")).isEqualTo(true)
+    val conditional = compound.copy(rawStep = "[?] If the Home row is visible")
+    assertThat(AssertionPlanningResearch.semanticWeakening(conditional, AssertMode.VISIBLE, "Home")).isEqualTo(true)
+    assertThat(AssertionPlanningResearch.semanticWeakening(ordinaryLiteralMismatch, AssertMode.VISIBLE, "Home"))
+      .isEqualTo(false)
+
+    val guardedButAllowed = compound.copy(
+      allowedChecks = listOf(ResearchCheck("visible", "Title", "the exact independent check preserves this test intent")),
+    )
+    val parsed = AssertionPlanningResearch.currentPlan(guardedButAllowed).check.originalExpectation
+    val visibleTitle = PlannerResponse(AssertMode.VISIBLE, "Title", 0.9, false, "literal title")
+    assertThat(AssertionPlanningResearch.structuralGuard(parsed.parsedDescription, parsed.parsedMode, visibleTitle))
+      .isEqualTo(StructuralGuardResult.REJECT_COMPOUND)
+    assertThat(AssertionPlanningResearch.semanticWeakening(guardedButAllowed, AssertMode.VISIBLE, "Title"))
+      .isEqualTo(false)
+  }
+
+  @Test
+  fun `planner retains raw guarded uncertain and low confidence proposals while using baseline fallback`() = runTest {
+    val corpusPath = corpusPath()
+    val corpus = AssertionPlanningResearch.loadCorpus(corpusPath)
+    val case = corpus.cases.single { it.id == "negation-01" }
+    val baseline = AssertionPlanningResearch.currentPlan(case).check
+    val guardRejected = AssertionPlanningResearch.planFromResponse(case, responseJson("visible", "Home"))
+    assertThat(guardRejected.proposal?.target).isEqualTo("Home")
+    assertThat(guardRejected.guardResult).isEqualTo(StructuralGuardResult.REJECT_NEGATION)
+    assertThat(guardRejected.fallbackReason).isEqualTo(PlannerFallbackReason.STRUCTURAL_GUARD)
+    assertThat(guardRejected.effectiveCheck).isEqualTo(baseline)
+
+    val ordinary = corpus.cases.single { it.id == "text-01" }
+    val uncertain = AssertionPlanningResearch.planFromResponse(
+      ordinary,
+      responseJson("visible", "Home", uncertain = "true"),
+    )
+    assertThat(uncertain.proposal?.target).isEqualTo("Home")
+    assertThat(uncertain.fallbackReason).isEqualTo(PlannerFallbackReason.UNCERTAIN)
+    assertThat(uncertain.effectiveCheck).isEqualTo(AssertionPlanningResearch.currentPlan(ordinary).check)
+
+    val lowConfidence = AssertionPlanningResearch.planFromResponse(
+      ordinary,
+      responseJson("visible", "Home", confidence = "0.49"),
+      threshold = 0.5,
+    )
+    assertThat(lowConfidence.proposal?.confidence).isEqualTo(0.49)
+    assertThat(lowConfidence.fallbackReason).isEqualTo(PlannerFallbackReason.BELOW_THRESHOLD)
+    assertThat(lowConfidence.effectiveCheck).isEqualTo(AssertionPlanningResearch.currentPlan(ordinary).check)
+  }
+
+  @Test
+  fun `supplier failure and owned timeout fall back while caller cancellation identity propagates`() = runTest {
+    val corpusPath = corpusPath()
+    val corpus = AssertionPlanningResearch.loadCorpus(corpusPath)
+    val case = corpus.cases.single { it.id == "text-01" }
+    val failed = AssertionPlanningResearch.planWithSupplier(case, corpusPath) {
+      error("provider detail must not be retained")
+    }
+    assertThat(failed.safeFailureKind).isEqualTo(SafeFailureKind.TRANSPORT)
+    assertThat(failed.fallbackReason).isEqualTo(PlannerFallbackReason.SAFE_FAILURE)
+    assertThat(failed.effectiveCheck).isEqualTo(AssertionPlanningResearch.currentPlan(case).check)
+
+    val timedOut = AssertionPlanningResearch.planWithSupplier(case, corpusPath, timeoutMillis = 10) {
+      delay(100)
+      responseJson("visible", "Home")
+    }
+    assertThat(timedOut.safeFailureKind).isEqualTo(SafeFailureKind.TIMEOUT)
+    assertThat(timedOut.fallbackReason).isEqualTo(PlannerFallbackReason.TIMEOUT)
+
+    val explicitCancellation = CancellationException("caller owns cancellation")
+    val observed = try {
+      AssertionPlanningResearch.planWithSupplier(case, corpusPath) { throw explicitCancellation }
+      null
+    } catch (error: CancellationException) {
+      error
+    }
+    assertThat(observed === explicitCancellation).isEqualTo(true)
+
+    val outerTimedOut = try {
+      kotlinx.coroutines.withTimeout(1) {
+        AssertionPlanningResearch.planWithSupplier(case, corpusPath, timeoutMillis = 100) {
+          delay(1000)
+          responseJson("visible", "Home")
+        }
+      }
+      false
+    } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+      true
+    }
+    assertThat(outerTimedOut).isEqualTo(true)
+
+    var calls = 0
+    val bypass = corpus.cases.single { it.id == "authority-01" }
+    val bypassPlan = AssertionPlanningResearch.planWithSupplier(bypass, corpusPath) {
+      calls++
+      responseJson("visible", "Home")
+    }
+    assertThat(calls).isEqualTo(0)
+    assertThat(bypassPlan.effectiveCheck).isEqualTo(AssertionPlanningResearch.currentPlan(bypass).check)
+  }
+
+  private fun responseJson(
+    mode: String,
+    target: String?,
+    confidence: String = "0.9",
+    uncertain: String = "false",
+    reason: String = "ok",
+  ): String = """{"mode":"$mode","target":${target?.let { "\"$it\"" } ?: "null"},"confidence":$confidence,"uncertain":$uncertain,"reason":"$reason"}"""
 
   @Test
   fun `corpus counts and bypasses come from cases raw syntax and fixed strategy`() {
@@ -397,7 +629,7 @@ class AssertionPlanningResearchTest {
   }
 
   @Test
-  fun `request envelope preserves all reviewed ids and bypass counts without model hashes`() {
+  fun `request envelope preserves all reviewed ids and bypass counts`() {
     val corpusPath = corpusPath()
     val corpus = AssertionPlanningResearch.loadCorpus(corpusPath)
     val envelope = AssertionPlanningResearch.buildRequestEnvelope(corpusPath)
@@ -408,8 +640,8 @@ class AssertionPlanningResearchTest {
     assertThat(envelope.cases.map { it.caseId }.distinct().size).isEqualTo(40)
     assertThat(envelope.cases.count { it.authorityBypass }).isEqualTo(8)
     assertThat(envelope.cases.count { !it.authorityBypass }).isEqualTo(32)
-    assertThat(envelope.promptHashStatus).isEqualTo("unavailable_until_t2")
-    assertThat(envelope.schemaHashStatus).isEqualTo("unavailable_until_t2")
+    assertThat(envelope.promptSha256.length).isEqualTo(64)
+    assertThat(envelope.schemaSha256.length).isEqualTo(64)
     assertThat(envelope.contextSha256.keys).isEqualTo(setOf("context/01-app.md", "context/02-controls.markdown"))
     assertThat(envelope.implementationSha256.keys).isEqualTo(
       setOf(
@@ -427,6 +659,194 @@ class AssertionPlanningResearchTest {
     assertThat(envelope.corpusSha256.length).isEqualTo(64)
   }
 
+  @Test
+  fun `request envelope binds exact prompt and strict schema bytes`() {
+    val corpusPath = corpusPath()
+    val envelope = AssertionPlanningResearch.buildRequestEnvelope(corpusPath)
+    val researchDirectory = corpusPath.parent
+
+    assertThat(envelope.promptSha256).isEqualTo(sha256(Files.readAllBytes(researchDirectory.resolve("prompt.txt"))))
+    val schemaBytes = Files.readAllBytes(researchDirectory.resolve("planner.schema.json"))
+    assertThat(envelope.schemaSha256).isEqualTo(sha256(schemaBytes))
+    val schema = Json.parseToJsonElement(schemaBytes.toString(Charsets.UTF_8)).jsonObject
+    assertThat(
+      schema.getValue("\$defs").jsonObject.getValue("nonBlankString").jsonObject.getValue("pattern").jsonPrimitive.content,
+    ).isEqualTo("[^\\t\\n\\u000B\\f\\r\\u001C-\\u001F\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]")
+  }
+
+  @Test
+  fun `saved output is complete only with exact bindings attempts and unique implicit cases`() {
+    val request = AssertionPlanningResearch.buildRequestEnvelope(corpusPath())
+    val requestBytes = Json.encodeToString(request).toByteArray()
+    val requestDigest = sha256(requestBytes)
+    val output = completeSavedOutput(request, requestDigest)
+
+    assertThat(AssertionPlanningResearch.validateSavedOutput(output, request, requestDigest)).isEqualTo(true)
+    assertThat(
+      AssertionPlanningResearch.validateSavedOutput(
+        output.copy(cases = output.cases.dropLast(1) + output.cases.first()),
+        request,
+        requestDigest,
+      ),
+    ).isEqualTo(false)
+    assertThat(
+      AssertionPlanningResearch.validateSavedOutput(
+        output.copy(bindings = output.bindings.copy(promptSha256 = "0".repeat(64))),
+        request,
+        requestDigest,
+      ),
+    ).isEqualTo(false)
+    val responseCorruption = output.copy(
+      cases = output.cases.mapIndexed { index, case ->
+        if (index == 0) case.copy(responseText = "different response") else case
+      },
+    )
+    assertThat(AssertionPlanningResearch.validateSavedOutput(responseCorruption, request, requestDigest)).isEqualTo(false)
+    val failedAttemptWithNegativeTokens = output.copy(
+      cases = output.cases.map { case ->
+        if (case.caseId == "text-01") {
+          case.copy(
+            status = SavedCaseStatus.FAILURE,
+            responseText = null,
+            storedTextSha256 = null,
+            redactionStatus = null,
+            failureKind = SafeFailureKind.TRANSPORT,
+            tokenUsage = SavedTokenUsage(inputTokens = -1),
+          )
+        } else {
+          case
+        }
+      },
+    )
+    assertThat(
+      AssertionPlanningResearch.validateSavedOutput(failedAttemptWithNegativeTokens, request, requestDigest),
+    ).isEqualTo(false)
+  }
+
+  @Test
+  fun `saved output scoring separates literal mismatch weakening and unavailable verdicts`() {
+    val corpusPath = corpusPath()
+    val request = AssertionPlanningResearch.buildRequestEnvelope(corpusPath)
+    val requestBytes = Json.encodeToString(request).toByteArray()
+    val requestDigest = sha256(requestBytes)
+    val output = completeSavedOutput(request, requestDigest)
+    val outputBytes = Json.encodeToString(output).toByteArray()
+    val outputDigest = sha256(outputBytes)
+
+    val evaluation = AssertionPlanningResearch.evaluateSavedOutput(
+      corpusPath = corpusPath,
+      request = request,
+      requestBytes = requestBytes,
+      output = output,
+      outputBytes = outputBytes,
+    )
+
+    assertThat(evaluation.studyComplete).isEqualTo(true)
+    assertThat(evaluation.rows.size).isEqualTo(120)
+    val modelText = evaluation.rows.single { it.caseId == "text-03" && it.arm == EvaluationArm.MODEL }
+    assertThat(modelText.rawSemanticError).isEqualTo(true)
+    assertThat(modelText.effectiveSemanticError).isEqualTo(true)
+    assertThat(modelText.effectiveModeMismatch).isEqualTo(false)
+    assertThat(modelText.effectiveTargetMismatch).isEqualTo(true)
+    assertThat(modelText.semanticWeakening).isEqualTo(false)
+    assertThat(modelText.verdicts.evaluated).isEqualTo(3)
+    assertThat(modelText.verdicts.unavailable).isEqualTo(0)
+    val caseOnlyDifference = evaluation.rows.single { it.caseId == "text-01" && it.arm == EvaluationArm.MODEL }
+    assertThat(caseOnlyDifference.effectiveSemanticError).isEqualTo(false)
+    assertThat(caseOnlyDifference.effectiveTargetMismatch).isEqualTo(false)
+    val negation = evaluation.rows.single { it.caseId == "negation-01" && it.arm == EvaluationArm.MODEL }
+    assertThat(negation.guardResult).isEqualTo(StructuralGuardResult.REJECT_NEGATION)
+    assertThat(negation.semanticWeakening).isEqualTo(false)
+    assertThat(negation.rawSemanticWeakening).isEqualTo(true)
+    assertThat(negation.rawVerdicts.falsePasses > 0).isEqualTo(true)
+    assertThat(negation.verdicts != negation.rawVerdicts).isEqualTo(true)
+    assertThat(evaluation.thresholdReplay.map { it.threshold }).isEqualTo(listOf(0.0, 0.5, 0.8, 0.95, 1.0))
+    assertThat(evaluation.thresholdReplay.all { it.rawOutputSha256 == outputDigest }).isEqualTo(true)
+
+    val incomplete = output.copy(
+      completed = false,
+      stopReason = SavedStopReason.INTERRUPTED,
+      counters = output.counters.copy(caseAttempts = 31, unattemptedCases = 1, totalAttempts = 32),
+      cases = output.cases.filterNot { it.caseId == "text-01" },
+    )
+    val incompleteBytes = Json.encodeToString(incomplete).toByteArray()
+    val incompleteEvaluation = AssertionPlanningResearch.evaluateSavedOutput(
+      corpusPath = corpusPath,
+      request = request,
+      requestBytes = requestBytes,
+      output = incomplete,
+      outputBytes = incompleteBytes,
+    )
+    assertThat(incompleteEvaluation.studyComplete).isEqualTo(false)
+    assertThat(incompleteEvaluation.summaries.single { it.arm == EvaluationArm.MODEL }.unattemptedCases).isEqualTo(1)
+  }
+
+  private fun completeSavedOutput(request: ResearchRequestEnvelope, requestDigest: String): SavedPlannerOutput {
+    val response = responseJson("visible", "Home")
+    val responseDigest = sha256(response.toByteArray())
+    val implicitCases = request.cases.filterNot { it.authorityBypass }
+    val successfulCase = { caseId: String ->
+      val caseResponse = if (caseId == "text-01") responseJson("visible", "home") else response
+      SavedCaseOutput(
+        caseId = caseId,
+        status = SavedCaseStatus.SUCCESS,
+        responseText = caseResponse,
+        storedTextSha256 = sha256(caseResponse.toByteArray()),
+        redactionStatus = ResponseRedactionStatus.NOT_REQUIRED,
+        setup = SavedPhaseTiming(durationMillis = 1),
+        turn = SavedPhaseTiming(durationMillis = 1),
+        cleanup = SavedPhaseTiming(durationMillis = 1),
+        tokenUsage = SavedTokenUsage(),
+      )
+    }
+    return SavedPlannerOutput(
+      formatVersion = 1,
+      bindings = SavedOutputInputBindings(
+        requestSha256 = requestDigest,
+        corpusSha256 = request.corpusSha256,
+        contextSha256 = request.contextSha256,
+        hostSha256 = request.implementationSha256,
+        promptSha256 = request.promptSha256,
+        schemaSha256 = request.schemaSha256,
+      ),
+      runMetadata = SavedOutputRunMetadata(
+        model = "offline-fixture",
+        effort = "high",
+        tier = "Luna",
+        cliVersion = "offline-fixture",
+        globalInstructionSources = emptyList(),
+      ),
+      counters = SavedOutputCounters(33, 1, 32, 8, 0),
+      completed = true,
+      stopReason = SavedStopReason.COMPLETE,
+      cleanupVerified = true,
+      qualification = SavedQualificationOutput(
+        status = SavedCaseStatus.SUCCESS,
+        responseText = response,
+        storedTextSha256 = responseDigest,
+        redactionStatus = ResponseRedactionStatus.NOT_REQUIRED,
+        setup = SavedPhaseTiming(durationMillis = 1),
+        turn = SavedPhaseTiming(durationMillis = 1),
+        cleanup = SavedPhaseTiming(durationMillis = 1),
+        tokenUsage = SavedTokenUsage(),
+      ),
+      cases = request.cases.map { case ->
+        if (case.authorityBypass) {
+          SavedCaseOutput(
+            caseId = case.caseId,
+            status = SavedCaseStatus.BYPASS,
+            setup = SavedPhaseTiming(),
+            turn = SavedPhaseTiming(),
+            cleanup = SavedPhaseTiming(),
+            tokenUsage = SavedTokenUsage(),
+          )
+        } else {
+          successfulCase(case.caseId)
+        }
+      },
+    )
+  }
+
   private fun corpusPath(): Path {
     var directory = Path.of("").toAbsolutePath()
     while (!Files.isRegularFile(directory.resolve("research/assertion-planning/corpus.json"))) {
@@ -434,4 +854,7 @@ class AssertionPlanningResearchTest {
     }
     return directory.resolve("research/assertion-planning/corpus.json")
   }
+
+  private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
+    .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 }

@@ -1,0 +1,5 @@
+Choose one assertion mode and an optional literal target for the supplied assertion.
+
+The input contains only the original assertion, nearby journey steps, platform, and synthetic project context. Do not assume access to the live application, hierarchy, screenshot, or evaluation labels. Preserve the full meaning of the original expectation. Select a visible or focused check only when one literal target fully expresses that meaning. Do not turn negation, conditions, compound or disjunctive expectations, or visual properties into a positive presence/focus check. Use tree or visual when needed to preserve the expectation. For tree and visual modes, target must be null.
+
+Return exactly one JSON object matching the supplied schema, with exactly these fields: mode, target, confidence, uncertain, reason. Use mode visible, focused, tree, or visual. Keep reason concise. If the meaning or target is uncertain, set uncertain to true; the host will use its deterministic fallback for uncertain or low-confidence proposals.
