@@ -311,7 +311,7 @@ class VerityMcpScreenshotTest {
     assertThat(tool.inputSchema.required).isEqualTo(listOf("session_id"))
     assertThat(option["description"]!!.jsonPrimitive.content).contains("existing destinations")
     assertThat(option["description"]!!.jsonPrimitive.content).contains("absolute saved path")
-    assertThat(server.tools.size).isEqualTo(13)
+    assertThat(server.tools.size).isEqualTo(14)
   }
 
   @Test
