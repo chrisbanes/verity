@@ -370,6 +370,40 @@ class StructuredFlowQualificationTest {
     assertThat(elapsed).isEqualTo(5000L)
   }
 
+  @Test
+  fun `explicit iOS readiness budget permits late stable fixture without changing the default`() = runTest {
+    var elapsed = 0L
+    val result = prepareIosSettingsFixture(
+      capture = {
+        elapsed += 3_000
+        iosGeneralFixture()
+      },
+      aboutVisible = { false },
+      settingsVisible = { true },
+      returnToSettings = {},
+      scrollOnce = {},
+      budgetMillis = 8_000,
+      clockMillis = { elapsed },
+      pause = { elapsed += it },
+    )
+    assertThat(result.elapsedMillis).isEqualTo(6_000L)
+    elapsed = 0
+    assertFailsWith<QualificationUnavailable> {
+      prepareIosSettingsFixture(
+        capture = {
+          elapsed += 3_000
+          iosGeneralFixture()
+        },
+        aboutVisible = { false },
+        settingsVisible = { true },
+        returnToSettings = {},
+        scrollOnce = {},
+        clockMillis = { elapsed },
+        pause = { elapsed += it },
+      )
+    }
+  }
+
   private fun iosGeneralFixture() = FixtureProbeSummary(
     outcome = "ready",
     labelMatches = 2,

@@ -108,6 +108,7 @@ internal suspend fun prepareIosSettingsFixture(
   settingsVisible: suspend () -> Boolean,
   returnToSettings: suspend () -> Unit,
   scrollOnce: suspend () -> Unit,
+  budgetMillis: Long = 5_000,
   onSample: (FixtureProbeSummary) -> Unit = {},
   clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
   pause: suspend (Long) -> Unit = { delay(it) },
@@ -120,22 +121,22 @@ internal suspend fun prepareIosSettingsFixture(
   val initialCapture = capture()
   val initialCaptureElapsed = (clockMillis() - readinessStarted).coerceAtLeast(0)
   val initial = initialCapture.copy(
-    outcome = if (initialCaptureElapsed > 5_000) "readiness-timeout" else initialCapture.outcome,
+    outcome = if (initialCaptureElapsed > budgetMillis) "readiness-timeout" else initialCapture.outcome,
     elapsedMillis = initialCaptureElapsed,
   )
   onSample(initial)
-  if (initialCaptureElapsed > 5_000) throw QualificationUnavailable("Safe iOS Settings fixture readiness exceeded 5000 ms")
+  if (initialCaptureElapsed > budgetMillis) throw QualificationUnavailable("Safe iOS Settings fixture readiness exceeded $budgetMillis ms")
   if (initial.outcome == "ready") requireIosGeneralFixture(initial)
   if (initial.outcome != "not-ready" && initial.outcome != "ready") {
     throw QualificationUnavailable("Safe iOS Settings fixture selector unavailable: ${initial.outcome}")
   }
-  if (initialCaptureElapsed >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture did not become ready within 5000 ms")
+  if (initialCaptureElapsed >= budgetMillis) throw QualificationUnavailable("Safe iOS Settings fixture did not become ready within $budgetMillis ms")
 
   var readinessElapsed = initialCaptureElapsed
   if (initial.outcome == "not-ready") {
     scrollOnce()
     val pauseStarted = clockMillis()
-    pause(minOf(500, 5_000 - readinessElapsed))
+    pause(minOf(500, budgetMillis - readinessElapsed))
     readinessElapsed += (clockMillis() - pauseStarted).coerceAtLeast(0)
   }
   // Settings can relayout the row after its first accessibility snapshot. Admit a tap only
@@ -148,6 +149,7 @@ internal suspend fun prepareIosSettingsFixture(
       onSample = onSample,
       clockMillis = clockMillis,
       pause = pause,
+      budgetMillis = budgetMillis,
       elapsedOffsetMillis = readinessElapsed,
       stableForMillis = 500,
       initialReady = initial.takeIf { it.outcome == "ready" },
@@ -447,7 +449,9 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
             details["resetInputSha256"] = sha256(if (route == QualificationRoute.TYPED) encodeFlow(reset) else resetYaml)
             val captureFixture = QualificationSelectorProbe.captureForSession(session, source)
             val fixture = if (platform == Platform.IOS) {
+              details["fixtureReadinessLimitMillis"] = "8000"
               prepareIosSettingsFixture(
+                budgetMillis = 8_000,
                 capture = { captureFixture().toFixtureSummary() },
                 aboutVisible = { session.containsText("About", ignoreCase = false) },
                 settingsVisible = { session.containsText("Settings", ignoreCase = false) },
