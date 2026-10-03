@@ -23,6 +23,7 @@ If the context specifies an app ID, confirm it. Otherwise ask the user.
 ### 3. Opening Snapshot
 
 - Call `capture_screenshot(session_id)` — show the screenshot
+- To retain a PNG for reference or debugging, follow the shared [screenshot evidence procedure](../context/procedures.md#screenshot-evidence): pass `save_to_file` and record the returned absolute path. Choose an unused path with an existing writable parent. The caller owns the file and eventually deletes it after use; it remains after `close_session`.
 - Call `capture_hierarchy(session_id)` — describe what's visible
 - Ask: "Is this the right starting point? [yes/no]"
 
@@ -56,7 +57,7 @@ After each navigation action, suggest an assertion:
 Ask: "What would you like to do?"
 - **Describe an action** — user types a step, you generate and execute it
 - **Add a loop** — user describes what to navigate to, you create a loop step
-- **Take a screenshot** — capture current state for reference
+- **Take a screenshot** — capture current state for reference; use the shared [screenshot evidence procedure](../context/procedures.md#screenshot-evidence) when saving a PNG for later use
 - **Finish** — done authoring
 
 ### 6. Review

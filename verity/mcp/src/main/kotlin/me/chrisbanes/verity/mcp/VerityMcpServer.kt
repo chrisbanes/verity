@@ -65,6 +65,7 @@ class VerityMcpServer(
   private val hierarchyDiffRenderer: suspend (UUID, ResolvedHierarchySnapshotPair) -> String = { sessionId, pair ->
     HierarchyDiff.render(sessionId, pair)
   },
+  private val screenshotFileSaver: McpScreenshotFileSaver = McpScreenshotFileSaver(),
 ) {
 
   fun create(): Server {
@@ -85,6 +86,7 @@ class VerityMcpServer(
     registerPressKey(server)
     registerCaptureScreenshot(server)
     registerCaptureHierarchy(server)
+    registerCaptureFocusedTree(server)
     registerDiffHierarchy(server)
     registerCheckVisible(server)
     registerCheckFocused(server)
@@ -359,7 +361,7 @@ class VerityMcpServer(
           }
           putJsonObject("save_to_file") {
             put("type", "string")
-            put("description", "Optional file path to save the screenshot PNG")
+            put("description", "Optional PNG file path relative to the server working directory. Requires an existing writable parent and refuses existing destinations; returns the normalised absolute saved path.")
           }
         },
       ),
@@ -369,11 +371,26 @@ class VerityMcpServer(
       val saveToFile = args.string("save_to_file")
       sessionManager.withSession(sessionId) { session ->
         if (saveToFile != null) {
-          val target = Path.of(saveToFile)
-          val report = pathPreflightChecker.requireWritableFileTarget(target, "Screenshot output")
+          val target = Path.of(saveToFile).toAbsolutePath().normalize()
+          val report = withContext(Dispatchers.IO) {
+            pathPreflightChecker.requireWritableFileTarget(target, "Screenshot output")
+          }
           if (!report.passed) return@withSession preflightError(report)
-          session.captureScreenshot(target)
-          success("Screenshot saved to: $saveToFile")
+          val saved = try {
+            screenshotFileSaver.save(target, session::captureScreenshot)
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Exception) {
+            val cleanupFailures = e.suppressed.filterIsInstance<ScreenshotCleanupException>()
+            if (e !is ScreenshotCleanupException && cleanupFailures.isEmpty()) throw e
+            return@withSession error(
+              buildString {
+                append("${e::class.simpleName}: ${e.message}")
+                cleanupFailures.forEach { append("\n${it.message}") }
+              },
+            )
+          }
+          success("Screenshot saved to: $saved")
         } else {
           // Use a single cleanup block to ensure all temp files are deleted
           val tempFiles = mutableListOf<Path>()
@@ -441,6 +458,43 @@ class VerityMcpServer(
         val snapshotId = snapshotStore.add(sessionId, tree)
         val rendered = HierarchyRenderer.render(tree, filter)
         success("snapshot_id: $snapshotId\n\n$rendered")
+      }
+    }
+  }
+
+  private fun registerCaptureFocusedTree(server: Server) {
+    server.addSafeTool(
+      name = "capture_focused_tree",
+      description = "Capture bounded focused context (100 nodes, 12,000 UTF-16 units) with a full hierarchy snapshot",
+      inputSchema = ToolSchema(
+        properties = buildJsonObject {
+          putJsonObject("session_id") {
+            put("type", "string")
+            put("description", "Session ID returned by open_session")
+          }
+          putJsonObject("filter") {
+            put("type", "string")
+            put("description", "Filter level: focus, content (default), or all")
+            putJsonArray("enum") {
+              add(JsonPrimitive("focus"))
+              add(JsonPrimitive("content"))
+              add(JsonPrimitive("all"))
+            }
+          }
+        },
+      ),
+      required = listOf("session_id"),
+    ) { args ->
+      val sessionId = UUID.fromString(args.requireString("session_id"))
+      val filter = when (args.string("filter")) {
+        "focus" -> HierarchyFilter.FOCUS
+        "all" -> HierarchyFilter.ALL
+        else -> HierarchyFilter.CONTENT
+      }
+      sessionManager.withSession(sessionId) { session ->
+        val tree = session.captureHierarchyTree()
+        val snapshotId = snapshotStore.add(sessionId, tree)
+        success(McpFocusedTreeRenderer.render(tree, snapshotId.toString(), filter))
       }
     }
   }

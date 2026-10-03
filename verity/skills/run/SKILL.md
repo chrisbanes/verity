@@ -63,9 +63,21 @@ After all segments complete (or after stopping), present:
 
 **Summary**: 3-5 sentence narrative covering what was tested, what passed/failed, and any notable observations.
 
+For screenshots saved during execution or failure investigation, follow the shared [screenshot evidence procedure](../context/procedures.md#screenshot-evidence). Reference the actual returned absolute path in the report, rather than reconstructing it from the request. For example, with the MCP server working directory `/work/demo` and an existing writable `evidence` directory:
+
+```text
+Request: capture_screenshot(session_id, save_to_file: "evidence/failure.png")
+Response: Screenshot saved to: /work/demo/evidence/failure.png
+Report reference: [Failure screenshot](/work/demo/evidence/failure.png)
+```
+
+Keep that caller-owned PNG available while the report needs it. If capture errors or is cancelled, inspect its output/cleanup diagnostics before adding a screenshot reference; an error is not a successful saved-path response.
+
 ### 5. Cleanup
 
 Call `close_session(session_id)`.
+
+Saved PNGs remain after session closure. The caller eventually deletes them after use, following the shared [screenshot evidence cleanup guidance](../context/procedures.md#screenshot-evidence).
 
 ## Performance Tips
 
