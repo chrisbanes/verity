@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Verity assertion planning response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "target", "confidence", "uncertain", "reason"],
+  "$defs": {
+    "nonBlankString": {
+      "type": "string",
+      "pattern": "[^\\t\\n\\u000B\\f\\r\\u001C-\\u001F\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]"
+    }
+  },
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["visible", "focused", "tree", "visual"]
+    },
+    "target": {
+      "oneOf": [
+        { "allOf": [{ "$ref": "#/$defs/nonBlankString" }, { "maxLength": 256 }] },
+        { "type": "null" }
+      ]
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "uncertain": { "type": "boolean" },
+    "reason": { "allOf": [{ "$ref": "#/$defs/nonBlankString" }, { "maxLength": 512 }] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "enum": ["visible", "focused"] } } },
+      "then": { "properties": { "target": { "allOf": [{ "$ref": "#/$defs/nonBlankString" }, { "maxLength": 256 }] } } }
+    },
+    {
+      "if": { "properties": { "mode": { "enum": ["tree", "visual"] } } },
+      "then": { "properties": { "target": { "type": "null" } } }
+    }
+  ]
+}

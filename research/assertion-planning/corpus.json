@@ -1,0 +1,3764 @@
+{
+  "corpusId": "issue-59-independent-synthetic-assertion-corpus",
+  "revision": 2,
+  "status": "draft_pending_fresh_independent_label_review",
+  "sourceAuthority": {
+    "issue": 59,
+    "issueBodySha256": "73db744684d9577dd513109fa23b6e0251d82845baf432887f74b5002984d824",
+    "agentBriefSha256": "f18a5c7c78da9710d108f1d42b7f2299ce2524b94b8bca912f5de08b77210d6d",
+    "approvedPlanSha256": "865a473933e5f8518533c5237dbe7894f317f358c877260c21f09f29f9020e48",
+    "seedFilesReadOnly": [
+      "verity/core/src/test/resources/journeys/sample.journey.yaml",
+      "verity/smoke-tests/src/test/resources/android-settings.journey.yaml",
+      "verity/smoke-tests/src/test/resources/ios-settings.journey.yaml",
+      "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt",
+      "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt",
+      "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt"
+    ],
+    "seedUse": "Seeds identify provenance only; parser outputs and planner outputs did not author gold labels."
+  },
+  "inputProjection": [
+    "rawStep",
+    "journeySteps",
+    "platform",
+    "synthetic project context from contextFiles"
+  ],
+  "goldFieldsExcludedFromInput": [
+    "provenance",
+    "originalIntent",
+    "allowedChecks",
+    "groundTruthRationale",
+    "evidence",
+    "preferredCheapChecks",
+    "checkSemantics",
+    "sourceAdaptation",
+    "sourceSeed"
+  ],
+  "categoryCounts": {
+    "text": 6,
+    "focus": 6,
+    "negation": 5,
+    "compound": 5,
+    "ambiguous": 5,
+    "visual": 5,
+    "authority": 8
+  },
+  "authorityCoverage": {
+    "authoredModes": 4,
+    "fixedStrategies": 4,
+    "authoredOverridesFixedConflicts": 1,
+    "derivedAuthorityBypassCases": 8,
+    "derivedImplicitCases": 32,
+    "derivation": "A case is an authority bypass when rawStep has an authored [?mode] tag or fixedStrategy is non-null; otherwise it is implicit.",
+    "independentlyFixedModeCases": 4,
+    "authoredModeCases": 4
+  },
+  "platforms": [
+    "android-tv",
+    "android",
+    "ios"
+  ],
+  "contexts": [
+    "context/01-app.md",
+    "context/02-controls.markdown"
+  ],
+  "cases": [
+    {
+      "id": "text-01",
+      "category": "text",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[1]",
+      "rawStep": "[?] Home",
+      "journeySteps": [
+        "Launch the app",
+        "[?] Home"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "A visible text label reads Home.",
+      "allowedChecks": [
+        {
+          "mode": "visible",
+          "target": "Home",
+          "rationale": "Matching the literal visible Home label preserves the authored assertion; no destination identity is required."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the visible-label expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The authored assertion names the visible Home label and does not identify a particular navigation control.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "visible_text_helper",
+        "samples": [
+          {
+            "id": "text-01-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "A visible text attribute reads Home.",
+            "tree": {
+              "attributes": {
+                "text": "Home"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-01-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Only Other option is visible; the Home text label is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-01-adversarial-resource-id",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The string home occurs only in a resource identifier, not as displayed text, so the visible-label expectation is false.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/home"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "visible",
+          "target": "Home",
+          "rationale": "Matching the literal visible Home label preserves the authored assertion; no destination identity is required."
+        }
+      ]
+    },
+    {
+      "id": "text-02",
+      "category": "text",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[4]",
+      "rawStep": "[?] Detail page shows title",
+      "journeySteps": [
+        "Launch com.example.tv",
+        "Open a TV Shows card",
+        "[?] Detail page shows title"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "A title is shown on the opened detail page.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Page-scoped title must remain intact; the word title alone is insufficient."
+        }
+      ],
+      "groundTruthRationale": "Page-scoped title must remain intact; the word title alone is insufficient.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "text-02-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The opened detail page contains an identified title field with the displayed value Moonrise; no synopsis is required.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "text-02-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Moonrise appears on the feed page, outside the opened detail page.",
+            "tree": {
+              "attributes": {
+                "resource-id": "feed-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Moonrise"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "text-02-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The detail page contains an identified title field but no displayed title value.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [],
+      "sourceAdaptation": {
+        "adaptedContext": "synthetic:context/01-app.md#tv-detail-page",
+        "note": "The original source seed is the Android com.example.social journey. This corpus case adapts its detail-title intent to com.example.tv; the TV detail-page facts are synthetic and are not attributed to the original seed.",
+        "originalSourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[4]"
+      }
+    },
+    {
+      "id": "text-03",
+      "category": "text",
+      "platform": "android",
+      "sourceSeed": "verity/smoke-tests/src/test/resources/android-settings.journey.yaml#steps[1]",
+      "rawStep": "Verify Internet is visible",
+      "journeySteps": [
+        "Tap Network & internet",
+        "Verify Internet is visible"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "The Internet row is displayed.",
+      "allowedChecks": [
+        {
+          "mode": "visible",
+          "target": "Internet",
+          "rationale": "The row label is the literal target."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the visible-label expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The row label is the literal target.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "visible_text_helper",
+        "samples": [
+          {
+            "id": "text-03-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact visible label “Internet” is present.",
+            "tree": {
+              "attributes": {
+                "text": "Internet"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-03-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Another label is present; “Internet” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-03-adversarial-resource-id",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Only a resource identifier contains “Internet”; no visible label is present.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/internet"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "visible",
+          "target": "Internet",
+          "rationale": "The row label is the literal target."
+        }
+      ]
+    },
+    {
+      "id": "text-04",
+      "category": "text",
+      "platform": "ios",
+      "sourceSeed": "verity/smoke-tests/src/test/resources/ios-settings.journey.yaml#steps[1]",
+      "rawStep": "Verify About is visible",
+      "journeySteps": [
+        "Tap General",
+        "Verify About is visible"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "The About destination is displayed.",
+      "allowedChecks": [
+        {
+          "mode": "visible",
+          "target": "About",
+          "rationale": "A literal destination label is sufficient."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the visible-label expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "A literal destination label is sufficient.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "visible_text_helper",
+        "samples": [
+          {
+            "id": "text-04-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact visible label “About” is present.",
+            "tree": {
+              "attributes": {
+                "text": "About"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-04-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Another label is present; “About” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-04-adversarial-resource-id",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Only a resource identifier contains “About”; no visible label is present.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/about"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "visible",
+          "target": "About",
+          "rationale": "A literal destination label is sufficient."
+        }
+      ]
+    },
+    {
+      "id": "text-05",
+      "category": "text",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#three-words-without-visual-keywords",
+      "rawStep": "[?] TV Shows row",
+      "journeySteps": [
+        "Launch the TV app",
+        "[?] TV Shows row"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "TV Shows row label is present.",
+      "allowedChecks": [
+        {
+          "mode": "visible",
+          "target": "TV Shows row",
+          "rationale": "The short literal row label is the complete expectation."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the visible-label expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The short literal row label is the complete expectation.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "visible_text_helper",
+        "samples": [
+          {
+            "id": "text-05-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact visible label “TV Shows row” is present.",
+            "tree": {
+              "attributes": {
+                "text": "TV Shows row"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-05-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Another label is present; “TV Shows row” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-05-adversarial-resource-id",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Only a resource identifier contains “TV Shows row”; no visible label is present.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/tv_shows_row"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "visible",
+          "target": "TV Shows row",
+          "rationale": "The short literal row label is the complete expectation."
+        }
+      ]
+    },
+    {
+      "id": "text-06",
+      "category": "text",
+      "platform": "ios",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#parses-NL-assertion-keyword",
+      "rawStep": "Verify that the title is visible",
+      "journeySteps": [
+        "Open About",
+        "Verify that the title is visible"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "The current page provides an identifiable title value.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "The assertion requires a current page title value; the phrase “the title” is not itself a literal displayed target."
+        }
+      ],
+      "groundTruthRationale": "The parser-prefix seed says “the title is visible” without specifying the title value; preserve that requirement instead of searching for the phrase “the title”.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "text-06-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "A title field contains the displayed value Moonrise.",
+            "tree": {
+              "attributes": {
+                "resource-id": "screen-title"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Moonrise"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "text-06-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "A title field is present but has no displayed value.",
+            "tree": {
+              "attributes": {
+                "resource-id": "screen-title"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "text-06-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The page has a title placeholder only in a resource identifier; its only displayed value belongs to Name, so no title value is identifiable.",
+            "tree": {
+              "attributes": {
+                "resource-id": "about-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "screen-title-placeholder"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "name-field",
+                    "text": "Mira"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "focus-01",
+      "category": "focus",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-on-focused-node",
+      "rawStep": "[?] Home is focused",
+      "journeySteps": [
+        "Launch the TV app",
+        "[?] Home is focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Home item currently has remote focus.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Home",
+          "rationale": "The intent names focus on the Home label."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the focus relationship expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The intent names focus on the Home label.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "focus-01-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Home” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Home"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-01-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Home"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-01-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Home"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "focused",
+          "target": "Home",
+          "rationale": "The intent names focus on the Home label."
+        }
+      ]
+    },
+    {
+      "id": "focus-02",
+      "category": "focus",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-not-on-focused-node",
+      "rawStep": "[?] Settings is focused",
+      "journeySteps": [
+        "Open settings",
+        "[?] Settings is focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Settings item currently has focus.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Settings",
+          "rationale": "The required state is focus, not presence."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the focus relationship expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The required state is focus, not presence.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "focus-02-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Settings” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Settings"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-02-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Settings"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-02-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "focused",
+          "target": "Settings",
+          "rationale": "The required state is focus, not presence."
+        }
+      ]
+    },
+    {
+      "id": "focus-03",
+      "category": "focus",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-on-descendant-of-focused-node",
+      "rawStep": "[?] Movie Title is focused",
+      "journeySteps": [
+        "Open a media card",
+        "[?] Movie Title is focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Card containing Movie Title is current focus target.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Movie Title",
+          "rationale": "The case accepts focus on the containing card."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the focus relationship expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The case accepts focus on the containing card.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "focus-03-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Movie Title” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {
+                "resource-id": "movie-card"
+              },
+              "states": [
+                "focused"
+              ],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Movie Title"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-03-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Movie Title"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-03-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Movie Title"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "focused",
+          "target": "Movie Title",
+          "rationale": "The case accepts focus on the containing card."
+        }
+      ]
+    },
+    {
+      "id": "focus-04",
+      "category": "focus",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-on-sibling-of-focused-node",
+      "rawStep": "[?] Movie Title is focused",
+      "journeySteps": [
+        "Open media list",
+        "[?] Movie Title is focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Movie Title item is the focus target even if a sibling indicator carries focus.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Movie Title",
+          "rationale": "The intent accepts the seeded sibling focus-indicator shape."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the focus relationship expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The intent accepts the seeded sibling focus-indicator shape.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "focus-04-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Movie Title” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {
+                "resource-id": "list-row"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "focus-indicator"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "text": "Movie Title"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-04-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Movie Title"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-04-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Movie Title"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "focused",
+          "target": "Movie Title",
+          "rationale": "The intent accepts the seeded sibling focus-indicator shape."
+        }
+      ]
+    },
+    {
+      "id": "focus-05",
+      "category": "focus",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-on-ancestor-of-focused-node",
+      "rawStep": "[?] Row Title is focused",
+      "journeySteps": [
+        "Navigate to TV Shows",
+        "[?] Row Title is focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Row titled Row Title is current focus target.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Row Title",
+          "rationale": "Focus may be on an item within the named row."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the focus relationship expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "Focus may be on an item within the named row.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "focus-05-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Row Title” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {
+                "text": "Row Title"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "focused-item"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-05-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Row Title"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-05-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Row Title"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "focused",
+          "target": "Row Title",
+          "rationale": "Focus may be on an item within the named row."
+        }
+      ]
+    },
+    {
+      "id": "focus-06",
+      "category": "focus",
+      "platform": "ios",
+      "sourceSeed": "verity/smoke-tests/src/test/resources/ios-settings.journey.yaml#steps[3]",
+      "rawStep": "Verify Name is focused",
+      "journeySteps": [
+        "Tap General",
+        "Tap About",
+        "Verify Name is focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Name field has keyboard focus.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Name",
+          "rationale": "The target is Name and the required state is focus."
+        },
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Complete hierarchy inspection preserves the focus relationship expectation; this corpus does not score a tree verdict."
+        }
+      ],
+      "groundTruthRationale": "The target is Name and the required state is focus.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "focus-06-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Name” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Name"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-06-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Name"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "focus-06-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Name"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [
+        {
+          "mode": "focused",
+          "target": "Name",
+          "rationale": "The target is Name and the required state is focus."
+        }
+      ]
+    },
+    {
+      "id": "negation-01",
+      "category": "negation",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[1]",
+      "rawStep": "[?] Home is not visible",
+      "journeySteps": [
+        "Launch app",
+        "[?] Home is not visible"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Home label is absent from the visible interface.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Absence must be checked; positive Home presence weakens the expectation."
+        }
+      ],
+      "groundTruthRationale": "Absence must be checked; positive Home presence weakens the expectation.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "negation-01-absent",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Visible “Home” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "negation-01-present",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Forbidden “Home” is visible.",
+            "tree": {
+              "attributes": {
+                "text": "Home"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "negation-01-resource-only",
+            "kind": "adversarial",
+            "expectedIntentVerdict": true,
+            "rationale": "Only a resource identifier contains “Home”; the visible item is absent.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/home"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "negation-02",
+      "category": "negation",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-not-on-focused-node",
+      "rawStep": "[?] Settings is not focused",
+      "journeySteps": [
+        "Open settings",
+        "[?] Settings is not focused"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Settings item does not have focus.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Negative focus is not a positive focus(Settings) check."
+        }
+      ],
+      "groundTruthRationale": "Negative focus is not a positive focus(Settings) check.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "negation-02-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Settings is present and no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "text": "Home"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "negation-02-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The Settings control itself carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Settings"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "text": "Home"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "negation-02-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": true,
+            "rationale": "Home is focused while the distinct Settings item is not focused.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "text": "Home"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "negation-03",
+      "category": "negation",
+      "platform": "ios",
+      "sourceSeed": "synthetic:context/01-app.md#error-banner",
+      "rawStep": "[?] No error banner appears",
+      "journeySteps": [
+        "Launch com.apple.Preferences",
+        "Open General",
+        "Open About",
+        "[?] No error banner appears"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "No error banner is displayed.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "The complete absence condition must be retained."
+        }
+      ],
+      "groundTruthRationale": "The complete absence condition must be retained.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "negation-03-absent",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Visible “Error banner” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "negation-03-present",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Forbidden “Error banner” is visible.",
+            "tree": {
+              "attributes": {
+                "text": "Error banner"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": [],
+      "sourceAdaptation": {
+        "adaptedContext": "synthetic:context/01-app.md#ios-about-error-banner",
+        "note": "The preserved source seed is the Android social-app error-banner fact. This corpus case adapts the absence check to iOS Settings About; the iOS banner fact is separately defined here and is not attributed to the Android seed.",
+        "originalSourceSeed": "synthetic:context/01-app.md#error-banner"
+      }
+    },
+    {
+      "id": "negation-04",
+      "category": "negation",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#text-with-image-keyword",
+      "rawStep": "[?] Backdrop image does not load",
+      "journeySteps": [
+        "Open detail page",
+        "[?] Backdrop image does not load"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Backdrop image fails to render.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "Image rendering is visual and unavailable in hierarchy evidence."
+        }
+      ],
+      "groundTruthRationale": "Image rendering is visual and unavailable in hierarchy evidence.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether the backdrop image rendered or failed"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "negation-05",
+      "category": "negation",
+      "platform": "ios",
+      "sourceSeed": "synthetic:context/01-app.md#about-title",
+      "rawStep": "[?] Title is not Unknown",
+      "journeySteps": [
+        "Open General",
+        "Open About",
+        "[?] Title is not Unknown"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Displayed title value is not Unknown.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Value inequality is a negative condition; target presence is insufficient."
+        }
+      ],
+      "groundTruthRationale": "Value inequality is a negative condition; target presence is insufficient.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "negation-05-title-other-value",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The identified About title field displays Moonrise, which is not Unknown.",
+            "tree": {
+              "attributes": {
+                "resource-id": "about-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "about-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "negation-05-title-unknown",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The identified About title field displays the forbidden value Unknown.",
+            "tree": {
+              "attributes": {
+                "resource-id": "about-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "about-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Unknown"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "negation-05-title-missing",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The About page has no identifiable title field, so the required non-Unknown title value is absent.",
+            "tree": {
+              "attributes": {
+                "resource-id": "about-page"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "compound-01",
+      "category": "compound",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[4]",
+      "rawStep": "[?] Detail page shows title and synopsis",
+      "journeySteps": [
+        "Launch app",
+        "Open feed item",
+        "[?] Detail page shows title and synopsis"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Opened detail page displays both a title and synopsis.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Both values and their page scope are required."
+        }
+      ],
+      "groundTruthRationale": "Both values and their page scope are required.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "compound-01-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The detail page contains identified title and synopsis fields with displayed values.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "detail-synopsis-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "A quiet story."
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-01-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The detail page has a title field but no synopsis field.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-01-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Both fields appear on the feed page, outside the opened detail page.",
+            "tree": {
+              "attributes": {
+                "resource-id": "feed-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field",
+                    "text": "Moonrise"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "detail-synopsis-field",
+                    "text": "A quiet story."
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "compound-02",
+      "category": "compound",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#generic-assertion-short-text",
+      "rawStep": "[?] Home is visible and Settings is visible",
+      "journeySteps": [
+        "Launch TV app",
+        "[?] Home is visible and Settings is visible"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Both Home and Settings labels are visible.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "The conjunction requires both labels."
+        }
+      ],
+      "groundTruthRationale": "The conjunction requires both labels.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "compound-02-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Both exact labels are visible in the TV navigation.",
+            "tree": {
+              "attributes": {
+                "resource-id": "tv-navigation"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "home-destination",
+                    "text": "Home"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "settings-destination",
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-02-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Home is visible but Settings is absent.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "home-destination",
+                    "text": "Home"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-02-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": true,
+            "rationale": "Both exact labels are visible in separate branches; the assertion does not require a common parent.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "home-card",
+                    "text": "Home"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "settings-toolbar",
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "compound-03",
+      "category": "compound",
+      "platform": "android",
+      "sourceSeed": "verity/smoke-tests/src/test/resources/android-settings.journey.yaml#steps[1]",
+      "rawStep": "[?] Internet is visible and connected",
+      "journeySteps": [
+        "Tap Network & internet",
+        "[?] Internet is visible and connected"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Internet row is visible and connection status is connected.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Row label and connection state are separate requirements."
+        }
+      ],
+      "groundTruthRationale": "Row label and connection state are separate requirements.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "compound-03-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The identified Internet row displays its Connected status.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "internet-row"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "internet-label",
+                        "text": "Internet"
+                      },
+                      "states": [],
+                      "children": []
+                    },
+                    {
+                      "attributes": {
+                        "resource-id": "connection-status",
+                        "text": "Connected"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-03-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The identified Internet row is visible but its status is Disconnected.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "internet-row"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "internet-label",
+                        "text": "Internet"
+                      },
+                      "states": [],
+                      "children": []
+                    },
+                    {
+                      "attributes": {
+                        "resource-id": "connection-status",
+                        "text": "Disconnected"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-03-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Internet is visible on one row while Connected belongs to a different row.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "internet-row"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "internet-label",
+                        "text": "Internet"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "bluetooth-row"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Connected"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "compound-04",
+      "category": "compound",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#deeply-nested-descendant-of-focused-node",
+      "rawStep": "[?] Movie title and year appear inside the same card",
+      "journeySteps": [
+        "Open TV Shows row",
+        "[?] Movie title and year appear inside the same card"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "A card displays title and year inside that same card.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "The same-card relation is required."
+        }
+      ],
+      "groundTruthRationale": "The same-card relation is required.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "compound-04-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The identified movie card contains both a title field and a year field.",
+            "tree": {
+              "attributes": {
+                "resource-id": "tv-shows-row"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "movie-card"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "movie-title-field",
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    },
+                    {
+                      "attributes": {
+                        "resource-id": "movie-year-field",
+                        "text": "2024"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-04-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The identified movie card contains a title but no year field.",
+            "tree": {
+              "attributes": {
+                "resource-id": "tv-shows-row"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "movie-card"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "movie-title-field",
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-04-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The title and year are on separate cards, so no single card contains both.",
+            "tree": {
+              "attributes": {
+                "resource-id": "tv-shows-row"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "movie-card-a"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "movie-title-field",
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "movie-card-b"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "movie-year-field",
+                        "text": "2024"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "compound-05",
+      "category": "compound",
+      "platform": "ios",
+      "sourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[1]",
+      "rawStep": "[?] Settings is focused and its description is Manage device settings",
+      "journeySteps": [
+        "Open General",
+        "[?] Settings is focused and its description is Manage device settings"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Settings is focused and its description reads Manage device settings.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Focus and description are jointly required."
+        }
+      ],
+      "groundTruthRationale": "Focus and description are jointly required.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "compound-05-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The identified Settings control is focused and carries the required description.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "settings-control",
+                    "text": "Settings",
+                    "content-desc": "Manage device settings"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-05-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The Settings control has the required description but carries no focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "settings-control",
+                    "text": "Settings",
+                    "content-desc": "Manage device settings"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "compound-05-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Settings is focused, but the required description belongs to a different control.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "settings-control",
+                    "text": "Settings"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "help-control",
+                    "content-desc": "Manage device settings"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "ambiguous-01",
+      "category": "ambiguous",
+      "platform": "android",
+      "sourceSeed": "synthetic:context/02-controls.markdown#home-screen-or-tab",
+      "rawStep": "Verify Home is open",
+      "journeySteps": [
+        "Launch social app",
+        "Verify Home is open"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Home referent unresolved between screen and persistent tab.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "No cheap literal can safely choose between candidates."
+        }
+      ],
+      "groundTruthRationale": "No cheap literal can safely choose between candidates.",
+      "evidence": {
+        "availability": "not_resolvable_from_supplied_wording",
+        "verdictCapability": "none",
+        "ambiguity": "Home may refer to feed screen or persistent tab; journey does not disambiguate.",
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "ambiguous-02",
+      "category": "ambiguous",
+      "platform": "android-tv",
+      "sourceSeed": "synthetic:context/02-controls.markdown#selected-item",
+      "rawStep": "Check the selected item",
+      "journeySteps": [
+        "Open media list",
+        "Check the selected item"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Identity and intended property of selected item are under-specified.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Referent and whether selected means selected-state or focus are unresolved."
+        }
+      ],
+      "groundTruthRationale": "Referent and whether selected means selected-state or focus are unresolved.",
+      "evidence": {
+        "availability": "not_resolvable_from_supplied_wording",
+        "verdictCapability": "none",
+        "ambiguity": "No label identifies the item; selected is distinct from focused.",
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "ambiguous-03",
+      "category": "ambiguous",
+      "platform": "android",
+      "sourceSeed": "synthetic:context/01-app.md#connection-status",
+      "rawStep": "Verify status is ready",
+      "journeySteps": [
+        "Launch the social app",
+        "Verify status is ready"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "The status that should be ready is not specified: the app exposes both social sign-in and media connection status.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "The same app exposes account sign-in and media connection readiness; the assertion does not identify which status should be ready."
+        }
+      ],
+      "groundTruthRationale": "The same app exposes account sign-in and media connection readiness; the assertion does not identify which status should be ready.",
+      "evidence": {
+        "availability": "not_resolvable_from_supplied_wording",
+        "verdictCapability": "none",
+        "ambiguity": "Status may refer to the social sign-in state or network connection state; the assertion supplies no referent.",
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "ambiguous-04",
+      "category": "ambiguous",
+      "platform": "ios",
+      "sourceSeed": "synthetic:context/02-controls.markdown#similar-rows",
+      "rawStep": "Confirm the current row is active",
+      "journeySteps": [
+        "Open General",
+        "Confirm the current row is active"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Row identity and meaning of active are unspecified.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Target and state meaning are unresolved."
+        }
+      ],
+      "groundTruthRationale": "Target and state meaning are unresolved.",
+      "evidence": {
+        "availability": "not_resolvable_from_supplied_wording",
+        "verdictCapability": "none",
+        "ambiguity": "Several rows could be current; active may denote selection or focus.",
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "ambiguous-05",
+      "category": "ambiguous",
+      "platform": "ios",
+      "sourceSeed": "synthetic:context/01-app.md#active-profile",
+      "rawStep": "Verify the active profile",
+      "journeySteps": [
+        "Launch com.apple.Preferences",
+        "Open account area",
+        "Verify the active profile"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "The phrase active profile could refer to the selected profile or to a profile activity status; neither is identified.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "The app exposes a selected profile and profile activity status, but the assertion does not name which property it means."
+        }
+      ],
+      "groundTruthRationale": "The app exposes a selected profile and profile activity status, but the assertion does not name which property it means.",
+      "evidence": {
+        "availability": "not_resolvable_from_supplied_wording",
+        "verdictCapability": "none",
+        "ambiguity": "Journey supplies no profile identity or definition of active.",
+        "samples": []
+      },
+      "preferredCheapChecks": [],
+      "sourceAdaptation": {
+        "adaptedContext": "synthetic:context/01-app.md#ios-active-profile",
+        "note": "The preserved source seed is the Android social-app profile fact. This corpus case adapts the ambiguity to iOS Preferences; the iOS profile facts are separately defined here and are not attributed to the Android seed.",
+        "originalSourceSeed": "synthetic:context/01-app.md#active-profile"
+      }
+    },
+    {
+      "id": "visual-01",
+      "category": "visual",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[5]",
+      "rawStep": "[?] Backdrop image loads",
+      "journeySteps": [
+        "Launch com.example.social",
+        "Open a feed item",
+        "[?] Backdrop image loads"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Backdrop image is visibly rendered on detail page.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "Rendered image content is visual."
+        }
+      ],
+      "groundTruthRationale": "Rendered image content is visual.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether detail backdrop rendered"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": [],
+      "sourceAdaptation": {
+        "originalSourceSeed": "verity/core/src/test/resources/journeys/sample.journey.yaml#steps[5]",
+        "adaptedContext": "synthetic:context/01-app.md#detail-page",
+        "note": "The original Android social journey sample uses an authored visual tag. This corpus case reuses its assertion wording without that tag to create an implicit-planning case; sourceSeed remains provenance and is not projected as planner input."
+      }
+    },
+    {
+      "id": "visual-02",
+      "category": "visual",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#text-with-icon-keyword",
+      "rawStep": "[?] Play icon is displayed",
+      "journeySteps": [
+        "Open detail page",
+        "[?] Play icon is displayed"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Play icon is visibly rendered.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "Icon appearance is visual."
+        }
+      ],
+      "groundTruthRationale": "Icon appearance is visual.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether Play icon rendered"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "visual-03",
+      "category": "visual",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#text-with-color-keyword",
+      "rawStep": "[?] Button color is red",
+      "journeySteps": [
+        "Open Network & internet",
+        "[?] Button color is red"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Button is rendered in red.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "Color is not available from hierarchy text."
+        }
+      ],
+      "groundTruthRationale": "Color is not available from hierarchy text.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "rendered button color"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "visual-04",
+      "category": "visual",
+      "platform": "ios",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#text-with-highlight-keyword",
+      "rawStep": "[?] Selected item has highlight",
+      "journeySteps": [
+        "Open About",
+        "[?] Selected item has highlight"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Selected item has a visible highlight.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "Highlight appearance is visual."
+        }
+      ],
+      "groundTruthRationale": "Highlight appearance is visual.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether highlight rendered"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "visual-05",
+      "category": "visual",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#text-with-animation-keyword",
+      "rawStep": "[?] Loading animation stops",
+      "journeySteps": [
+        "Open media list",
+        "[?] Loading animation stops"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "inferred",
+        "authoredMode": null,
+        "fixedStrategy": null,
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Loading animation has stopped.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "Motion over time is not available in a hierarchy snapshot."
+        }
+      ],
+      "groundTruthRationale": "Motion over time is not available in a hierarchy snapshot.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether animation is playing or stopped"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-01",
+      "category": "authority",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#parses-explicit-visible-assertion",
+      "rawStep": "[?visible] Home",
+      "journeySteps": [
+        "Launch TV app",
+        "[?visible] Home"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "authored_mode",
+        "authoredMode": "visible"
+      },
+      "originalIntent": "Authored visible assertion checks Home label.",
+      "allowedChecks": [
+        {
+          "mode": "visible",
+          "target": "Home",
+          "rationale": "Explicit mode and literal target are authoritative."
+        }
+      ],
+      "groundTruthRationale": "Explicit mode and literal target are authoritative.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "visible_text_helper",
+        "samples": [
+          {
+            "id": "authority-01-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact visible label “Home” is present.",
+            "tree": {
+              "attributes": {
+                "text": "Home"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "authority-01-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Another label is present; “Home” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "authority-01-adversarial-resource-id",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Only a resource identifier contains “Home”; no visible label is present.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/home"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-02",
+      "category": "authority",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#parses-explicit-focused-assertion",
+      "rawStep": "[?focused] Settings",
+      "journeySteps": [
+        "Open Network & internet",
+        "[?focused] Settings"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "authored_mode",
+        "authoredMode": "focused"
+      },
+      "originalIntent": "Authored focused assertion checks focus on Settings.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Settings",
+          "rationale": "Explicit mode and literal target are authoritative."
+        }
+      ],
+      "groundTruthRationale": "Explicit mode and literal target are authoritative.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "authority-02-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Settings” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Settings"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-02-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Settings"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-02-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-03",
+      "category": "authority",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#parses-explicit-tree-assertion",
+      "rawStep": "[?tree] Detail page shows title and synopsis",
+      "journeySteps": [
+        "Open feed item",
+        "[?tree] Detail page shows title and synopsis"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "authored_mode",
+        "authoredMode": "tree"
+      },
+      "originalIntent": "Authored tree assertion preserves complete title-and-synopsis expectation.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Explicit tree mode is authoritative."
+        }
+      ],
+      "groundTruthRationale": "Explicit tree mode is authoritative.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "authority-03-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The identified detail page contains both title and synopsis fields with displayed values.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "detail-synopsis-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "A quiet story."
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-03-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The identified detail page contains a title field but no synopsis field.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-03-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Both values appear on the feed page, outside the opened detail page.",
+            "tree": {
+              "attributes": {
+                "resource-id": "feed-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "detail-synopsis-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "A quiet story."
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-04",
+      "category": "authority",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#parses-explicit-visual-assertion",
+      "rawStep": "[?visual] Backdrop image loads",
+      "journeySteps": [
+        "Open detail page",
+        "[?visual] Backdrop image loads"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "authored_mode",
+        "authoredMode": "visual",
+        "fixedStrategy": "visible",
+        "explicitOverridesFixed": true
+      },
+      "originalIntent": "Authored visual assertion checks backdrop rendering.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "The authored visual mode overrides the conflicting fixed visible strategy."
+        }
+      ],
+      "groundTruthRationale": "Authored visual mode takes precedence over the configured visible strategy.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether backdrop rendered"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-05",
+      "category": "authority",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#generic-assertion-short-text",
+      "rawStep": "[?] Home",
+      "journeySteps": [
+        "Launch app",
+        "[?] Home"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "fixed_strategy",
+        "fixedStrategy": "visible"
+      },
+      "originalIntent": "Configured visible strategy checks Home label.",
+      "allowedChecks": [
+        {
+          "mode": "visible",
+          "target": "Home",
+          "rationale": "Fixed visible strategy is authoritative over inferred planning."
+        }
+      ],
+      "groundTruthRationale": "Fixed visible strategy is authoritative over inferred planning.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "visible_text_helper",
+        "samples": [
+          {
+            "id": "authority-05-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact visible label “Home” is present.",
+            "tree": {
+              "attributes": {
+                "text": "Home"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "authority-05-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "Another label is present; “Home” is absent.",
+            "tree": {
+              "attributes": {
+                "text": "Other option"
+              },
+              "states": [],
+              "children": []
+            }
+          },
+          {
+            "id": "authority-05-adversarial-resource-id",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Only a resource identifier contains “Home”; no visible label is present.",
+            "tree": {
+              "attributes": {
+                "resource-id": "sample:id/home"
+              },
+              "states": [],
+              "children": []
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-06",
+      "category": "authority",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/hierarchy/FocusDetectorTest.kt#text-on-focused-node",
+      "rawStep": "[?] Settings",
+      "journeySteps": [
+        "Open settings",
+        "[?] Settings"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "fixed_strategy",
+        "fixedStrategy": "focused"
+      },
+      "originalIntent": "Configured focused strategy checks Settings focus.",
+      "allowedChecks": [
+        {
+          "mode": "focused",
+          "target": "Settings",
+          "rationale": "Fixed focused strategy is authoritative over inferred planning."
+        }
+      ],
+      "groundTruthRationale": "Fixed focused strategy is authoritative over inferred planning.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "focused_text_helper",
+        "samples": [
+          {
+            "id": "authority-06-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "Exact label “Settings” is in an accepted relationship to a focused node.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "text": "Settings"
+                  },
+                  "states": [
+                    "focused"
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-06-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is inside one nested branch and the focused alternate control is inside another; these nodes have no accepted focus relationship.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Settings"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "focused-branch"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "resource-id": "focused-alternate-item",
+                        "text": "Alternate item"
+                      },
+                      "states": [
+                        "focused"
+                      ],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-06-adversarial-no-focus",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "The matching label is present, but no node in the hierarchy carries focused state.",
+            "tree": {
+              "attributes": {},
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "label-control",
+                    "text": "Settings"
+                  },
+                  "states": [],
+                  "children": []
+                },
+                {
+                  "attributes": {
+                    "resource-id": "alternate-control",
+                    "text": "Alternate item"
+                  },
+                  "states": [],
+                  "children": []
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-07",
+      "category": "authority",
+      "platform": "android",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/JourneyStepSerializerTest.kt#parses-explicit-tree-assertion",
+      "rawStep": "[?] Detail page shows title and synopsis",
+      "journeySteps": [
+        "Open feed item",
+        "[?] Detail page shows title and synopsis"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "fixed_strategy",
+        "fixedStrategy": "tree"
+      },
+      "originalIntent": "Configured tree strategy preserves complete title-and-synopsis expectation.",
+      "allowedChecks": [
+        {
+          "mode": "tree",
+          "target": null,
+          "rationale": "Fixed tree strategy preserves the full condition."
+        }
+      ],
+      "groundTruthRationale": "Fixed tree strategy preserves the full condition.",
+      "evidence": {
+        "availability": "hierarchy",
+        "verdictCapability": "independent_intent_labels_only",
+        "samples": [
+          {
+            "id": "authority-07-positive",
+            "kind": "positive",
+            "expectedIntentVerdict": true,
+            "rationale": "The identified detail page contains both title and synopsis fields with displayed values.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "detail-synopsis-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "A quiet story."
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-07-negative",
+            "kind": "negative",
+            "expectedIntentVerdict": false,
+            "rationale": "The identified detail page contains a title field but no synopsis field.",
+            "tree": {
+              "attributes": {
+                "resource-id": "detail-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "authority-07-adversarial",
+            "kind": "adversarial",
+            "expectedIntentVerdict": false,
+            "rationale": "Both values appear on the feed page, outside the opened detail page.",
+            "tree": {
+              "attributes": {
+                "resource-id": "feed-page"
+              },
+              "states": [],
+              "children": [
+                {
+                  "attributes": {
+                    "resource-id": "detail-title-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "Moonrise"
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "attributes": {
+                    "resource-id": "detail-synopsis-field"
+                  },
+                  "states": [],
+                  "children": [
+                    {
+                      "attributes": {
+                        "text": "A quiet story."
+                      },
+                      "states": [],
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "preferredCheapChecks": []
+    },
+    {
+      "id": "authority-08",
+      "category": "authority",
+      "platform": "android-tv",
+      "sourceSeed": "verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertModeInferrerTest.kt#text-with-image-keyword",
+      "rawStep": "[?] Backdrop image is visible",
+      "journeySteps": [
+        "Launch com.example.tv",
+        "Open a media card",
+        "[?] Backdrop image is visible"
+      ],
+      "contextFiles": [
+        "context/01-app.md",
+        "context/02-controls.markdown"
+      ],
+      "provenance": {
+        "kind": "fixed_strategy",
+        "authoredMode": null,
+        "fixedStrategy": "visual",
+        "explicitOverridesFixed": false
+      },
+      "originalIntent": "Configured visual strategy checks whether the backdrop image is visible.",
+      "allowedChecks": [
+        {
+          "mode": "visual",
+          "target": null,
+          "rationale": "The untagged assertion uses the configured visual strategy."
+        }
+      ],
+      "groundTruthRationale": "The fixed visual strategy applies to this untagged backdrop-image assertion.",
+      "evidence": {
+        "availability": "visual_unavailable",
+        "verdictCapability": "none",
+        "unavailableFacts": [
+          "whether backdrop rendered"
+        ],
+        "samples": []
+      },
+      "preferredCheapChecks": []
+    }
+  ],
+  "checkSemantics": {
+    "allowedChecks": "Semantic-preservation alternatives. Hierarchy-sufficient implicit expectations include complete tree/null inspection even when a cheaper check is also acceptable. Authority cases retain their exact authored/fixed mode, and visual-only expectations retain visual mode.",
+    "preferredCheapChecks": "A separate subset of semantically acceptable checks that is cheaper to run; it does not replace allowedChecks.",
+    "treeOrVisualVerdicts": "Tree and visual choices are semantic coverage, but this synthetic corpus assigns no verdict to those modes."
+  }
+}
