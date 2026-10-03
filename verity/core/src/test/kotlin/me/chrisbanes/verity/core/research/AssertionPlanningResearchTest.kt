@@ -1,11 +1,13 @@
 package me.chrisbanes.verity.core.research
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 import kotlin.test.Test
-import kotlin.test.assertFailsWith
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -18,7 +20,7 @@ class AssertionPlanningResearchTest {
     val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
     val textCase = corpus.cases.single { it.id == "text-03" }
 
-    val check = AssertionPlanningResearch.currentPlan(textCase).checks.single()
+    val check = AssertionPlanningResearch.currentPlan(textCase).check
 
     assertThat(check.mode).isEqualTo(AssertMode.VISIBLE)
     assertThat(check.target).isEqualTo("Internet is visible")
@@ -38,26 +40,39 @@ class AssertionPlanningResearchTest {
       "authority-06" to AssertMode.FOCUSED,
       "authority-07" to AssertMode.TREE,
       "authority-08" to AssertMode.VISUAL,
+      "text-01" to AssertMode.VISIBLE,
       "text-03" to AssertMode.VISIBLE,
+      "visual-01" to AssertMode.VISUAL,
+      "negation-04" to AssertMode.VISUAL,
     )
 
     for ((caseId, expectedMode) in expectedModes) {
-      val check = AssertionPlanningResearch.currentPlan(byId.getValue(caseId)).checks.single()
+      val check = AssertionPlanningResearch.currentPlan(byId.getValue(caseId)).check
       assertThat(check.mode).isEqualTo(expectedMode)
     }
 
-    val authoredVisualConflict = AssertionPlanningResearch.currentPlan(byId.getValue("authority-04")).checks.single()
+    val inferredHome = AssertionPlanningResearch.currentPlan(byId.getValue("text-01")).check
+    assertThat(inferredHome.originalExpectation.parsedDescription).isEqualTo("Home")
+    assertThat(inferredHome.target).isEqualTo("Home")
+    assertThat(byId.getValue("text-01").provenance.fixedStrategy).isEqualTo(null)
+    val authoredVisualConflict = AssertionPlanningResearch.currentPlan(byId.getValue("authority-04")).check
     assertThat(authoredVisualConflict.target == null).isEqualTo(true)
     assertThat(authoredVisualConflict.originalExpectation.parsedDescription)
       .isEqualTo("Backdrop image loads")
-    val inferredVisible = AssertionPlanningResearch.currentPlan(byId.getValue("text-03")).checks.single()
+    val inferredVisual = AssertionPlanningResearch.currentPlan(byId.getValue("visual-01")).check
+    assertThat(inferredVisual.target).isEqualTo(null)
+    assertThat(inferredVisual.originalExpectation.parsedDescription).isEqualTo("Backdrop image loads")
+    assertThat(AssertionPlanningResearch.currentPlan(byId.getValue("negation-04")).check.mode)
+      .isEqualTo(AssertMode.VISUAL)
+    val inferredVisible = AssertionPlanningResearch.currentPlan(byId.getValue("text-03")).check
     assertThat(inferredVisible.target).isEqualTo("Internet is visible")
   }
 
   @Test
   fun `host rejects missing and unsupported commands before filesystem work`() {
-    assertFailsWith<IllegalArgumentException> { main(emptyArray()) }
-    assertFailsWith<IllegalArgumentException> { main(arrayOf("compare", "ignored", "ignored")) }
+    assertFailure { main(emptyArray()) }.isInstanceOf<IllegalArgumentException>()
+    assertFailure { main(arrayOf("compare", "ignored", "ignored")) }
+      .isInstanceOf<IllegalArgumentException>()
   }
 
   @Test
@@ -105,26 +120,45 @@ class AssertionPlanningResearchTest {
     val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
     val byId = corpus.cases.associateBy { it.id }
 
-    val textCheck = AssertionPlanningResearch.rulesPlan(byId.getValue("text-03")).checks.single()
+    val textCheck = AssertionPlanningResearch.rulesPlan(byId.getValue("text-03")).check
     assertThat(textCheck.mode).isEqualTo(AssertMode.VISIBLE)
     assertThat(textCheck.target).isEqualTo("Internet")
     assertThat(textCheck.originalExpectation.intent).isEqualTo("The Internet row is displayed.")
 
-    val focusCheck = AssertionPlanningResearch.rulesPlan(byId.getValue("focus-06")).checks.single()
+    val focusCheck = AssertionPlanningResearch.rulesPlan(byId.getValue("focus-06")).check
     assertThat(focusCheck.mode).isEqualTo(AssertMode.FOCUSED)
     assertThat(focusCheck.target).isEqualTo("Name")
 
+    val displayedCheck = AssertionPlanningResearch.rulesPlan(
+      byId.getValue("text-03").copy(rawStep = "Verify Home is displayed"),
+    ).check
+    assertThat(displayedCheck.mode).isEqualTo(AssertMode.VISIBLE)
+    assertThat(displayedCheck.target).isEqualTo("Home")
+
+    val conditionalSeed = byId.getValue("text-03")
+    for (step in listOf(
+      "[?] If Connected Home is visible",
+      "[?] When Connected Home is visible",
+      "[?] Unless Connected Home is visible",
+    )) {
+      val conditionalCase = conditionalSeed.copy(rawStep = step)
+      val current = AssertionPlanningResearch.currentPlan(conditionalCase).check
+      val rules = AssertionPlanningResearch.rulesPlan(conditionalCase).check
+      assertThat(rules.mode).isEqualTo(current.mode)
+      assertThat(rules.target).isEqualTo(current.target)
+    }
+
     for (caseId in listOf("negation-01", "compound-01", "ambiguous-01", "visual-01", "text-02")) {
       val case = byId.getValue(caseId)
-      val current = AssertionPlanningResearch.currentPlan(case).checks.single()
-      val rules = AssertionPlanningResearch.rulesPlan(case).checks.single()
+      val current = AssertionPlanningResearch.currentPlan(case).check
+      val rules = AssertionPlanningResearch.rulesPlan(case).check
       assertThat(rules.mode).isEqualTo(current.mode)
       assertThat(rules.target).isEqualTo(current.target)
     }
 
     for (case in corpus.cases.filter(AssertionPlanningResearch::isAuthorityBypass)) {
-      val current = AssertionPlanningResearch.currentPlan(case).checks.single()
-      val rules = AssertionPlanningResearch.rulesPlan(case).checks.single()
+      val current = AssertionPlanningResearch.currentPlan(case).check
+      val rules = AssertionPlanningResearch.rulesPlan(case).check
       assertThat(rules.mode).isEqualTo(current.mode)
       assertThat(rules.target).isEqualTo(current.target)
     }
@@ -182,6 +216,134 @@ class AssertionPlanningResearchTest {
   }
 
   @Test
+  fun `evidence availability gates checks without hiding label-only false passes`() {
+    val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
+    val negationCase = corpus.cases.single { it.id == "negation-01" }
+    val presentHome = negationCase.evidence.samples.single { it.id == "negation-01-present" }
+    val wrongVisibleProposal = AssertionPlan(
+      caseId = negationCase.id,
+      check = PlannedCheck(
+        AssertMode.VISIBLE,
+        "Home",
+        AssertionPlanningResearch.currentPlan(negationCase).check.originalExpectation,
+      ),
+    )
+    val falsePass = AssertionPlanningResearch.evaluateSynthetic(negationCase, wrongVisibleProposal)
+      .single { it.sampleId == "negation-01-present" }
+    assertThat(negationCase.evidence.verdictCapability).isEqualTo("independent_intent_labels_only")
+    assertThat(presentHome.expectedIntentVerdict).isEqualTo(false)
+    assertThat(falsePass.expectedIntentVerdict).isEqualTo(false)
+    assertThat(falsePass.observedCheckVerdict).isEqualTo(true)
+
+    val visualCase = corpus.cases.single { it.id == "visual-01" }
+    val hierarchySample = ResearchEvidenceSample(
+      id = "visual-unavailable-with-tree",
+      kind = "guard-boundary",
+      expectedIntentVerdict = false,
+      rationale = "A supplied hierarchy still cannot make unavailable visual evidence evaluable.",
+      tree = ResearchTree(attributes = mapOf("text" to "Title")),
+    )
+    val unavailablePlan = AssertionPlan(
+      caseId = visualCase.id,
+      check = PlannedCheck(
+        AssertMode.VISIBLE,
+        "Title",
+        AssertionPlanningResearch.currentPlan(visualCase).check.originalExpectation,
+      ),
+    )
+    val noCapabilityCase = visualCase.copy(
+      evidence = visualCase.evidence.copy(
+        availability = "hierarchy",
+        samples = listOf(hierarchySample),
+      ),
+    )
+    assertThat(noCapabilityCase.evidence.verdictCapability).isEqualTo("none")
+    assertThat(AssertionPlanningResearch.evaluateSynthetic(noCapabilityCase, unavailablePlan).single().observedCheckVerdict)
+      .isEqualTo(null)
+
+    val unavailableCase = visualCase.copy(
+      evidence = visualCase.evidence.copy(
+        verdictCapability = "visible_text_helper",
+        samples = listOf(hierarchySample),
+      ),
+    )
+    assertThat(unavailableCase.evidence.availability).isEqualTo("visual_unavailable")
+    assertThat(AssertionPlanningResearch.evaluateSynthetic(unavailableCase, unavailablePlan).single().observedCheckVerdict)
+      .isEqualTo(null)
+  }
+
+  @Test
+  fun `request export preserves existing parent permissions and writes a private file`() {
+    val parent = Files.createTempDirectory("verity-issue59-export")
+    val output = parent.resolve("requests.json")
+    val expectedPermissions = setOf(
+      PosixFilePermission.OWNER_READ,
+      PosixFilePermission.OWNER_WRITE,
+      PosixFilePermission.OWNER_EXECUTE,
+      PosixFilePermission.GROUP_READ,
+      PosixFilePermission.GROUP_EXECUTE,
+    )
+    try {
+      try {
+        Files.setPosixFilePermissions(parent, expectedPermissions)
+      } catch (_: UnsupportedOperationException) {
+        return
+      }
+      AssertionPlanningResearch.exportRequests(corpusPath(), output)
+      assertThat(Files.getPosixFilePermissions(parent)).isEqualTo(expectedPermissions)
+      assertThat(Files.getPosixFilePermissions(output)).isEqualTo(
+        setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+      )
+    } finally {
+      Files.deleteIfExists(output)
+      Files.deleteIfExists(parent)
+    }
+  }
+
+  @Test
+  fun `request export refuses to overwrite its corpus input`() {
+    val root = Files.createTempDirectory("verity-corpus-overwrite")
+    val corpusDirectory = root.resolve("research/assertion-planning")
+    val contextDirectory = corpusDirectory.resolve("context")
+    val implementationDirectory = root.resolve(
+      "verity/core/src/test/kotlin/me/chrisbanes/verity/core/research",
+    )
+    Files.createDirectories(contextDirectory)
+    Files.createDirectories(implementationDirectory)
+    val corpus = corpusDirectory.resolve("corpus.json")
+    val sourceCorpus = corpusPath()
+    Files.copy(sourceCorpus, corpus)
+    Files.copy(sourceCorpus.parent.resolve("context/01-app.md"), contextDirectory.resolve("01-app.md"))
+    Files.copy(
+      sourceCorpus.parent.resolve("context/02-controls.markdown"),
+      contextDirectory.resolve("02-controls.markdown"),
+    )
+    Files.writeString(root.resolve("verity/core/build.gradle.kts"), "test fixture")
+    Files.writeString(implementationDirectory.resolve("AssertionPlanningResearch.kt"), "test fixture")
+    val originalBytes = Files.readAllBytes(corpus)
+
+    try {
+      assertFailure {
+        AssertionPlanningResearch.exportRequests(corpus, corpus)
+      }.isInstanceOf<IllegalArgumentException>()
+
+      assertThat(Files.readAllBytes(corpus).contentEquals(originalBytes)).isEqualTo(true)
+      val alias = corpus.resolveSibling("corpus-hard-link.json")
+      try {
+        Files.createLink(alias, corpus)
+      } catch (_: UnsupportedOperationException) {
+        return
+      }
+      assertFailure {
+        AssertionPlanningResearch.exportRequests(corpus, alias)
+      }.isInstanceOf<IllegalArgumentException>()
+      assertThat(Files.readAllBytes(corpus).contentEquals(originalBytes)).isEqualTo(true)
+    } finally {
+      root.toFile().deleteRecursively()
+    }
+  }
+
+  @Test
   fun `synthetic helper outcomes remain separate from intent verdicts`() {
     val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
     val byId = corpus.cases.associateBy { it.id }
@@ -197,6 +359,15 @@ class AssertionPlanningResearchTest {
     assertThat(textOutcomes.getValue("text-01-negative").observedCheckVerdict).isEqualTo(false)
     assertThat(textOutcomes.getValue("text-01-adversarial-resource-id").expectedIntentVerdict).isEqualTo(false)
     assertThat(textOutcomes.getValue("text-01-adversarial-resource-id").observedCheckVerdict).isEqualTo(true)
+
+    for (caseId in listOf("focus-01", "focus-03", "focus-04", "focus-05")) {
+      val case = byId.getValue(caseId)
+      val positive = AssertionPlanningResearch.evaluateSynthetic(
+        case,
+        AssertionPlanningResearch.rulesPlan(case),
+      ).single { it.expectedIntentVerdict }
+      assertThat(positive.observedCheckVerdict).isEqualTo(true)
+    }
 
     val focusCase = byId.getValue("focus-04")
     val focusOutcomes = AssertionPlanningResearch.evaluateSynthetic(
@@ -215,8 +386,8 @@ class AssertionPlanningResearchTest {
       "visual-01" to "Backdrop image loads",
     )) {
       val case = byId.getValue(caseId)
-      val current = AssertionPlanningResearch.currentPlan(case).checks.single()
-      val rules = AssertionPlanningResearch.rulesPlan(case).checks.single()
+      val current = AssertionPlanningResearch.currentPlan(case).check
+      val rules = AssertionPlanningResearch.rulesPlan(case).check
       assertThat(current.target == null).isEqualTo(true)
       assertThat(current.originalExpectation.parsedDescription).isEqualTo(description)
       assertThat(rules.target == null).isEqualTo(true)

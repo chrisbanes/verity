@@ -1,9 +1,13 @@
 package me.chrisbanes.verity.core.research
 
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -179,7 +183,7 @@ data class SyntheticEvaluation(
 
 data class AssertionPlan(
   val caseId: String,
-  val checks: List<PlannedCheck>,
+  val check: PlannedCheck,
 )
 
 object AssertionPlanningResearch {
@@ -190,10 +194,10 @@ object AssertionPlanningResearch {
     encodeDefaults = true
   }
   private val authoredModeTag = Regex("""^\[\?\w+]\s+.+$""")
-  private val modeSuffix = Regex("""^(.+) is (visible|focused)$""")
+  private val modeSuffix = Regex("""^(.+) is (visible|displayed|focused)$""")
   private val simpleLabel = Regex("""^[A-Z][A-Za-z0-9]*(?: [A-Z][A-Za-z0-9]*)*(?: row)?$""")
   private val unsafeRule = Regex(
-    """(?i)\b(?:not|no|never|without|neither|and|or|but|both|either|open|selected|current|active|ready|profile|status|item)\b""",
+    """(?i)\b(?:not|no|never|without|neither|and|or|but|both|either|if|when|unless|open|selected|current|active|ready|profile|status|item)\b""",
   )
 
   fun loadCorpus(path: Path): ResearchCorpus = json.decodeFromString(path.toFile().readText())
@@ -280,20 +284,41 @@ object AssertionPlanningResearch {
   }
 
   fun exportRequests(corpusPath: Path, outputPath: Path): ResearchRequestEnvelope {
-    val envelope = buildRequestEnvelope(corpusPath)
-    val destination = outputPath.toAbsolutePath()
+    val corpus = corpusPath.toAbsolutePath().normalize()
+    val destination = outputPath.toAbsolutePath().normalize()
+    require(corpus != destination && (!Files.exists(destination) || !Files.isSameFile(corpus, destination))) {
+      "Request output must not overwrite the corpus input"
+    }
+    val envelope = buildRequestEnvelope(corpus)
     val parent = destination.parent ?: error("Request path has no parent directory")
     Files.createDirectories(parent)
-    setPermissions(
-      parent,
-      setOf(
-        PosixFilePermission.OWNER_READ,
-        PosixFilePermission.OWNER_WRITE,
-        PosixFilePermission.OWNER_EXECUTE,
-      ),
-    )
-    Files.writeString(destination, json.encodeToString(envelope))
-    setPermissions(destination, setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE))
+    val permissions = setOf(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE)
+    val temporary = try {
+      Files.createTempFile(
+        parent,
+        ".${destination.fileName}.",
+        ".tmp",
+        PosixFilePermissions.asFileAttribute(permissions),
+      )
+    } catch (_: UnsupportedOperationException) {
+      Files.createTempFile(parent, ".${destination.fileName}.", ".tmp")
+    }
+    try {
+      setPermissions(temporary, permissions)
+      Files.writeString(
+        temporary,
+        json.encodeToString(envelope),
+        StandardOpenOption.WRITE,
+        StandardOpenOption.TRUNCATE_EXISTING,
+      )
+      try {
+        Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+      } catch (_: AtomicMoveNotSupportedException) {
+        Files.move(temporary, destination, StandardCopyOption.REPLACE_EXISTING)
+      }
+    } finally {
+      Files.deleteIfExists(temporary)
+    }
     return envelope
   }
 
@@ -367,41 +392,39 @@ object AssertionPlanningResearch {
     )
     return AssertionPlan(
       caseId = case.id,
-      checks = listOf(
-        PlannedCheck(
-          mode = parsed.mode,
-          target = parsed.description.takeIf {
-            parsed.mode == AssertMode.VISIBLE || parsed.mode == AssertMode.FOCUSED
-          },
-          originalExpectation = originalExpectation,
-        ),
+      check = PlannedCheck(
+        mode = parsed.mode,
+        target = parsed.description.takeIf {
+          parsed.mode == AssertMode.VISIBLE || parsed.mode == AssertMode.FOCUSED
+        },
+        originalExpectation = originalExpectation,
       ),
     )
   }
 
   fun evaluateSynthetic(case: ResearchCase, plan: AssertionPlan): List<SyntheticEvaluation> {
     require(plan.caseId == case.id) { "${case.id}: plan belongs to ${plan.caseId}" }
-    return case.evidence.samples.flatMap { sample ->
+    return case.evidence.samples.map { sample ->
       val tree = sample.tree?.toHierarchyNode()
-      plan.checks.map { check ->
-        val target = check.target
-        val observed = when {
-          tree == null || target.isNullOrBlank() -> null
-          check.mode == AssertMode.VISIBLE -> tree.containsText(target)
-          check.mode == AssertMode.FOCUSED -> FocusDetector.containsFocused(tree, target)
-          else -> null
-        }
-        SyntheticEvaluation(
-          caseId = case.id,
-          sampleId = sample.id,
-          mode = check.mode,
-          target = check.target,
-          originalExpectation = check.originalExpectation,
-          expectedIntentVerdict = sample.expectedIntentVerdict,
-          observedCheckVerdict = observed,
-          evidenceVerdictCapability = case.evidence.verdictCapability,
-        )
+      val check = plan.check
+      val target = check.target
+      val observed = when {
+        case.evidence.availability != "hierarchy" || case.evidence.verdictCapability == "none" -> null
+        tree == null || target.isNullOrBlank() -> null
+        check.mode == AssertMode.VISIBLE -> tree.containsText(target)
+        check.mode == AssertMode.FOCUSED -> FocusDetector.containsFocused(tree, target)
+        else -> null
       }
+      SyntheticEvaluation(
+        caseId = case.id,
+        sampleId = sample.id,
+        mode = check.mode,
+        target = check.target,
+        originalExpectation = check.originalExpectation,
+        expectedIntentVerdict = sample.expectedIntentVerdict,
+        observedCheckVerdict = observed,
+        evidenceVerdictCapability = case.evidence.verdictCapability,
+      )
     }
   }
 
@@ -409,7 +432,7 @@ object AssertionPlanningResearch {
     val current = currentPlan(case)
     if (isAuthorityBypass(case)) return current
 
-    val currentCheck = current.checks.single()
+    val currentCheck = current.check
     val description = currentCheck.originalExpectation.parsedDescription
     if (currentCheck.mode == AssertMode.VISUAL || unsafeRule.containsMatchIn(description)) {
       return current
@@ -419,7 +442,7 @@ object AssertionPlanningResearch {
     val rule = when {
       stateMatch != null && simpleLabel.matches(stateMatch.groupValues[1]) -> {
         val mode = when (stateMatch.groupValues[2]) {
-          "visible" -> AssertMode.VISIBLE
+          "visible", "displayed" -> AssertMode.VISIBLE
           "focused" -> AssertMode.FOCUSED
           else -> error("Unreachable assertion mode suffix")
         }
@@ -433,12 +456,10 @@ object AssertionPlanningResearch {
 
     return AssertionPlan(
       caseId = case.id,
-      checks = listOf(
-        PlannedCheck(
-          mode = rule.first,
-          target = rule.second,
-          originalExpectation = currentCheck.originalExpectation,
-        ),
+      check = PlannedCheck(
+        mode = rule.first,
+        target = rule.second,
+        originalExpectation = currentCheck.originalExpectation,
       ),
     )
   }
