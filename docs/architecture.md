@@ -24,7 +24,7 @@ Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation 
 | `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, focus-condition grammar, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
 | `:verity:device` | `:verity:core` | `DeviceSession` interface and platform-specific implementations (Android via Dadb + Maestro gRPC, iOS via Maestro XCTest HTTP) |
 | `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, Orchestrator |
-| `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 13 tools, session manager, snapshot store |
+| `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 14 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
 | `:verity:smoke-tests` | `:verity:cli` | Device smoke tests (Android emulator) |
 
@@ -362,7 +362,7 @@ Per-session mutex for safe concurrent tool calls. Animation state is managed by 
 
 ### Snapshot Store
 
-Capture-ordered map of full `HierarchyNode` trees, capped at ten per session. `capture_hierarchy` stores the full tree before filtering its text response; reads preserve capture order and eviction removes the oldest capture. `resolvePair` validates explicit IDs and selects previous/latest defaults together under the store mutex, retaining both IDs/tree references before comparison.
+Capture-ordered map of full `HierarchyNode` trees, capped at ten per session. `capture_hierarchy` and `capture_focused_tree` store the full tree before filtering or bounding their text responses; reads preserve capture order and eviction removes the oldest capture. `resolvePair` validates explicit IDs and selects previous/latest defaults together under the store mutex, retaining both IDs/tree references before comparison.
 
 `diff_hierarchy` compares root-relative child-index paths, every attribute/state and empty containers. Its compact JSON includes resolved IDs, full change/focus counts, samples and omission/truncation metadata. Focus summaries use `FocusDetector.isFocused`, the shared focused-state predicate. [The snapshot diff spec](specs/hierarchy-snapshot-diff.md) defines independent defaults, structured errors, structural identity limits and serialized 20-sample/500-character/16,000-character budgets.
 
@@ -380,7 +380,7 @@ Publication admission is the caller-cancellation check immediately before the bl
 
 Saved files survive `close_session`, and callers eventually delete them after use. Reports and debugging use the returned absolute path, following the shared [screenshot evidence procedure](../verity/skills/context/procedures.md#screenshot-evidence). Saved MCP files are caller-owned and are not automatically registered as CLI run artifacts.
 
-### Tool Catalog (13 tools)
+### Tool Catalog (14 tools)
 
 | Tool | Required params | Returns | Notes |
 |------|----------------|---------|-------|
@@ -392,11 +392,23 @@ Saved files survive `close_session`, and callers eventually delete them after us
 | `press_key` | session_id, key | confirmation | Optional focus change result |
 | `capture_screenshot` | session_id | base64 JPEG or normalised absolute PNG path | Optional string: save_to_file; no overwrite; caller owns saved file |
 | `capture_hierarchy` | session_id | hierarchy text + snapshot_id | Optional: filter (focus/content/all) |
+| `capture_focused_tree` | session_id | bounded focused context + full snapshot_id | Optional: filter (focus/content/all); defaults to content |
 | `diff_hierarchy` | session_id | bounded structural/focus JSON + resolved IDs | Optional: before_snapshot_id, after_snapshot_id; previous/latest defaults |
 | `check_visible` | session_id, text | true/false | Deterministic, case-insensitive |
 | `check_focused` | session_id, text | true/false | Lenient ancestor/sibling/child check |
 | `run_loop` | session_id, action, until | SATISFIED/NOT + iterations | Optional: max, wait_ms |
 | `get_context` | optional path | loaded-file metadata + bundled defaults + markdown context text | Required context can error |
+
+
+### Focused hierarchy capture
+
+`capture_focused_tree` captures the complete hierarchy once under the session mutex and stores it before rendering. Its returned `snapshot_id` identifies the original unfiltered, untruncated tree for `diff_hierarchy`, including attributes, branches and labels omitted from the response. Existing capture-order eviction and `close_session` clearing apply. Both stdio and HTTP discover the tool through the same `create()` catalog.
+
+Context comes from nodes carrying the exact `focused` state; a `focused=true` attribute alone is not focus. For each anchor, include its two nearest ancestors, descendants at distances one and two, and up to two preceding/two following siblings with their immediate children. Merge overlapping positions while preserving source order and parent edges. Capture-local preorder IDs distinguish repeated equal nodes; region headings identify their source depth and ancestors cut above the window. Missing child runs report omission counts and reasons; metadata distinguishes outside-context nodes, omitted candidate context and wholly omitted regions.
+
+Fixed limits are 100 original nodes and 12,000 UTF-16 code units for the entire returned TextContent, including snapshot ID, metadata, headings, indentation and omission/text markers. There are no adjustable limits. Admission ranks focus, ancestors, descendants, then siblings, with preorder ties. Each target and its missing candidate ancestors must fit atomically; ancestry uses the same limits, so even fewer than 100 anchors may not all fit. Skip an unfit bundle and continue. Allocate label text in the same priority order, preserve every included `(focused)` marker, mark shortened rows `[text truncated]`, and avoid splitting surrogate pairs. Structural character omissions retain complete rows and ancestry rather than taking a prefix of the final text.
+
+The optional filter accepts `focus`, `content` and `all`; omitted or unknown values use `content`, matching `capture_hierarchy`. These filters remove attributes, never focused states. `focused_labels_filtered` counts original anchors whose nonempty ALL attributes become empty under the chosen filter; inherently empty labels do not count. It does not mean focus disappeared. `focus_status: no_focus` means the full capture has no focused state and still returns its snapshot ID. With focus present, metadata reports total/included focus and node-limit/character-limit omissions separately, plus node, character and text truncation flags; cap omissions never become `no_focus`.
 
 ---
 
@@ -499,6 +511,7 @@ VerityMcpServer
     │   ├── inline → capture PNG → compress → base64 JPEG → delete temporary files
     │   └── save_to_file → normalise/preflight → sibling PNG → validate → publish → absolute path
     ├── capture_hierarchy → session.captureHierarchyTree() → snapshot store → filtered text
+    ├── capture_focused_tree → one full capture → snapshot store → bounded focused forest
     ├── diff_hierarchy → session admission → snapshotStore.resolvePair() → HierarchyDiff.render()
     ├── check_visible → session.containsText()
     ├── check_focused → session.checkFocused()
