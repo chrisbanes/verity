@@ -867,8 +867,8 @@ object AssertionPlanningResearch {
   ): Boolean {
     if (request.formatVersion != 2 || output.formatVersion != 1 || !output.completed || output.stopReason != SavedStopReason.COMPLETE) return false
     if (!output.cleanupVerified || !isSha256(expectedRequestSha256)) return false
-    if (output.runMetadata.model.isBlank() || output.runMetadata.effort.isBlank() || output.runMetadata.tier.isBlank() ||
-      output.runMetadata.cliVersion.isBlank() ||
+    if (output.runMetadata.model != "gpt-6-luna" || output.runMetadata.effort != "low" || output.runMetadata.tier != "default" ||
+      output.runMetadata.cliVersion != "0.159.0" ||
       listOfNotNull(output.runMetadata.startupDurationMillis, output.runMetadata.wallDurationMillis).any { it < 0 } ||
       output.runMetadata.globalInstructionSources.any { it.count < 0 } ||
       output.runMetadata.globalInstructionSources.map { it.source }.distinct().size != output.runMetadata.globalInstructionSources.size

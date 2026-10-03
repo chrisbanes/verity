@@ -724,6 +724,33 @@ class AssertionPlanningResearchTest {
   }
 
   @Test
+  fun `saved output completeness requires the approved model profile`() {
+    val path = corpusPath()
+    val request = AssertionPlanningResearch.buildRequestEnvelope(path)
+    val requestBytes = Json.encodeToString(request).toByteArray()
+    val requestDigest = sha256(requestBytes)
+    val output = completeSavedOutput(request, requestDigest)
+    assertThat(AssertionPlanningResearch.validateSavedOutput(output, request, requestDigest)).isEqualTo(true)
+    listOf(
+      output.runMetadata.copy(model = "different-model"),
+      output.runMetadata.copy(effort = "high"),
+      output.runMetadata.copy(tier = "priority"),
+      output.runMetadata.copy(cliVersion = "0.160.0"),
+    ).forEach { metadata ->
+      val mixedOutput = output.copy(runMetadata = metadata)
+      assertThat(AssertionPlanningResearch.validateSavedOutput(mixedOutput, request, requestDigest)).isEqualTo(false)
+      val evaluation = AssertionPlanningResearch.evaluateSavedOutput(
+        path,
+        request,
+        requestBytes,
+        mixedOutput,
+        Json.encodeToString(mixedOutput).toByteArray(),
+      )
+      assertThat(evaluation.studyComplete).isEqualTo(false)
+    }
+  }
+
+  @Test
   fun `saved output scoring separates literal mismatch weakening and unavailable verdicts`() {
     val corpusPath = corpusPath()
     val request = AssertionPlanningResearch.buildRequestEnvelope(corpusPath)
@@ -852,10 +879,10 @@ class AssertionPlanningResearchTest {
         schemaSha256 = request.schemaSha256,
       ),
       runMetadata = SavedOutputRunMetadata(
-        model = "offline-fixture",
-        effort = "high",
-        tier = "Luna",
-        cliVersion = "offline-fixture",
+        model = "gpt-6-luna",
+        effort = "low",
+        tier = "default",
+        cliVersion = "0.159.0",
         globalInstructionSources = emptyList(),
       ),
       counters = SavedOutputCounters(33, 1, 32, 8, 0),
