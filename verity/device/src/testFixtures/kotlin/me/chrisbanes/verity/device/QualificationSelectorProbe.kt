@@ -21,8 +21,14 @@ data class QualificationSelectorEvidence(
   val selectedPath: String? = null,
   val selectedBounds: String? = null,
   val elapsedMillis: Long = 0,
+  val selectionProof: String? = null,
+  val textSelectedPath: String? = null,
+  val textSelectedBounds: String? = null,
+  val idSelectedPath: String? = null,
+  val idSelectedBounds: String? = null,
 ) {
-  val sameNode: Boolean get() = outcome == "ready"
+  val sameNode: Boolean get() = outcome == "ready" && selectionProof == "same-node"
+  val sameFixture: Boolean get() = outcome == "ready"
 }
 
 /** Qualification-only access to the session-owned SDK snapshot and public selector filters. */
@@ -58,48 +64,72 @@ object QualificationSelectorProbe {
     val nodes = root.aggregate()
     val labels = nodes.filter { node -> labelAttributes.any { node.attributes[it] == approvedLabel } }
     if (labels.isEmpty()) return QualificationSelectorEvidence("not-ready", 0, 0, 0)
-    if (labels.size != 1) return QualificationSelectorEvidence("ambiguous-label", labels.size, 0, 0)
-    val approved = labels.single()
-    val id = approved.attributes["resource-id"]?.takeIf(String::isNotBlank)
-      ?: return QualificationSelectorEvidence("missing-id", 1, 0, 0)
-    val bounds = approved.attributes["bounds"]?.takeIf(::hasUsableBounds)
-      ?: return QualificationSelectorEvidence("missing-bounds", 1, 0, 0)
-
+    if (!labels.formSingleAncestryChain(paths)) return QualificationSelectorEvidence("ambiguous-label", labels.size, 0, 0)
+    val ids = labels.mapNotNull { it.attributes["resource-id"]?.takeIf(String::isNotBlank) }.distinct()
+    if (ids.isEmpty()) return QualificationSelectorEvidence("missing-id", labels.size, 0, 0)
+    if (ids.size != 1) return QualificationSelectorEvidence("selection-mismatch", labels.size, 0, 0)
+    val id = ids.single()
     val textRegex = escapedRegex(approvedLabel)
     val idRegex = escapedRegex(id)
     val textFilter = Filters.textMatches(textRegex)
     val idFilter = Filters.idMatches(idRegex)
-    val textMatches = textFilter(nodes).size
-    val idMatches = idFilter(nodes).size
+    val textMatchingNodes = textFilter(nodes)
+    val idMatchingNodes = idFilter(nodes)
+    val textMatches = textMatchingNodes.size
+    val idMatches = idMatchingNodes.size
     val textSelection = Filters.compose(Filters.deepestMatchingElement(textFilter), Filters.clickableFirst())(nodes)
     val idSelection = Filters.compose(Filters.deepestMatchingElement(idFilter), Filters.clickableFirst())(nodes)
     val selectedText = textSelection.firstOrNull()
     val selectedId = idSelection.firstOrNull()
-    if (selectedText !== approved || selectedId !== approved || selectedText !== selectedId) {
-      return QualificationSelectorEvidence(
-        outcome = "selection-mismatch",
-        labelMatches = labels.size,
-        textMatches = textMatches,
-        idMatches = idMatches,
-      )
+    val labelSet = java.util.Collections.newSetFromMap(IdentityHashMap<TreeNode, Boolean>()).apply { addAll(labels) }
+    if (selectedText == null || selectedId == null || selectedText !in labelSet || selectedId !in labelSet) {
+      return unavailable("selection-mismatch", labels.size, textMatches, idMatches)
     }
-    val boundsParts = parseBounds(bounds)
-      ?: return QualificationSelectorEvidence("missing-bounds", labels.size, textMatches, idMatches)
-    val (left, top, right, bottom) = boundsParts
-    val visiblePercentage = UiElement(approved, Bounds(left, top, right - left, bottom - top))
-      .getVisiblePercentage(deviceInfo.widthGrid, deviceInfo.heightGrid)
-    if (!visiblePercentage.isFinite() || visiblePercentage < 0.1) {
-      return QualificationSelectorEvidence("outside-viewport", labels.size, textMatches, idMatches)
+    val textPath = paths[selectedText] ?: return unavailable("selection-mismatch", labels.size, textMatches, idMatches)
+    val idPath = paths[selectedId] ?: return unavailable("selection-mismatch", labels.size, textMatches, idMatches)
+    val selectedIdValue = selectedId.attributes["resource-id"]?.takeIf(String::isNotBlank)
+    if (selectedIdValue != id) return unavailable("selection-mismatch", labels.size, textMatches, idMatches)
+    val selectedTextBounds = selectedText.attributes["bounds"]?.takeIf(::hasUsableBounds)
+      ?: return unavailable("missing-bounds", labels.size, textMatches, idMatches)
+    val selectedIdBounds = selectedId.attributes["bounds"]?.takeIf(::hasUsableBounds)
+      ?: return unavailable("missing-bounds", labels.size, textMatches, idMatches)
+    val textRect = parseBounds(selectedTextBounds) ?: return unavailable("missing-bounds", labels.size, textMatches, idMatches)
+    val idRect = parseBounds(selectedIdBounds) ?: return unavailable("missing-bounds", labels.size, textMatches, idMatches)
+    val sameNode = selectedText === selectedId
+    if (!sameNode && (!textPath.isDescendantOf(idPath) || !idRect.contains(textRect))) {
+      return unavailable("selection-mismatch", labels.size, textMatches, idMatches)
     }
+    if (!selectedText.isVisible(textRect, deviceInfo) || (!sameNode && !selectedId.isVisible(idRect, deviceInfo))) {
+      return unavailable("outside-viewport", labels.size, textMatches, idMatches)
+    }
+    val proof = if (sameNode) "same-node" else "same-row-descendant"
     return QualificationSelectorEvidence(
       outcome = "ready",
       labelMatches = labels.size,
       textMatches = textMatches,
       idMatches = idMatches,
       resourceId = id,
-      selectedPath = paths[approved],
-      selectedBounds = bounds,
+      selectedPath = idPath,
+      selectedBounds = selectedIdBounds,
+      selectionProof = proof,
+      textSelectedPath = textPath,
+      textSelectedBounds = selectedTextBounds,
+      idSelectedPath = idPath,
+      idSelectedBounds = selectedIdBounds,
     )
+  }
+
+  private fun unavailable(outcome: String, labels: Int, text: Int, id: Int) = QualificationSelectorEvidence(outcome, labels, text, id)
+
+  private fun List<TreeNode>.formSingleAncestryChain(paths: IdentityHashMap<TreeNode, String>): Boolean = all { first -> all { second -> first === second || paths.getValue(first).isDescendantOf(paths.getValue(second)) || paths.getValue(second).isDescendantOf(paths.getValue(first)) } }
+
+  private fun String.isDescendantOf(parent: String) = startsWith("$parent.")
+
+  private fun TreeNode.isVisible(rect: List<Int>, deviceInfo: DeviceInfo): Boolean {
+    val (left, top, right, bottom) = rect
+    val percentage = UiElement(this, Bounds(left, top, right - left, bottom - top))
+      .getVisiblePercentage(deviceInfo.widthGrid, deviceInfo.heightGrid)
+    return percentage.isFinite() && percentage >= 0.1
   }
 
   private fun escapedRegex(value: String) = Regex(Regex.escape(value), regexOptions)
@@ -109,6 +139,8 @@ object QualificationSelectorProbe {
       ?: return null
     return parts.drop(1).map { it.toIntOrNull() ?: return null }
   }
+
+  private fun List<Int>.contains(other: List<Int>): Boolean = this[0] <= other[0] && this[1] <= other[1] && this[2] >= other[2] && this[3] >= other[3]
 
   private fun hasUsableBounds(value: String): Boolean {
     val parts = parseBounds(value) ?: return false

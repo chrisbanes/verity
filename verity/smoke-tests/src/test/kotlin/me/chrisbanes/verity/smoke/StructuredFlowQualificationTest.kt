@@ -138,6 +138,198 @@ class StructuredFlowQualificationTest {
   }
 
   @Test
+  fun `iOS fixture preparation keeps a ready General row without scrolling`() = runTest {
+    var captures = 0
+    var scrolls = 0
+    var returns = 0
+    val ready = iosGeneralFixture()
+
+    val result = prepareIosSettingsFixture(
+      capture = {
+        captures++
+        ready
+      },
+      aboutVisible = { false },
+      settingsVisible = { true },
+      returnToSettings = { returns++ },
+      scrollOnce = { scrolls++ },
+    )
+
+    assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
+    assertThat(captures).isEqualTo(1)
+    assertThat(scrolls).isEqualTo(0)
+    assertThat(returns).isEqualTo(0)
+  }
+
+  @Test
+  fun `iOS fixture preparation scrolls once after missing General and keeps the readiness deadline`() = runTest {
+    var elapsed = 0L
+    var captures = 0
+    var scrolls = 0
+    val result = prepareIosSettingsFixture(
+      capture = {
+        captures++
+        if (captures == 1) FixtureProbeSummary("not-ready") else iosGeneralFixture()
+      },
+      aboutVisible = { false },
+      settingsVisible = { true },
+      returnToSettings = {},
+      scrollOnce = { scrolls++ },
+      clockMillis = { elapsed },
+      pause = { elapsed += it },
+    )
+
+    assertThat(result.outcome).isEqualTo("ready")
+    assertThat(captures).isEqualTo(2)
+    assertThat(scrolls).isEqualTo(1)
+    assertThat(elapsed).isEqualTo(0L)
+  }
+
+  @Test
+  fun `iOS initial capture and later polls consume one five second readiness allowance`() = runTest {
+    var elapsed = 0L
+    var captures = 0
+    var scrolls = 0
+    val samples = mutableListOf<FixtureProbeSummary>()
+    assertFailsWith<QualificationUnavailable> {
+      prepareIosSettingsFixture(
+        capture = {
+          captures++
+          if (captures == 1) elapsed += 3_000
+          FixtureProbeSummary("not-ready")
+        },
+        aboutVisible = { false },
+        settingsVisible = { true },
+        returnToSettings = {},
+        scrollOnce = {
+          scrolls++
+          elapsed += 1_000
+        },
+        onSample = samples::add,
+        clockMillis = { elapsed },
+        pause = { elapsed += it },
+      )
+    }
+
+    assertThat(scrolls).isEqualTo(1)
+    assertThat(captures).isEqualTo(10)
+    assertThat(elapsed).isEqualTo(6_000L)
+    assertThat(samples.last().elapsedMillis).isEqualTo(5_000L)
+  }
+
+  @Test
+  fun `iOS route preparation stays outside the shared read-only readiness allowance`() = runTest {
+    var elapsed = 0L
+    var captures = 0
+    var scrolls = 0
+    val samples = mutableListOf<FixtureProbeSummary>()
+    val result = prepareIosSettingsFixture(
+      capture = {
+        captures++
+        elapsed += if (captures == 1) 300 else 3_400
+        if (captures == 1) FixtureProbeSummary("not-ready") else iosGeneralFixture()
+      },
+      aboutVisible = { false },
+      settingsVisible = { true },
+      returnToSettings = {},
+      scrollOnce = {
+        scrolls++
+        elapsed += 2_000
+      },
+      onSample = samples::add,
+      clockMillis = { elapsed },
+      pause = { elapsed += it },
+    )
+
+    assertThat(result.outcome).isEqualTo("ready")
+    assertThat(scrolls).isEqualTo(1)
+    assertThat(captures).isEqualTo(2)
+    assertThat(elapsed).isEqualTo(5_700L)
+    assertThat(samples.last().elapsedMillis).isEqualTo(3_700L)
+  }
+
+  @Test
+  fun `iOS fixture preparation returns from About only when both safe labels are visible`() = runTest {
+    val events = mutableListOf<String>()
+    val result = prepareIosSettingsFixture(
+      capture = {
+        events += "capture"
+        iosGeneralFixture()
+      },
+      aboutVisible = { true },
+      settingsVisible = { true },
+      returnToSettings = { events += "back" },
+      scrollOnce = { events += "scroll" },
+    )
+
+    assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
+    assertThat(events).isEqualTo(listOf("back", "capture"))
+
+    events.clear()
+    prepareIosSettingsFixture(
+      capture = {
+        events += "capture"
+        iosGeneralFixture()
+      },
+      aboutVisible = { true },
+      settingsVisible = { false },
+      returnToSettings = { events += "back" },
+      scrollOnce = { events += "scroll" },
+    )
+    assertThat(events).isEqualTo(listOf("capture"))
+  }
+
+  @Test
+  fun `iOS fixture preparation fails closed for wrong row ID and never scrolls twice`() = runTest {
+    var scrolls = 0
+    assertFailsWith<QualificationUnavailable> {
+      prepareIosSettingsFixture(
+        capture = { iosGeneralFixture().copy(resourceId = "com.apple.settings.general-navigation") },
+        aboutVisible = { false },
+        settingsVisible = { true },
+        returnToSettings = {},
+        scrollOnce = { scrolls++ },
+      )
+    }
+    assertThat(scrolls).isEqualTo(0)
+
+    var elapsed = 0L
+    var captures = 0
+    assertFailsWith<QualificationUnavailable> {
+      prepareIosSettingsFixture(
+        capture = {
+          captures++
+          FixtureProbeSummary("not-ready")
+        },
+        aboutVisible = { false },
+        settingsVisible = { true },
+        returnToSettings = {},
+        scrollOnce = { scrolls++ },
+        clockMillis = { elapsed },
+        pause = { elapsed += it },
+      )
+    }
+    assertThat(scrolls).isEqualTo(1)
+    assertThat(captures).isEqualTo(22)
+    assertThat(elapsed).isEqualTo(5000L)
+  }
+
+  private fun iosGeneralFixture() = FixtureProbeSummary(
+    outcome = "ready",
+    labelMatches = 2,
+    textMatches = 2,
+    idMatches = 1,
+    resourceId = IOS_GENERAL_RESOURCE_ID,
+    selectedPath = "0.0",
+    selectedBounds = "[16,293][386,345]",
+    selectionProof = "same-row-descendant",
+    textSelectedPath = "0.0.0",
+    textSelectedBounds = "[30,305][131,333]",
+    idSelectedPath = "0.0",
+    idSelectedBounds = "[16,293][386,345]",
+  )
+
+  @Test
   fun `cleanup failure is unverified and can never produce a passing case`() = runTest {
     withContext(Dispatchers.Default) {
       val events = mutableListOf<Pair<String, String>>()

@@ -47,6 +47,11 @@ internal data class FixtureProbeSummary(
   val selectedPath: String? = null,
   val selectedBounds: String? = null,
   val elapsedMillis: Long = 0,
+  val selectionProof: String? = null,
+  val textSelectedPath: String? = null,
+  val textSelectedBounds: String? = null,
+  val idSelectedPath: String? = null,
+  val idSelectedBounds: String? = null,
 )
 
 internal suspend fun awaitFixtureReadiness(
@@ -54,26 +59,73 @@ internal suspend fun awaitFixtureReadiness(
   onSample: (FixtureProbeSummary) -> Unit = {},
   clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
   pause: suspend (Long) -> Unit = { delay(it) },
+  budgetMillis: Long = 5_000,
+  elapsedOffsetMillis: Long = 0,
 ): FixtureProbeSummary {
   val started = clockMillis()
   var last: FixtureProbeSummary
   while (true) {
     val captured = capture()
-    val elapsed = (clockMillis() - started).coerceAtLeast(0)
+    val elapsed = elapsedOffsetMillis + (clockMillis() - started).coerceAtLeast(0)
     last = captured.copy(
-      outcome = if (elapsed > 5_000) "readiness-timeout" else captured.outcome,
+      outcome = if (elapsed > budgetMillis) "readiness-timeout" else captured.outcome,
       elapsedMillis = elapsed,
     )
     onSample(last)
-    if (elapsed > 5_000) throw QualificationUnavailable("Safe Settings fixture readiness exceeded 5000 ms")
+    if (elapsed > budgetMillis) throw QualificationUnavailable("Safe Settings fixture readiness exceeded $budgetMillis ms")
     when (last.outcome) {
       "ready" -> return last
       "not-ready" -> Unit
       else -> throw QualificationUnavailable("Safe Settings fixture selector unavailable: ${last.outcome}")
     }
-    if (elapsed >= 5_000) throw QualificationUnavailable("Safe Settings fixture did not become ready within 5000 ms")
-    pause(minOf(250L, 5_000L - elapsed))
+    if (elapsed >= budgetMillis) throw QualificationUnavailable("Safe Settings fixture did not become ready within $budgetMillis ms")
+    pause(minOf(250L, budgetMillis - elapsed))
   }
+}
+
+internal const val IOS_GENERAL_RESOURCE_ID = "com.apple.settings.general"
+
+/** Recovers only the approved iOS Settings route and admits one bounded scroll before readiness polling. */
+internal suspend fun prepareIosSettingsFixture(
+  capture: suspend () -> FixtureProbeSummary,
+  aboutVisible: suspend () -> Boolean,
+  settingsVisible: suspend () -> Boolean,
+  returnToSettings: suspend () -> Unit,
+  scrollOnce: suspend () -> Unit,
+  onSample: (FixtureProbeSummary) -> Unit = {},
+  clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+  pause: suspend (Long) -> Unit = { delay(it) },
+): FixtureProbeSummary {
+  if (aboutVisible() && settingsVisible()) returnToSettings()
+
+  val readinessStarted = clockMillis()
+  val initialCapture = capture()
+  val initialCaptureElapsed = (clockMillis() - readinessStarted).coerceAtLeast(0)
+  val initial = initialCapture.copy(
+    outcome = if (initialCaptureElapsed > 5_000) "readiness-timeout" else initialCapture.outcome,
+    elapsedMillis = initialCaptureElapsed,
+  )
+  onSample(initial)
+  if (initialCaptureElapsed > 5_000) throw QualificationUnavailable("Safe iOS Settings fixture readiness exceeded 5000 ms")
+  if (initial.outcome == "ready") return requireIosGeneralFixture(initial)
+  if (initial.outcome != "not-ready") {
+    throw QualificationUnavailable("Safe iOS Settings fixture selector unavailable: ${initial.outcome}")
+  }
+  if (initialCaptureElapsed >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture did not become ready within 5000 ms")
+
+  scrollOnce()
+  return requireIosGeneralFixture(
+    awaitFixtureReadiness(capture, onSample, clockMillis, pause, elapsedOffsetMillis = initialCaptureElapsed),
+  )
+}
+
+private fun requireIosGeneralFixture(evidence: FixtureProbeSummary): FixtureProbeSummary {
+  if (evidence.outcome != "ready" || evidence.resourceId != IOS_GENERAL_RESOURCE_ID ||
+    evidence.selectionProof !in setOf("same-node", "same-row-descendant")
+  ) {
+    throw QualificationUnavailable("Safe iOS General row identity was not proved")
+  }
+  return evidence
 }
 
 private fun QualificationSelectorEvidence.toFixtureSummary() = FixtureProbeSummary(
@@ -85,6 +137,11 @@ private fun QualificationSelectorEvidence.toFixtureSummary() = FixtureProbeSumma
   selectedPath = selectedPath,
   selectedBounds = selectedBounds,
   elapsedMillis = elapsedMillis,
+  selectionProof = selectionProof,
+  textSelectedPath = textSelectedPath,
+  textSelectedBounds = textSelectedBounds,
+  idSelectedPath = idSelectedPath,
+  idSelectedBounds = idSelectedBounds,
 )
 
 private fun MutableMap<String, String>.recordFixtureEvidence(label: String, evidence: FixtureProbeSummary) {
@@ -97,6 +154,11 @@ private fun MutableMap<String, String>.recordFixtureEvidence(label: String, evid
   evidence.resourceId?.let { put("fixtureResourceId", it) }
   evidence.selectedPath?.let { put("fixtureSelectedPath", it) }
   evidence.selectedBounds?.let { put("fixtureSelectedBounds", it) }
+  evidence.selectionProof?.let { put("fixtureSelectionProof", it) }
+  evidence.textSelectedPath?.let { put("fixtureTextSelectedPath", it) }
+  evidence.textSelectedBounds?.let { put("fixtureTextSelectedBounds", it) }
+  evidence.idSelectedPath?.let { put("fixtureIdSelectedPath", it) }
+  evidence.idSelectedBounds?.let { put("fixtureIdSelectedBounds", it) }
 }
 
 /** Metadata is checked before the injected connector can touch any device. */
@@ -344,10 +406,29 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
             val resetYaml = "appId: ${yamlScalar(appId)}\n---\n- launchApp:\n    clearState: false\n"
             check(route.execute(session, reset, resetYaml).success) { "Settings reset failed" }
             details["resetInputSha256"] = sha256(if (route == QualificationRoute.TYPED) encodeFlow(reset) else resetYaml)
-            val fixture = awaitFixtureReadiness(
-              capture = { QualificationSelectorProbe.capture(session, source).toFixtureSummary() },
-              onSample = { details.recordFixtureEvidence(source, it) },
-            )
+            val fixture = if (platform == Platform.IOS) {
+              prepareIosSettingsFixture(
+                capture = { QualificationSelectorProbe.capture(session, source).toFixtureSummary() },
+                aboutVisible = { session.containsText("About", ignoreCase = false) },
+                settingsVisible = { session.containsText("Settings", ignoreCase = false) },
+                returnToSettings = {
+                  val backFlow = ActionFlow(appId, listOf(Interaction.TapOnText(Regex.escape("Settings"))))
+                  val backYaml = "appId: ${yamlScalar(appId)}\n---\n- tapOn: ${yamlScalar(Regex.escape("Settings"))}\n"
+                  check(route.execute(session, backFlow, backYaml).success) { "Safe Settings route recovery failed" }
+                },
+                scrollOnce = {
+                  val scrollFlow = ActionFlow(appId, listOf(Interaction.DefaultScroll))
+                  val scrollYaml = "appId: ${yamlScalar(appId)}\n---\n- scroll\n"
+                  check(route.execute(session, scrollFlow, scrollYaml).success) { "Safe Settings fixture scroll failed" }
+                },
+                onSample = { details.recordFixtureEvidence(source, it) },
+              )
+            } else {
+              awaitFixtureReadiness(
+                capture = { QualificationSelectorProbe.capture(session, source).toFixtureSummary() },
+                onSample = { details.recordFixtureEvidence(source, it) },
+              )
+            }
             val resourceRegex = Regex.escape(checkNotNull(fixture.resourceId))
             starts.clear()
             if (case == "text" || case == "id") {

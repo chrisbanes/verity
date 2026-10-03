@@ -3,6 +3,7 @@ package me.chrisbanes.verity.device
 import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNotEqualTo
 import assertk.assertions.isTrue
 import kotlin.test.Test
 import maestro.DeviceInfo
@@ -84,6 +85,78 @@ class QualificationSelectorProbeTest {
     val accessibilityOnly = TreeNode(children = listOf(node(null, "prefs:about", accessibilityText = "About", clickable = true)))
     assertThat(accessibilityOnly.children.single().attributes["text"]).isEqualTo(null)
     assertThat(QualificationSelectorProbe.inspect(accessibilityOnly, "About").outcome).isEqualTo("ready")
+  }
+
+  @Test
+  fun `iOS row with label on parent and child proves text descendant and ID row are same fixture`() = kotlinx.coroutines.test.runTest {
+    val resourceId = "com.apple.settings.general"
+    val child = node(null, "", clickable = false, bounds = "[30,305][131,333]", hintText = "General")
+    val row = node(null, resourceId, clickable = true, bounds = "[16,293][386,345]", hintText = "General").copy(children = listOf(child))
+    val root = TreeNode(children = listOf(row))
+    val driver = ProbeDriver(root, DeviceInfo(MaestroPlatform.IOS, 402, 874, 402, 874))
+    val session = AndroidDeviceSession(Maestro(driver), Platform.ANDROID_MOBILE, executeShell = { "" })
+
+    val evidence = QualificationSelectorProbe.capture(session, "General")
+    val textResult = session.executeFlow(
+      """
+      appId: com.apple.Preferences
+      ---
+      - tapOn: General
+      """.trimIndent(),
+    )
+    val idResult = session.executeFlow(
+      """
+      appId: com.apple.Preferences
+      ---
+      - tapOn:
+          id: com.apple.settings.general
+      """.trimIndent(),
+    )
+
+    assertThat(evidence.outcome).isEqualTo("ready")
+    assertThat(evidence.labelMatches).isEqualTo(2)
+    assertThat(evidence.sameNode).isFalse()
+    assertThat(evidence.resourceId).isEqualTo(resourceId)
+    assertThat(evidence.selectedPath).isEqualTo("0.0")
+    assertThat(textResult.success).isTrue()
+    assertThat(idResult.success).isTrue()
+    assertThat(driver.taps).isEqualTo(listOf(Point(80, 319), Point(201, 319)))
+  }
+
+  @Test
+  fun `iOS fixture ancestry does not admit different IDs or a sibling General row`() {
+    val rowId = "com.apple.settings.general"
+    val differentId = TreeNode(
+      children = listOf(
+        node(null, rowId, clickable = true, hintText = "General").copy(
+          children = listOf(node(null, "com.apple.settings.other", clickable = false, hintText = "General")),
+        ),
+      ),
+    )
+    val sibling = TreeNode(
+      children = listOf(
+        node(null, rowId, clickable = true, hintText = "General"),
+        node(null, rowId, clickable = true, hintText = "General"),
+      ),
+    )
+
+    assertThat(QualificationSelectorProbe.inspect(differentId, "General").outcome).isNotEqualTo("ready")
+    assertThat(QualificationSelectorProbe.inspect(sibling, "General").outcome).isNotEqualTo("ready")
+  }
+
+  @Test
+  fun `unselected repeated resource ID on another row does not invalidate the actual SDK choice`() {
+    val resourceId = "com.apple.settings.general"
+    val approved = node("General", resourceId, clickable = true, bounds = "[10,20][40,50]")
+    val other = node("Other row", resourceId, clickable = false, bounds = "[50,20][90,50]")
+    val root = TreeNode(children = listOf(approved, other))
+
+    val evidence = QualificationSelectorProbe.inspect(root, "General")
+
+    assertThat(evidence.outcome).isEqualTo("ready")
+    assertThat(evidence.sameNode).isTrue()
+    assertThat(evidence.idMatches).isEqualTo(2)
+    assertThat(evidence.selectedPath).isEqualTo("0.0")
   }
 
   @Test
@@ -276,12 +349,15 @@ class QualificationSelectorProbeTest {
     clickable = clickable,
   )
 
-  private class ProbeDriver(private val root: TreeNode) : Driver {
+  private class ProbeDriver(
+    private val root: TreeNode,
+    private val info: DeviceInfo = DeviceInfo(MaestroPlatform.ANDROID, 100, 100, 100, 100),
+  ) : Driver {
     val taps = mutableListOf<Point>()
     override fun name() = "qualification-probe"
     override fun open() = Unit
     override fun close() = Unit
-    override fun deviceInfo() = DeviceInfo(MaestroPlatform.ANDROID, 100, 100, 100, 100)
+    override fun deviceInfo() = info
     override fun launchApp(appId: String, launchArguments: Map<String, Any>) = Unit
     override fun stopApp(appId: String) = Unit
     override fun killApp(appId: String) = Unit
