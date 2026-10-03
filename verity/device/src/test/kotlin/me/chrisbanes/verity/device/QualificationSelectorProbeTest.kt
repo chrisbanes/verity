@@ -149,6 +149,49 @@ class QualificationSelectorProbeTest {
   }
 
   @Test
+  fun `iOS placeholder only fixture proves escaped text and ID selection`() = kotlinx.coroutines.test.runTest {
+    val label = "New [About]?"
+    val resourceId = "prefs:id/placeholder[1]"
+    val approved = node(null, resourceId, clickable = true, bounds = "[10,20][30,40]", hintText = label)
+    val root = TreeNode(
+      attributes = mutableMapOf("bounds" to "[0,0][100,100]"),
+      children = listOf(approved),
+    )
+    val driver = ProbeDriver(root)
+    val session = AndroidDeviceSession(Maestro(driver), Platform.ANDROID_MOBILE, executeShell = { "" })
+
+    assertThat(approved.attributes["text"]).isEqualTo(null)
+    assertThat(approved.attributes["accessibilityText"]).isEqualTo(null)
+    val evidence = QualificationSelectorProbe.capture(session, label)
+    val textResult = session.executeFlow(
+      """
+      appId: com.example.app
+      ---
+      - tapOn: '${Regex.escape(label)}'
+      """.trimIndent(),
+    )
+    val idResult = session.executeFlow(
+      """
+      appId: com.example.app
+      ---
+      - tapOn:
+          id: '${Regex.escape(resourceId)}'
+      """.trimIndent(),
+    )
+
+    assertThat(evidence.outcome).isEqualTo("ready")
+    assertThat(evidence.resourceId).isEqualTo(resourceId)
+    assertThat(evidence.selectedPath).isEqualTo("0.0")
+    assertThat(textResult.success).isTrue()
+    assertThat(idResult.success).isTrue()
+    assertThat(driver.taps).isEqualTo(listOf(Point(20, 30), Point(20, 30)))
+
+    val unsafeRow = node("NEW [ABOUT]?", "prefs:id/other", clickable = true)
+    val unsafeTree = TreeNode(children = listOf(node(null, resourceId, clickable = false, hintText = label), unsafeRow))
+    assertThat(QualificationSelectorProbe.inspect(unsafeTree, label).outcome).isEqualTo("selection-mismatch")
+  }
+
+  @Test
   fun `actual Orchestra ID selection keeps stable order for equally clickable repeated IDs`() = kotlinx.coroutines.test.runTest {
     val first = node("First row", "pkg:id/title", clickable = true, bounds = "[10,20][30,40]")
     val second = node("Second row", "pkg:id/title", clickable = true, bounds = "[60,20][80,40]")
