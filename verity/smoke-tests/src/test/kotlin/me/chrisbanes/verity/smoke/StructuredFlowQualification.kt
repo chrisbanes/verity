@@ -108,6 +108,7 @@ internal suspend fun prepareIosSettingsFixture(
   settingsVisible: suspend () -> Boolean,
   returnToSettings: suspend () -> Unit,
   scrollOnce: suspend () -> Unit,
+  settleAnimation: suspend () -> Unit = {},
   onSample: (FixtureProbeSummary) -> Unit = {},
   clockMillis: () -> Long = { System.nanoTime() / 1_000_000 },
   pause: suspend (Long) -> Unit = { delay(it) },
@@ -115,6 +116,8 @@ internal suspend fun prepareIosSettingsFixture(
   if (aboutVisible() && settingsVisible()) returnToSettings()
 
   val readinessStarted = clockMillis()
+  settleAnimation()
+  if (clockMillis() - readinessStarted >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture settling exceeded readiness allowance")
   val initialCapture = capture()
   val initialCaptureElapsed = (clockMillis() - readinessStarted).coerceAtLeast(0)
   val initial = initialCapture.copy(
@@ -129,7 +132,14 @@ internal suspend fun prepareIosSettingsFixture(
   }
   if (initialCaptureElapsed >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture did not become ready within 5000 ms")
 
-  if (initial.outcome == "not-ready") scrollOnce()
+  var readOnlyElapsed = initialCaptureElapsed
+  if (initial.outcome == "not-ready") {
+    scrollOnce()
+    val settlingStarted = clockMillis()
+    settleAnimation()
+    readOnlyElapsed += (clockMillis() - settlingStarted).coerceAtLeast(0)
+    if (readOnlyElapsed >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture settling exceeded readiness allowance")
+  }
   // Settings can relayout the row after its first accessibility snapshot. Admit a tap only
   // after both SDK-selected text and ID geometry remain unchanged for half a second.
   return requireIosGeneralFixture(
@@ -140,7 +150,7 @@ internal suspend fun prepareIosSettingsFixture(
       onSample = onSample,
       clockMillis = clockMillis,
       pause = pause,
-      elapsedOffsetMillis = initialCaptureElapsed,
+      elapsedOffsetMillis = readOnlyElapsed,
       stableForMillis = 500,
       initialReady = initial.takeIf { it.outcome == "ready" },
       pollIntervalMillis = 100,
@@ -449,6 +459,12 @@ internal suspend fun qualifyStructuredFlows(platform: Platform) {
                   val scrollFlow = ActionFlow(appId, listOf(Interaction.DefaultScroll))
                   val scrollYaml = "appId: ${yamlScalar(appId)}\n---\n- scroll\n"
                   check(route.execute(session, scrollFlow, scrollYaml).success) { "Safe Settings fixture scroll failed" }
+                },
+                settleAnimation = {
+                  val settleFlow = ActionFlow(appId, listOf(Interaction.WaitForAnimation(3000)))
+                  val settleYaml = "appId: ${yamlScalar(appId)}\n---\n- waitForAnimationToEnd:\n    timeout: 3000\n"
+                  check(route.execute(session, settleFlow, settleYaml).success) { "Safe Settings fixture animation did not settle" }
+                  details["fixtureSettlingInputSha256"] = sha256(if (route == QualificationRoute.TYPED) encodeFlow(settleFlow) else settleYaml)
                 },
                 onSample = { details.recordFixtureEvidence(source, it) },
               )
