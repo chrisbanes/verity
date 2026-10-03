@@ -157,7 +157,7 @@ class StructuredFlowQualificationTest {
     )
 
     assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
-    assertThat(captures).isEqualTo(4)
+    assertThat(captures).isEqualTo(7)
     assertThat(scrolls).isEqualTo(0)
     assertThat(returns).isEqualTo(0)
   }
@@ -181,7 +181,7 @@ class StructuredFlowQualificationTest {
     )
 
     assertThat(result.outcome).isEqualTo("ready")
-    assertThat(captures).isEqualTo(4)
+    assertThat(captures).isEqualTo(7)
     assertThat(scrolls).isEqualTo(1)
     assertThat(elapsed).isEqualTo(500L)
   }
@@ -213,7 +213,7 @@ class StructuredFlowQualificationTest {
     }
 
     assertThat(scrolls).isEqualTo(1)
-    assertThat(captures).isEqualTo(10)
+    assertThat(captures).isEqualTo(22)
     assertThat(elapsed).isEqualTo(6_000L)
     assertThat(samples.last().elapsedMillis).isEqualTo(5_000L)
   }
@@ -248,9 +248,9 @@ class StructuredFlowQualificationTest {
 
     assertThat(result.outcome).isEqualTo("ready")
     assertThat(scrolls).isEqualTo(1)
-    assertThat(captures).isEqualTo(4)
-    assertThat(elapsed).isEqualTo(6_400L)
-    assertThat(samples.last().elapsedMillis).isEqualTo(4_400L)
+    assertThat(captures).isEqualTo(5)
+    assertThat(elapsed).isEqualTo(6_300L)
+    assertThat(samples.last().elapsedMillis).isEqualTo(4_300L)
   }
 
   @Test
@@ -269,7 +269,7 @@ class StructuredFlowQualificationTest {
     )
 
     assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
-    assertThat(events).isEqualTo(listOf("back", "capture", "capture", "capture", "capture"))
+    assertThat(events).isEqualTo(listOf("back") + List(7) { "capture" })
 
     events.clear()
     prepareIosSettingsFixture(
@@ -283,7 +283,7 @@ class StructuredFlowQualificationTest {
       scrollOnce = { events += "scroll" },
       clockMillis = { testScheduler.currentTime },
     )
-    assertThat(events).isEqualTo(listOf("capture", "capture", "capture", "capture"))
+    assertThat(events).isEqualTo(List(7) { "capture" })
   }
 
   @Test
@@ -317,7 +317,7 @@ class StructuredFlowQualificationTest {
       )
     }
     assertThat(scrolls).isEqualTo(1)
-    assertThat(captures).isEqualTo(22)
+    assertThat(captures).isEqualTo(52)
     assertThat(elapsed).isEqualTo(5000L)
   }
 
@@ -344,8 +344,8 @@ class StructuredFlowQualificationTest {
       pause = { elapsed += it },
     )
     assertThat(result.selectedBounds).isEqualTo(moved.selectedBounds)
-    assertThat(elapsed).isEqualTo(750L)
-    assertThat(captures).isEqualTo(5)
+    assertThat(elapsed).isEqualTo(800L)
+    assertThat(captures).isEqualTo(10)
   }
 
   @Test

@@ -18,11 +18,14 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
+import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.preflight.PreflightCodes
 import me.chrisbanes.verity.core.preflight.PreflightIssue
 import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.core.preflight.PreflightSeverity
+import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 
@@ -78,8 +81,59 @@ class VerityMcpServerTest {
     val result = tool.handler.invoke(StubClientConnection(), request)
     val text = (result.content.first() as TextContent).text
     assertThat(result.isError).isIn(null, false)
-    assertThat(text).contains("Maestro")
+    assertThat(text).contains("Maestro YAML Reference")
+    assertThat(text.contains("Structured action reference")).isFalse()
     assertThat(text).contains("Remote Dpad")
+  }
+
+  @Test
+  fun `run_flow forwards exact supplied edited and invalid YAML without typed execution`() = runTest {
+    val supplied = "appId: com.example\n---\n- tapOn: Settings\n"
+    val edited = "# manually edited\nappId: com.example\n---\n- tapOn:\n    text: Account\n- waitForAnimationToEnd\n"
+    val invalid = "appId: com.example\n---\n- tapOn: [unfinished"
+    for (suppliedYaml in listOf(supplied, edited, invalid)) {
+      for (awaitFocus in listOf(false, true)) {
+        val events = mutableListOf<String>()
+        val fake = FakeDeviceSession()
+        val session = object : DeviceSession by fake {
+          override suspend fun executeActions(flow: ActionFlow): FlowResult = error("MCP must retain supplied YAML")
+          override suspend fun executeFlow(yaml: String): FlowResult {
+            assertThat(yaml).isEqualTo(suppliedYaml)
+            fake.executedFlows += yaml
+            events += "flow"
+            return FlowResult(yaml != invalid, "syntax failure")
+          }
+          override suspend fun waitForAnimationToEnd() {
+            events += "animation"
+          }
+        }
+        val manager = McpDeviceSessionManager { _, _, _ -> session }
+        val handle = manager.open(Platform.ANDROID_TV, "fixture")
+        try {
+          val server = VerityMcpServer(sessionManager = manager).create()
+          val result = server.tools.getValue("run_flow").handler.invoke(
+            StubClientConnection(),
+            CallToolRequest(
+              CallToolRequestParams(
+                "run_flow",
+                arguments = buildJsonObject {
+                  put("session_id", handle.sessionId.toString())
+                  put("yaml", suppliedYaml)
+                  if (awaitFocus) put("await_focus_change", true)
+                },
+              ),
+            ),
+          )
+          assertThat(result.isError).isIn(null, false)
+          assertThat((result.content.single() as TextContent).text).isEqualTo(if (suppliedYaml == invalid) "FAILED: syntax failure" else "SUCCESS")
+          assertThat(fake.executedFlows).isEqualTo(listOf(suppliedYaml))
+          assertThat(events).isEqualTo(if (awaitFocus) listOf("flow", "animation") else listOf("flow"))
+        } finally {
+          manager.close(handle.sessionId)
+        }
+        assertThat(fake.closed).isEqualTo(true)
+      }
+    }
   }
 
   @Test

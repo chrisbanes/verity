@@ -63,6 +63,7 @@ internal suspend fun awaitFixtureReadiness(
   elapsedOffsetMillis: Long = 0,
   stableForMillis: Long = 0,
   initialReady: FixtureProbeSummary? = null,
+  pollIntervalMillis: Long = 250,
 ): FixtureProbeSummary {
   val started = clockMillis()
   var last: FixtureProbeSummary
@@ -90,7 +91,7 @@ internal suspend fun awaitFixtureReadiness(
       else -> throw QualificationUnavailable("Safe Settings fixture selector unavailable: ${last.outcome}")
     }
     if (elapsed >= budgetMillis) throw QualificationUnavailable("Safe Settings fixture did not become ready within $budgetMillis ms")
-    pause(minOf(250L, budgetMillis - elapsed))
+    pause(minOf(pollIntervalMillis, budgetMillis - elapsed))
   }
 }
 
@@ -142,6 +143,7 @@ internal suspend fun prepareIosSettingsFixture(
       elapsedOffsetMillis = initialCaptureElapsed,
       stableForMillis = 500,
       initialReady = initial.takeIf { it.outcome == "ready" },
+      pollIntervalMillis = 100,
     ),
   )
 }
