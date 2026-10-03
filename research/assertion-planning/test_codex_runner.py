@@ -544,6 +544,24 @@ class RunnerTest(unittest.TestCase):
             self.assertTrue(output['cleanupVerified'])
             self.assertEqual(output['counters']['totalAttempts'],33)
 
+    def test_failed_qualification_retains_verified_instruction_counts(self):
+        for failure in ('poison','timeout'):
+            with self.subTest(failure=failure),tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
+                f=Fixture(d)
+                source=str(pathlib.Path.home()/'.codex/AGENTS.md')
+                script=FAKE_STUDY.replace("'instructionSources':[]", "'instructionSources':"+repr([source]))
+                stop="notify('item/tool/call',{});continue" if failure=='poison' else 'continue'
+                script=script.replace("tid = 'turn-%d'%turn_number", "tid = 'turn-%d'%turn_number\n        "+stop)
+                f.child_script(script.replace('POLICY_LITERAL',repr(runner.MANIFEST)).replace('MARKER_LITERAL',repr(str(f.marker))).replace('LEDGER_LITERAL',repr(str(f.ledger))))
+                output=asyncio.run(f.run(timeout_limits={'turnSeconds':0.3,'cleanupSeconds':0.3,'startupSeconds':1,'wallSeconds':3}))
+                self.assertFalse(output['completed'])
+                self.assertEqual(output['counters']['totalAttempts'],1)
+                self.assertEqual(output['counters']['caseAttempts'],0)
+                self.assertEqual(output['runMetadata']['globalInstructionSources'],[{'source':'USER_GLOBAL','count':1}])
+                self.assertEqual(json.loads(f.output.read_text())['runMetadata']['globalInstructionSources'],[{'source':'USER_GLOBAL','count':1}])
+                self.assertNotIn(source,f.output.read_text())
+                self.assertTrue(output['cleanupVerified'])
+
     def test_startup_deadline_is_one_owned_budget_not_a_wall_limit(self):
         with tempfile.TemporaryDirectory(prefix='verity-fake-') as d:
             f = Fixture(d)

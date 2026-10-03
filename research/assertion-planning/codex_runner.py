@@ -307,7 +307,9 @@ class Child:
         env.pop("CODEX_API_KEY", None)
         try:
             self.process = await asyncio.wait_for(asyncio.create_subprocess_exec(*argv, cwd=self.cwd, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=8 * 1024 * 1024 + 1), max(0, end - time.monotonic()))
-        except (OSError, asyncio.TimeoutError):
+        except asyncio.TimeoutError:
+            raise
+        except OSError:
             raise Poisoned() from None
         self.readers = [asyncio.create_task(self.read_stdout()), asyncio.create_task(self.discard_stderr())]
 
@@ -381,6 +383,8 @@ class Child:
                 if message.get("id") != request_id or "result" not in message or "error" in message:
                     raise Poisoned()
                 return message["result"]
+        except asyncio.TimeoutError:
+            raise
         except (OSError, ConnectionError):
             raise Poisoned() from None
 
@@ -605,13 +609,15 @@ def verify_thread(response, child, root):
     return instruction_counts(response.get("instructionSources", []), root, child.cwd)
 
 
-async def assertion_attempt(child, model_input, row, root, schema, prompt, end, consume):
+async def assertion_attempt(child, model_input, row, root, schema, prompt, end, consume, run_metadata=None):
     start = time.monotonic()
     row["setup"]["startedAt"] = now()
     counts = None
     try:
         response = await child.request("thread/start", {"model": "gpt-6-luna", "modelProvider": "openai", "serviceTier": "default", "approvalPolicy": "never", "approvalsReviewer": "user", "sandbox": "read-only", "cwd": child.cwd, "baseInstructions": MANIFEST["instructions"], "developerInstructions": "", "ephemeral": True, "allowProviderModelFallback": False, "experimentalRawEvents": True, "dynamicTools": [], "environments": [], "runtimeWorkspaceRoots": [], "selectedCapabilityRoots": [], "config": MANIFEST}, end)
         counts = verify_thread(response, child, root)
+        if run_metadata is not None:
+            run_metadata["globalInstructionSources"] = counts
         row["setup"].update(endedAt=now(), durationMillis=int((time.monotonic() - start) * 1000))
         turn_start = time.monotonic()
         row["turn"]["startedAt"] = now()
@@ -765,8 +771,7 @@ async def run_study(requests, output, ledger, grant, *, repository_root=None, ex
                     saved["counters"]["unattemptedCases"] -= 1
             qualification_input = {"rawStep": "[?] Home", "journeySteps": ["Launch synthetic application"], "platform": "android_mobile", "projectContext": "Synthetic application has a visible literal Home label."}
             end = min(whole_end - limits["cleanupSeconds"], time.monotonic() + limits["turnSeconds"])
-            counts = await assertion_attempt(final, qualification_input, saved["qualification"], root, schema, prompt, end, lambda: consume("QUALIFICATION", None))
-            saved["runMetadata"]["globalInstructionSources"] = counts
+            counts = await assertion_attempt(final, qualification_input, saved["qualification"], root, schema, prompt, end, lambda: consume("QUALIFICATION", None), run_metadata=saved["runMetadata"])
             if saved["qualification"]["status"] != "SUCCESS" or not valid_response(saved["qualification"]["responseText"]):
                 saved["stopReason"] = "QUALIFICATION_FAILED"
             else:
@@ -786,10 +791,10 @@ async def run_study(requests, output, ledger, grant, *, repository_root=None, ex
         except asyncio.CancelledError as error:
             cancelled = error
             saved["stopReason"] = "INTERRUPTED"
-        except (Poisoned, Rejected, ValueError, TypeError, KeyError, OSError):
-            saved["stopReason"] = "POISONED"
         except asyncio.TimeoutError:
             saved["stopReason"] = "WALL_LIMIT" if time.monotonic() >= whole_end - limits["cleanupSeconds"] else ("QUALIFICATION_FAILED" if saved["qualification"]["status"] != "SUCCESS" else "TURN_FAILED")
+        except (Poisoned, Rejected, ValueError, TypeError, KeyError, OSError):
+            saved["stopReason"] = "POISONED"
         finally:
             async def cleanup_all():
                 for child in children:
