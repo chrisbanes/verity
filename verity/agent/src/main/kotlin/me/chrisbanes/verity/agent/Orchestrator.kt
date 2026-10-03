@@ -203,14 +203,8 @@ class Orchestrator(
     // Scroll-to-find loop (max 5 attempts)
     repeat(5) {
       val hierarchy = session.captureHierarchy()
-      val direction = try {
-        navigator.suggestScrollDirection(targetText, hierarchy)
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: Exception) {
-        // LLM call failed, stop scrolling and try executing anyway
-        null
-      } ?: return@repeat // LLM gave up or failed
+      val direction = navigator.suggestScrollDirection(targetText, hierarchy)
+        ?: return@repeat // A valid NONE is an ordinary navigation outcome.
 
       executor.execute(Interaction.Scroll(direction))
 

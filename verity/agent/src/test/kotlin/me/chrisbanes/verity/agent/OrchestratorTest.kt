@@ -85,7 +85,7 @@ class OrchestratorTest {
     val session = FakeDeviceSession()
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": false, "reasoning": "Tree mismatch"}""") },
@@ -118,11 +118,9 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _ ->
-          FakeTextAgent { userMessage ->
-            generatedActions = listOf(userMessage)
-            "appId: com.example.app\n---\n- swipe"
-          }
+        NavigatorAgent("unused") { _, userMessage ->
+          generatedActions = listOf(userMessage)
+          modelReply("appId: com.example.app\n---\n- scroll")
         }
       },
       inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
@@ -141,7 +139,7 @@ class OrchestratorTest {
 
     assertThat(result.passed).isTrue()
     assertThat(session.executedFlows).isEqualTo(
-      listOf(LAUNCH_FLOW, "appId: com.example.app\n---\n- swipe"),
+      listOf(LAUNCH_FLOW, "appId: com.example.app\n---\n- scroll"),
     )
     assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate a Maestro YAML flow for these actions:\n1. navigate to settings page")
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
@@ -153,11 +151,11 @@ class OrchestratorTest {
       containsTextResults = ArrayDeque(listOf(false, true)),
     )
     val recorder = RecordingArtifactRecorder()
-    val generatedYaml = flow("- swipe")
+    val generatedYaml = flow("- scroll")
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { generatedYaml } }
+        NavigatorAgent("unused") { _, _ -> modelReply(generatedYaml) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -191,7 +189,7 @@ class OrchestratorTest {
     )
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
     )
 
@@ -218,7 +216,7 @@ class OrchestratorTest {
     )
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
     )
 
@@ -246,7 +244,7 @@ class OrchestratorTest {
     val recorder = RecordingArtifactRecorder()
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Tree matched"}""") },
@@ -279,7 +277,7 @@ class OrchestratorTest {
       val recorder = RecordingArtifactRecorder(screenshotDirectory)
       val orchestrator = Orchestrator(
         session = session,
-        navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+        navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
         inspectorFactory = {
           InspectorAgent(
             evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -330,7 +328,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("should not be called") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("should not be called")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -359,7 +357,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("navigator should not be called on fast path")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -398,7 +396,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { generatedYaml } }
+        NavigatorAgent("unused") { _, _ -> modelReply(generatedYaml) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -432,7 +430,7 @@ class OrchestratorTest {
     val session = FakeDeviceSession()
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { generatedYaml } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(generatedYaml) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -461,7 +459,7 @@ class OrchestratorTest {
   fun `tree recorder failure does not fail passing assertion`() = runTest {
     val orchestrator = Orchestrator(
       session = FakeDeviceSession(),
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Tree matched"}""") },
@@ -490,7 +488,7 @@ class OrchestratorTest {
     val session = FakeDeviceSession()
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -527,7 +525,7 @@ class OrchestratorTest {
     )
     val orchestrator = Orchestrator(
       session = session,
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -568,7 +566,7 @@ class OrchestratorTest {
           if (path == artifactPath) error("device screenshot failed")
         },
       ),
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -598,7 +596,7 @@ class OrchestratorTest {
     val evaluatedPaths = mutableListOf<Path>()
     val orchestrator = Orchestrator(
       session = FakeDeviceSession(),
-      navigatorFactory = { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
       inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { _, _, _ -> error("unused") },
@@ -634,9 +632,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _ ->
-          FakeTextAgent { "DOWN" }
-        }
+        NavigatorAgent("unused") { _, _ -> modelReply("DOWN") }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -665,7 +661,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("should not be called") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("should not be called")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -695,7 +691,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("navigator should not be called on fast path")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -723,7 +719,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("navigator should not be called on fast path")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -754,7 +750,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("navigator should not be called on fast path")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -795,9 +791,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { _ ->
-          FakeTextAgent { "DOWN" }
-        }
+        NavigatorAgent("unused") { _, _ -> modelReply("DOWN") }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -831,7 +825,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("navigator should not be called on fast path")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -859,7 +853,7 @@ class OrchestratorTest {
     val orchestrator = Orchestrator(
       session = session,
       navigatorFactory = {
-        NavigatorAgent("unused") { FakeTextAgent { error("navigator should not be called on fast path") } }
+        NavigatorAgent("unused") { _, _ -> modelReply(error("navigator should not be called on fast path")) }
       },
       inspectorFactory = {
         InspectorAgent(
@@ -940,11 +934,9 @@ class OrchestratorTest {
       },
       evaluateVisualContent = { _, _, _, _ -> error("unused") },
     )
-    val navigator = NavigatorAgent("unused") {
-      FakeTextAgent { message ->
-        messages += message
-        flow("- swipe")
-      }
+    val navigator = NavigatorAgent("unused") { _, message ->
+      messages += message
+      modelReply(flow("- scroll"))
     }
     val recorder = RecordingArtifactRecorder()
     val result = loopOrchestrator(session, inspector, navigator, recorder).run(loopJourney("Press D-pad down; navigate to settings page", 1, Platform.ANDROID_TV))
@@ -1010,7 +1002,7 @@ class OrchestratorTest {
       },
       evaluateVisualContent = { _, _, _, _ -> error("unused") },
     )
-    val navigator = NavigatorAgent("unused") { FakeTextAgent { "DOWN" } }
+    val navigator = NavigatorAgent("unused") { _, _ -> modelReply("DOWN") }
     val result = loopOrchestrator(session, inspector, navigator).run(loopJourney("Tap Settings; swipe left", 2, Platform.ANDROID_MOBILE))
     assertThat(events).containsExactly("check", "flow")
     assertThat(result.segments.single().loop?.iterations).isEqualTo(0)
@@ -1048,6 +1040,65 @@ class OrchestratorTest {
     }
   }
 
+  @Test fun `scroll model failure stops action and loop before any fallback or later work`() = runTest {
+    for (loop in listOf(false, true)) {
+      val events = mutableListOf<String>()
+      val session = LoopSession(events, Platform.ANDROID_MOBILE)
+      val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ ->
+        events += "check"
+        inspectionReply("""{"passed":false,"reasoning":"previous"}""")
+      }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+      val navigator = NavigatorAgent("context") { _, _ -> error("HTTP_BODY_SENTINEL sk-secret") }
+      val journey = loopJourney("Tap Settings; swipe left", 2, Platform.ANDROID_MOBILE).copy(steps = listOf(if (loop) JourneyStep.Loop("Tap Settings; swipe left", "page is ready", 2) else JourneyStep.Action("Tap Settings"), JourneyStep.Action("Press back")))
+      assertFailsWith<ModelFailureException> { loopOrchestrator(session, inspector, navigator).run(journey) }
+      assertThat(events).containsExactly(*(if (loop) arrayOf("check") else emptyArray()))
+    }
+  }
+
+  @Test fun `invalid truncated empty timed out and failed slow generation never record or execute flow bodies`() = runTest {
+    for (loop in listOf(false, true)) {
+      for (type in listOf("invalid", "truncated", "empty", "timeout", "request")) {
+        val events = mutableListOf<String>()
+        val session = LoopSession(events, Platform.ANDROID_TV)
+        val recorder = RecordingArtifactRecorder()
+        val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ ->
+          events += "check"
+          inspectionReply("""{"passed":false,"reasoning":"previous"}""")
+        }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+        val navigator = NavigatorAgent("context") { _, _ ->
+          when (type) {
+            "invalid" -> modelReply("appId: com.example\n---\n- tapOn:")
+
+            "truncated" -> modelReply("appId: com.example\n---\n- launchApp", "max_tokens")
+
+            "empty" -> modelReply(" ")
+
+            "timeout" -> {
+              kotlinx.coroutines.delay(30_001)
+              modelReply("unused")
+            }
+
+            else -> error("HTTP_BODY_SENTINEL sk-secret")
+          }
+        }
+        val journey = loopJourney("Press D-pad down; complete onboarding wizard", 2, Platform.ANDROID_TV).copy(steps = listOf(if (loop) JourneyStep.Loop("Press D-pad down; complete onboarding wizard", "page is ready", 2) else JourneyStep.Action("complete onboarding wizard"), JourneyStep.Action("Press back")))
+        assertFailsWith<ModelFailureException> { loopOrchestrator(session, inspector, navigator, recorder).run(journey) }
+        assertThat(recorder.generatedFlows).isEmpty()
+        assertThat(events).containsExactly(*(if (loop) arrayOf("check") else emptyArray()))
+      }
+    }
+  }
+
+  @Test fun `valid scroll NONE remains ordinary navigation with fallback tap`() = runTest {
+    val events = mutableListOf<String>()
+    val session = LoopSession(events, Platform.ANDROID_MOBILE)
+    val navigator = NavigatorAgent("context") { _, _ -> modelReply("NONE") }
+    val inspector = InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") })
+    val result = loopOrchestrator(session, inspector, navigator).run(Journey("none", APP_ID, Platform.ANDROID_MOBILE, listOf(JourneyStep.Action("Tap Settings"))))
+    assertThat(result.passed).isTrue()
+    assertThat(events).containsExactly("flow")
+  }
+
   private fun loopJourney(body: String, max: Int, platform: Platform) = Journey(
     name = "loop-contract",
     app = APP_ID,
@@ -1058,7 +1109,7 @@ class OrchestratorTest {
   private fun loopOrchestrator(
     session: DeviceSession,
     inspector: InspectorAgent,
-    navigator: NavigatorAgent = NavigatorAgent("unused") { FakeTextAgent { error("unexpected navigator") } },
+    navigator: NavigatorAgent = NavigatorAgent("unused") { _, _ -> modelReply(error("unexpected navigator")) },
     recorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
   ) = Orchestrator(session, { navigator }, { inspector }, artifactRecorder = recorder)
 

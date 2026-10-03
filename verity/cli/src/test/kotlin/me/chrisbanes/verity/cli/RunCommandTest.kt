@@ -5,8 +5,10 @@ import assertk.assertions.contains
 import assertk.assertions.containsExactly
 import assertk.assertions.doesNotContain
 import assertk.assertions.exists
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isTrue
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import java.io.File
@@ -17,7 +19,6 @@ import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.serialization.json.Json
-import me.chrisbanes.verity.agent.FakeTextAgent
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.ModelFailureException
@@ -27,6 +28,7 @@ import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.agent.SegmentResult
 import me.chrisbanes.verity.agent.inspectionReply
+import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
@@ -42,6 +44,9 @@ import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.FakeDeviceSession
+import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
+import me.chrisbanes.verity.device.MaestroFlowValidationPhase
+import me.chrisbanes.verity.device.validateMaestroFlow
 
 class RunCommandTest {
   private val json = Json { ignoreUnknownKeys = true }
@@ -966,7 +971,7 @@ class RunCommandTest {
         .subcommands(RunCommand())
         .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("Unknown provider")
       assertThat(result.output).doesNotContain("KeyPress(DPAD_DOWN)")
     } finally {
@@ -1005,7 +1010,7 @@ class RunCommandTest {
         .subcommands(RunCommand())
         .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", file.absolutePath))
 
-      assertThat(result.statusCode).isEqualTo(1)
+      assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("Unknown model 'definitely-not-real'")
     } finally {
       if (originalConfig == null) {
@@ -1130,7 +1135,7 @@ class RunCommandTest {
         )
         Orchestrator(
           FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))),
-          { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+          { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
           { inspector },
           artifactRecorder = recorder,
         ).run(resolved.journey)
@@ -1170,7 +1175,7 @@ class RunCommandTest {
         seen += resolved.journey.name
         Orchestrator(
           FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))),
-          { NavigatorAgent("unused") { FakeTextAgent { error("unused") } } },
+          { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
           {
             InspectorAgent(
               evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"menu not ready"}""") },
@@ -1252,6 +1257,197 @@ class RunCommandTest {
         assertThat(result.output).contains("Interactions:\n- KeyPress(DPAD_DOWN)\n- KeyPress(DPAD_RIGHT)")
         assertThat(File(output, "dry-run/loop$index.md").readText()).contains("until visually Settings, max 3")
       }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test fun `actual navigator local validation failure aborts suite with retained setup results`() {
+    verifyNavigatorSuite("infrastructure", null)
+  }
+
+  @Test fun `actual navigator model generation and scroll failures stop suite without exposing reply or provider text`() {
+    for (type in listOf("flow", "scroll", "invalid", "null-options")) verifyNavigatorSuite(type, null)
+  }
+
+  @Test fun `required journey and summary writes take precedence over actual navigator model or infrastructure failure`() {
+    for (type in listOf("flow", "scroll", "infrastructure")) for (write in listOf("journey", "summary")) verifyNavigatorSuite(type, write)
+  }
+
+  @Test fun `actual navigator create write cleanup SDK and missing resource failures stay setup3`() {
+    for (type in listOf("infrastructure-create", "infrastructure-write", "infrastructure-cleanup", "infrastructure-sdk", "infrastructure-resource")) verifyNavigatorSuite(type, null)
+  }
+
+  private fun verifyNavigatorSuite(failureType: String, writeFailure: String?) {
+    val dir = createTempDirectory("verity-navigator-suite").toFile()
+    try {
+      writeJourney(dir, "a.journey.yaml", "First", platform = "android")
+      writeJourneyWithSteps(dir, "b.journey.yaml", "Second", platform = "android", steps = listOf(if (failureType == "scroll") "tap Missing" else "complete onboarding wizard"))
+      writeJourney(dir, "c.journey.yaml", "Third", platform = "android")
+      val seen = mutableListOf<String>()
+      val sessions = mutableListOf<FakeDeviceSession>()
+      val output = File(dir, "output")
+      val command = runCommand(
+        clock = fixedClock(),
+        writeSummary = { run, summary -> if (writeFailure == "summary") error("required summary failed") else run.writeSummary(summary) },
+        writeJourneyResult = { run, path, result -> if (writeFailure == "journey" && path.contains("002-second")) error("required journey failed") else run.writeJourneyResult(path, result) },
+        journeyRunner = { resolved, recorder ->
+          seen += resolved.journey.name
+          val session = FakeDeviceSession(platform = Platform.ANDROID_MOBILE, hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))).also { sessions += it }
+          val navigator = NavigatorAgent("context", validateFlow = { yaml ->
+            when (failureType) {
+              "infrastructure-create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(navigatorSentinel) })
+
+              "infrastructure-write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(navigatorSentinel) })
+
+              "infrastructure-cleanup" -> validateMaestroFlow(yaml, deleteFlow = {
+                java.nio.file.Files.delete(it)
+                throw java.io.IOException(navigatorSentinel)
+              })
+
+              "infrastructure-sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(navigatorSentinel) })
+
+              "infrastructure-resource" -> validateMaestroFlow("appId: com.example.app\n---\n- runFlow: /unavailable/verity-missing.yaml")
+
+              "infrastructure" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(navigatorSentinel) })
+
+              else -> validateMaestroFlow(yaml)
+            }
+          }) { _, _ ->
+            if (failureType.startsWith("infrastructure")) {
+              modelReply("appId: com.example.app\n---\n- launchApp")
+            } else if (failureType == "null-options") {
+              modelReply("appId: com.example.app\n---\n- tapOn:")
+            } else if (failureType == "invalid") {
+              modelReply("appId: com.example.app\n---\n- tapOn: \"$navigatorSentinel")
+            } else {
+              error(navigatorSentinel)
+            }
+          }
+          Orchestrator(session, { navigator }, { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused inspector") }, evaluateVisualContent = { _, _, _, _ -> error("unused inspector") }) }, artifactRecorder = recorder).run(resolved.journey)
+        },
+      ) { error("unused suite") }
+      val result = Verity().subcommands(command).test("--output-path ${output.absolutePath} run ${dir.absolutePath}")
+      val expectedKind = if (failureType.startsWith("infrastructure")) ArtifactErrorKind.SETUP_FAILURE else ArtifactErrorKind.MODEL_FAILURE
+      assertThat(result.statusCode).isEqualTo(if (writeFailure != null || failureType.startsWith("infrastructure")) 3 else 5)
+      assertThat(seen).containsExactly("First", "Second")
+      assertThat(sessions[1].executedFlows.size).isEqualTo(1) // Static launch only; no generated flow or fallback tap.
+      assertThat(sessions[1].pressedKeys).isEmpty()
+      val run = File(output, "runs").listFiles()!!.single()
+      assertThat(readJourney(File(run, "journeys/001-first.json")).passed).isTrue()
+      assertThat(File(run, "journeys/003-third.json").exists()).isFalse()
+      assertThat(File(run, "flows").walkTopDown().filter { it.isFile }.toList()).isEmpty()
+      if (writeFailure == null) {
+        val summary = readSummary(File(run, "summary.json"))
+        assertThat(summary.total).isEqualTo(2)
+        assertThat(summary.passed).isEqualTo(1)
+        assertThat(summary.failed).isEqualTo(1)
+        assertThat(summary.error?.kind).isEqualTo(expectedKind)
+        assertThat(readJourney(File(run, "journeys/002-second.json")).error).isEqualTo(summary.error)
+      }
+      val outward = result.output + run.walkTopDown().filter { it.isFile }.joinToString("\n") { it.readText() }
+      for (sentinel in listOf("sk-private", "credential-private", "eyJprivate.payload.signature", "HTTP_BODY_PRIVATE", "HEADER_PRIVATE")) assertThat(outward).doesNotContain(sentinel)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  private val navigatorSentinel = "sk-private Bearer credential-private eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"
+
+  @Test fun `real preview suite plans before writing and model failure prevents partial success artifacts`() {
+    for (loop in listOf(false, true)) {
+      val dir = createTempDirectory("verity-preview-abort").toFile()
+      try {
+        writeJourney(dir, "a.journey.yaml", "First")
+        writeJourneyWithSteps(dir, "b.journey.yaml", "Second", steps = listOf(if (loop) "Press back; complete onboarding wizard until ready max 1" else "complete onboarding wizard"))
+        writeJourney(dir, "c.journey.yaml", "Third")
+        val seen = mutableListOf<String>()
+        val output = File(dir, "output")
+        val navigator = NavigatorAgent("context") { _, _ -> error(navigatorSentinel) }
+        val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })
+        val command = dryRunCommand { journeys, root ->
+          val report = DryRunSuiteReport(
+            journeys.map { resolved ->
+              seen += resolved.journey.name
+              planner.plan(resolved)
+            },
+          )
+          DryRunArtifactWriter().write(root, report)
+        }
+        val result = Verity().subcommands(command).test("--output-path ${output.absolutePath} run --dry-run ${dir.absolutePath}")
+        assertThat(result.statusCode).isEqualTo(5)
+        assertThat(seen).containsExactly("First", "Second")
+        assertThat(result.output).contains("b.journey.yaml segment 0")
+        assertThat(result.output).contains("Navigator flow request failed")
+        assertThat(result.output).doesNotContain(navigatorSentinel)
+        assertThat(output.walkTopDown().filter { it.isFile && it.extension in listOf("md", "json") }.toList()).isEmpty()
+      } finally {
+        dir.deleteRecursively()
+      }
+    }
+  }
+
+  @Test fun `preview direct typed errors contextual errors and unknown host errors retain safe exit contracts`() {
+    val dir = createTempDirectory("verity-preview-direct").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val cases = listOf(
+        ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.EMPTY) to 5,
+        MaestroFlowValidationInfrastructureException(MaestroFlowValidationPhase.WRITE) to 3,
+        com.github.ajalt.clikt.core.CliktError("Contextual navigator failure segment 0", statusCode = 5) to 5,
+        IllegalStateException(navigatorSentinel) to 3,
+      )
+      for ((failure, code) in cases) {
+        val output = File(dir, "output-$code-${cases.indexOf(failure to code)}")
+        val result = Verity().subcommands(dryRunCommand { _, _ -> throw failure }).test("--output-path ${output.absolutePath} run --dry-run ${file.absolutePath}")
+        assertThat(result.statusCode).isEqualTo(code)
+        assertThat(result.output).doesNotContain(navigatorSentinel)
+        assertThat(output.walkTopDown().filter { it.isFile }.toList()).isEmpty()
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test fun `required preview Markdown write failure exits3 without normal artifacts`() {
+    val dir = createTempDirectory("verity-preview-write").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val output = File(dir, "output").also { it.mkdirs() }
+      File(output, "dry-run").writeText("blocked directory")
+      val result = Verity().subcommands(RunCommand()).test("--output-path ${output.absolutePath} run --dry-run ${file.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("Dry-run report write failed")
+      assertThat(File(output, "runs").walkTopDown().filter { it.isFile }.toList()).isEmpty()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test fun `real preview caller cancellation leaves no completed report or failure artifacts`() {
+    val dir = createTempDirectory("verity-preview-cancel").toFile()
+    try {
+      val file = writeJourneyWithSteps(dir, "single.journey.yaml", "Single", steps = listOf("complete onboarding wizard"))
+      val output = File(dir, "output")
+      val navigator = NavigatorAgent("context") { _, _ -> throw kotlin.coroutines.cancellation.CancellationException("caller") }
+      val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })
+      val command = dryRunCommand { journeys, root -> DryRunArtifactWriter().write(root, DryRunSuiteReport(journeys.map { planner.plan(it) })) }
+      assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { Verity().subcommands(command).test("--output-path ${output.absolutePath} run --dry-run ${file.absolutePath}") }
+      assertThat(output.walkTopDown().filter { it.isFile }.toList()).isEmpty()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test fun `required preview context failure exits3 without completed normal or Markdown artifacts`() {
+    val dir = createTempDirectory("verity-preview-context").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val output = File(dir, "output")
+      val missingContext = File(dir, "missing-context")
+      val result = Verity().subcommands(RunCommand()).test("--output-path ${output.absolutePath} --context-path ${missingContext.absolutePath} --require-context run --dry-run ${file.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(output.walkTopDown().filter { it.isFile }.toList()).isEmpty()
     } finally {
       dir.deleteRecursively()
     }

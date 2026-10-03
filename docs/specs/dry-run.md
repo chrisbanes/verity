@@ -16,7 +16,9 @@ The report includes the static application-launch YAML and each segment's action
 
 Navigator creation and provider/navigator-model/credential preflight are deferred until generated YAML is needed. Fast-path-only suites require neither a valid provider configuration nor credentials. Inspector models are not validated because assertions are not evaluated. Slow-path planning may therefore make LLM calls and incur provider costs.
 
-Generation failures identify the journey file and segment. All journeys are planned before report writing starts, so a generation failure does not produce a new partial report marked as successful.
+Generated action and complete-loop YAML passes canonical Maestro validation before it enters the report. Validation does not execute the flow or open a device session.
+
+Generation failures identify the journey file, segment and fixed model stage/failure class. All journeys are planned before report writing starts, so a generation failure stops later planning and does not produce a new partial report marked as successful.
 
 ## Reports and artifacts
 
@@ -30,8 +32,23 @@ The root resolves from `--output-path`, `paths.output`, then `build/verity`. Rep
 
 Current input resolution also creates a timestamped directory under `<output-path>/runs/` before branching to dry run. Successful dry runs do not write normal journey-result JSON or a suite summary there; input/parser failures use that directory for a failure summary. Dry-run generation/context/report-write failures are handled by the preview path and do not have the normal run's complete [CI result contract](run-artifacts.md).
 
+## Exit codes and failure boundaries
+
+| Code | Outcome |
+| --- | --- |
+| `0` | The entire suite was planned and required reports were written |
+| `2` | Input resolution or journey parsing failed |
+| `3` | Configuration/provider/model/context setup, local flow validation or required Markdown writing failed |
+| `5` | Slow-path navigator action or complete-loop generation had a model failure |
+
+Navigator generation shares the execution request policy: a request-owned 30-second timeout, failed request, known case-insensitive truncation reasons (`length`, `max_tokens`, `incomplete`), empty text and invalid YAML all produce a model failure. Metadata is checked before parsing. Raw model replies, backend exception text, HTTP bodies/headers and raw causes never enter the error report; fixed diagnostics and redacted authored text retain journey/segment context.
+
+Provider/navigator creation occurs outside the generation failure boundary. Invalid provider/model configuration, required context, temporary-file I/O, missing referenced resources, cleanup and ambiguous SDK validation faults remain setup failures with exit `3`. Required Markdown writing also exits `3`. These preview failures do not create normal journey-result JSON or a suite summary.
+
+Caller cancellation and shorter enclosing timeouts propagate without a completed success or failure report. An enclosing overall wait deadline owns its timeout; it is separate from an individual model request. The smart-planner fallback specified by [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its own deterministic recovery policy.
+
 ## Source and coverage
 
 - [DryRunPlanner](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/DryRunPlanner.kt) and [DryRunPlannerTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/DryRunPlannerTest.kt): mapped actions, lazy generation, loops, and assertions.
 - [DryRunRenderer](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/DryRunRenderer.kt) and [DryRunArtifactWriter](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/DryRunArtifactWriter.kt): Markdown and file naming.
-- [RunCommandTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/RunCommandTest.kt): preview branching, sorted discovery, parsing, and deferred provider/model checks.
+- [RunCommandTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/RunCommandTest.kt): preview branching, sorted discovery, parsing, deferred provider/model checks, model/setup exit codes, report-write precedence and cancellation.
