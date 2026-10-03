@@ -153,10 +153,11 @@ class StructuredFlowQualificationTest {
       settingsVisible = { true },
       returnToSettings = { returns++ },
       scrollOnce = { scrolls++ },
+      clockMillis = { testScheduler.currentTime },
     )
 
     assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
-    assertThat(captures).isEqualTo(1)
+    assertThat(captures).isEqualTo(4)
     assertThat(scrolls).isEqualTo(0)
     assertThat(returns).isEqualTo(0)
   }
@@ -180,9 +181,9 @@ class StructuredFlowQualificationTest {
     )
 
     assertThat(result.outcome).isEqualTo("ready")
-    assertThat(captures).isEqualTo(2)
+    assertThat(captures).isEqualTo(4)
     assertThat(scrolls).isEqualTo(1)
-    assertThat(elapsed).isEqualTo(0L)
+    assertThat(elapsed).isEqualTo(500L)
   }
 
   @Test
@@ -226,7 +227,11 @@ class StructuredFlowQualificationTest {
     val result = prepareIosSettingsFixture(
       capture = {
         captures++
-        elapsed += if (captures == 1) 300 else 3_400
+        elapsed += when (captures) {
+          1 -> 300
+          2 -> 3_400
+          else -> 100
+        }
         if (captures == 1) FixtureProbeSummary("not-ready") else iosGeneralFixture()
       },
       aboutVisible = { false },
@@ -243,9 +248,9 @@ class StructuredFlowQualificationTest {
 
     assertThat(result.outcome).isEqualTo("ready")
     assertThat(scrolls).isEqualTo(1)
-    assertThat(captures).isEqualTo(2)
-    assertThat(elapsed).isEqualTo(5_700L)
-    assertThat(samples.last().elapsedMillis).isEqualTo(3_700L)
+    assertThat(captures).isEqualTo(4)
+    assertThat(elapsed).isEqualTo(6_400L)
+    assertThat(samples.last().elapsedMillis).isEqualTo(4_400L)
   }
 
   @Test
@@ -260,10 +265,11 @@ class StructuredFlowQualificationTest {
       settingsVisible = { true },
       returnToSettings = { events += "back" },
       scrollOnce = { events += "scroll" },
+      clockMillis = { testScheduler.currentTime },
     )
 
     assertThat(result.resourceId).isEqualTo(IOS_GENERAL_RESOURCE_ID)
-    assertThat(events).isEqualTo(listOf("back", "capture"))
+    assertThat(events).isEqualTo(listOf("back", "capture", "capture", "capture", "capture"))
 
     events.clear()
     prepareIosSettingsFixture(
@@ -275,8 +281,9 @@ class StructuredFlowQualificationTest {
       settingsVisible = { false },
       returnToSettings = { events += "back" },
       scrollOnce = { events += "scroll" },
+      clockMillis = { testScheduler.currentTime },
     )
-    assertThat(events).isEqualTo(listOf("capture"))
+    assertThat(events).isEqualTo(listOf("capture", "capture", "capture", "capture"))
   }
 
   @Test
@@ -311,6 +318,51 @@ class StructuredFlowQualificationTest {
     }
     assertThat(scrolls).isEqualTo(1)
     assertThat(captures).isEqualTo(22)
+    assertThat(elapsed).isEqualTo(5000L)
+  }
+
+  @Test
+  fun `iOS fixture geometry must stabilize after a late Settings relayout`() = runTest {
+    var elapsed = 0L
+    var captures = 0
+    val first = iosGeneralFixture()
+    val moved = first.copy(
+      selectedBounds = "[16,380][386,432]",
+      textSelectedBounds = "[30,392][131,420]",
+      idSelectedBounds = "[16,380][386,432]",
+    )
+    val result = prepareIosSettingsFixture(
+      capture = {
+        captures++
+        if (elapsed < 250) first else moved
+      },
+      aboutVisible = { false },
+      settingsVisible = { true },
+      returnToSettings = {},
+      scrollOnce = { error("already visible") },
+      clockMillis = { elapsed },
+      pause = { elapsed += it },
+    )
+    assertThat(result.selectedBounds).isEqualTo(moved.selectedBounds)
+    assertThat(elapsed).isEqualTo(750L)
+    assertThat(captures).isEqualTo(5)
+  }
+
+  @Test
+  fun `continually moving iOS fixture never becomes ready within the same deadline`() = runTest {
+    var elapsed = 0L
+    var captures = 0
+    assertFailsWith<QualificationUnavailable> {
+      prepareIosSettingsFixture(
+        capture = { iosGeneralFixture().copy(textSelectedBounds = "bounds-${captures++}") },
+        aboutVisible = { false },
+        settingsVisible = { true },
+        returnToSettings = {},
+        scrollOnce = {},
+        clockMillis = { elapsed },
+        pause = { elapsed += it },
+      )
+    }
     assertThat(elapsed).isEqualTo(5000L)
   }
 

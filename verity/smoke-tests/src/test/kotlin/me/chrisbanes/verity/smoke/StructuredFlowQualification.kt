@@ -61,9 +61,13 @@ internal suspend fun awaitFixtureReadiness(
   pause: suspend (Long) -> Unit = { delay(it) },
   budgetMillis: Long = 5_000,
   elapsedOffsetMillis: Long = 0,
+  stableForMillis: Long = 0,
+  initialReady: FixtureProbeSummary? = null,
 ): FixtureProbeSummary {
   val started = clockMillis()
   var last: FixtureProbeSummary
+  var stableSample = initialReady
+  var stableSince = elapsedOffsetMillis
   while (true) {
     val captured = capture()
     val elapsed = elapsedOffsetMillis + (clockMillis() - started).coerceAtLeast(0)
@@ -74,14 +78,25 @@ internal suspend fun awaitFixtureReadiness(
     onSample(last)
     if (elapsed > budgetMillis) throw QualificationUnavailable("Safe Settings fixture readiness exceeded $budgetMillis ms")
     when (last.outcome) {
-      "ready" -> return last
-      "not-ready" -> Unit
+      "ready" -> {
+        if (stableForMillis == 0L) return last
+        if (stableSample == null || !last.sameGeometryAs(stableSample)) stableSince = elapsed
+        stableSample = last
+        if (elapsed - stableSince >= stableForMillis) return last
+      }
+
+      "not-ready" -> stableSample = null
+
       else -> throw QualificationUnavailable("Safe Settings fixture selector unavailable: ${last.outcome}")
     }
     if (elapsed >= budgetMillis) throw QualificationUnavailable("Safe Settings fixture did not become ready within $budgetMillis ms")
     pause(minOf(250L, budgetMillis - elapsed))
   }
 }
+
+private fun FixtureProbeSummary.sameGeometryAs(other: FixtureProbeSummary): Boolean = resourceId == other.resourceId && selectionProof == other.selectionProof &&
+  selectedBounds == other.selectedBounds && textSelectedBounds == other.textSelectedBounds &&
+  idSelectedBounds == other.idSelectedBounds
 
 internal const val IOS_GENERAL_RESOURCE_ID = "com.apple.settings.general"
 
@@ -107,15 +122,27 @@ internal suspend fun prepareIosSettingsFixture(
   )
   onSample(initial)
   if (initialCaptureElapsed > 5_000) throw QualificationUnavailable("Safe iOS Settings fixture readiness exceeded 5000 ms")
-  if (initial.outcome == "ready") return requireIosGeneralFixture(initial)
-  if (initial.outcome != "not-ready") {
+  if (initial.outcome == "ready") requireIosGeneralFixture(initial)
+  if (initial.outcome != "not-ready" && initial.outcome != "ready") {
     throw QualificationUnavailable("Safe iOS Settings fixture selector unavailable: ${initial.outcome}")
   }
   if (initialCaptureElapsed >= 5_000) throw QualificationUnavailable("Safe iOS Settings fixture did not become ready within 5000 ms")
 
-  scrollOnce()
+  if (initial.outcome == "not-ready") scrollOnce()
+  // Settings can relayout the row after its first accessibility snapshot. Admit a tap only
+  // after both SDK-selected text and ID geometry remain unchanged for half a second.
   return requireIosGeneralFixture(
-    awaitFixtureReadiness(capture, onSample, clockMillis, pause, elapsedOffsetMillis = initialCaptureElapsed),
+    awaitFixtureReadiness(
+      capture = {
+        capture().also { if (it.outcome == "ready") requireIosGeneralFixture(it) }
+      },
+      onSample = onSample,
+      clockMillis = clockMillis,
+      pause = pause,
+      elapsedOffsetMillis = initialCaptureElapsed,
+      stableForMillis = 500,
+      initialReady = initial.takeIf { it.outcome == "ready" },
+    ),
   )
 }
 

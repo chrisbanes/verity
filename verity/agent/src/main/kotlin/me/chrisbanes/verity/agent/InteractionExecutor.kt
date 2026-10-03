@@ -1,67 +1,25 @@
 package me.chrisbanes.verity.agent
 
 import me.chrisbanes.verity.core.interaction.Interaction
-import me.chrisbanes.verity.core.model.ActionFlowInvalidReason
-import me.chrisbanes.verity.core.model.InvalidActionFlowException
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.validateActionFlow
 
 class InteractionExecutor(
   private val session: DeviceSession,
   private val appId: String,
 ) {
-
   suspend fun execute(interaction: Interaction) {
-    when (interaction) {
-      is Interaction.KeyPress -> {
-        session.pressKey(interaction.keyName)
-        session.waitForAnimationToEnd()
-        return
-      }
-
-      is Interaction.TapOnText -> executeCommand("- tapOn: ${escapeYaml(interaction.text)}")
-
-      is Interaction.TapOnId -> executeCommand("- tapOn:\n    id: ${escapeYaml(interaction.resourceId)}")
-
-      // Maestro's `scroll` has no direction param (always scrolls down).
-      // Use `swipe` for directional scrolling.
-      is Interaction.Scroll -> executeCommand("- swipe:\n    direction: ${interaction.direction}")
-
-      is Interaction.Swipe -> executeCommand("- swipe:\n    direction: ${interaction.direction}")
-
-      is Interaction.LongPressOnFocused -> executeCommand("- longPressOn:\n    focused: true")
-
-      is Interaction.LongPressOnText -> executeCommand("- longPressOn: ${escapeYaml(interaction.text)}")
-
-      is Interaction.LaunchApp, is Interaction.InputText, Interaction.DefaultScroll,
-      is Interaction.WaitForAnimation, is Interaction.WaitUntilVisible,
-      ->
-        throw InvalidActionFlowException(ActionFlowInvalidReason.UNSUPPORTED_INTERACTION)
-
-      // Pull-to-refresh is a swipe down from near the top
-      Interaction.PullToRefresh -> executeCommand("- swipe:\n    direction: UP")
+    val flow = ActionFlow(appId, listOf(interaction))
+    validateActionFlow(flow)
+    if (interaction is Interaction.KeyPress) {
+      session.pressKey(interaction.keyName)
+    } else {
+      val result = session.executeActions(flow)
+      if (!result.success) throw InteractionExecutionFailure(result)
     }
-    session.waitForAnimationToEnd()
-  }
-
-  private suspend fun executeCommand(command: String) {
-    val result = session.executeFlow("appId: $appId\n---\n$command")
-    if (!result.success) throw InteractionExecutionFailure(result)
-  }
-
-  companion object {
-    /**
-     * Escapes a string for safe use in YAML double-quoted scalars.
-     * Handles backslashes, quotes, newlines, and control characters.
-     */
-    fun escapeYaml(value: String): String {
-      val escaped = value
-        .replace("\\", "\\\\") // Backslash must be first
-        .replace("\"", "\\\"")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-        .replace("\b", "\\b")
-      return "\"$escaped\""
+    if (interaction !is Interaction.WaitForAnimation && interaction !is Interaction.WaitUntilVisible) {
+      session.waitForAnimationToEnd()
     }
   }
 }

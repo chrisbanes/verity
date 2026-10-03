@@ -1,9 +1,11 @@
 package me.chrisbanes.verity.agent
 
 import kotlin.coroutines.cancellation.CancellationException
+import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.InspectionVerdict
@@ -17,6 +19,7 @@ import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.validateActionFlow
 
 /**
  * Runs journeys segment by segment using a subagent pattern.
@@ -32,8 +35,7 @@ class Orchestrator(
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments.
-    // Use bare `- launchApp` which reads appId from the flow header.
-    session.executeFlow("appId: ${journey.app}\n---\n- launchApp")
+    session.executeActions(ActionFlow(journey.app, listOf(Interaction.LaunchApp())))
 
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
@@ -165,10 +167,13 @@ class Orchestrator(
     navigator: NavigatorAgent,
   ) {
     val mapper = InteractionMapper.forPlatform(platform)
-    for (instruction in instructions) {
-      val interaction = checkNotNull(mapper.map(instruction)) {
+    val interactions = instructions.map { instruction ->
+      checkNotNull(mapper.map(instruction)) {
         "Fast-path instruction '$instruction' did not map to an interaction for $platform"
       }
+    }
+    validateActionFlow(ActionFlow(appId, interactions))
+    for (interaction in interactions) {
       executeWithScrollToFind(interaction, appId, navigator)
     }
   }
@@ -226,15 +231,15 @@ class Orchestrator(
     segmentIndex: Int,
     label: String,
   ): SlowPathResult {
-    val yaml = navigator.generate(instructions, appId, platform, context)
+    val selected = navigator.generate(instructions, appId, platform, context)
     val reference = try {
-      artifactRecorder.saveGeneratedFlow(segmentIndex, label, yaml)
+      artifactRecorder.saveGeneratedFlow(segmentIndex, label, ActionFlowYamlRenderer.render(selected))
     } catch (e: CancellationException) {
       throw e
     } catch (_: Exception) {
       null
     }
-    return SlowPathResult(session.executeFlow(yaml), reference)
+    return SlowPathResult(session.executeActions(selected), reference)
   }
 
   private suspend fun executeLoop(

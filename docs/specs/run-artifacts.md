@@ -25,9 +25,9 @@ The output root resolves from `--output-path`, `paths.output`, then `build/verit
 
 Journey keys use a one-based, three-digit index and a slug of the journey name. Segment indexes and slow-path loop-iteration labels are zero-based and padded to three digits in filenames. Artifact references are relative to the run directory; journey identity separately records the input file path.
 
-Generated slow-path action and loop YAML passes canonical Maestro validation before it can be saved or executed. Validated YAML is saved before flow execution when possible. Fast-path interactions are represented by action text and execution mode without manufacturing generated YAML. The static application launch is executed separately and is not currently recorded as a generated segment flow.
+Generated slow-path actions and complete loop bodies are validated as `ActionFlow` lists. The selected object is rendered as YAML and saved before that same object is executed when possible. Fast-path interactions are represented by action text and execution mode without manufacturing generated YAML. The static application launch is executed separately and is not currently recorded as a generated segment flow.
 
-Tree assertions and conditions save the hierarchy used for evaluation; visual assertions and conditions save the screenshot used for evaluation when possible. Loop evidence represents the final evaluated state, not a history of checks. Visible/focused assertions do not persist evidence files. Maestro runner temporary files remain separate from these durable artifacts.
+Tree assertions and conditions save the hierarchy used for evaluation; visual assertions and conditions save the screenshot used for evaluation when possible. Loop evidence represents the final evaluated state, not a history of checks. Visible/focused assertions do not persist evidence files. Internal structured execution creates no Maestro flow temporary files. Public supplied-YAML execution retains its separate temporary-file lifecycle.
 
 ## JSON contract
 
@@ -71,7 +71,7 @@ Temporary-file creation, writing, full-reader/resource resolution, cleanup and a
 
 Generated-flow and evidence writes are optional. A failed optional write may omit its reference or use a temporary screenshot for evaluation; it does not independently fail the journey and does not guarantee an artifact diagnostic in the result. Assertions can still fail on their own verdict or execution error.
 
-Each navigator and inspector request owns a 30-second timeout. Completion reasons `length`, `max_tokens` and `incomplete` are rejected case-insensitively before decoding; blank replies and invalid YAML, directions or verdicts are model failures. Diagnostics contain fixed stage/failure-class text without raw replies, backend exception text, HTTP bodies/headers or raw causes. Authored model diagnostics redact API keys, bearer tokens and JWTs.
+Each navigator and inspector request owns a 30-second timeout. Completion reasons `length`, `max_tokens` and `incomplete` are rejected case-insensitively before decoding; blank replies and invalid action JSON, directions or verdicts are model failures. Diagnostics contain fixed stage/failure-class text without raw replies, backend exception text, HTTP bodies/headers or raw causes. Authored model diagnostics redact API keys, bearer tokens and JWTs.
 
 Caller cancellation and shorter enclosing deadlines propagate without producing completed failure results. An overall wait-deadline expiry remains a wait timeout; a model request that fails before that deadline follows the model-failure contract. The separate smart-planner policy in [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its deterministic fallback. [Dry run](dry-run.md) uses the same navigator model policy through its separate report contract.
 

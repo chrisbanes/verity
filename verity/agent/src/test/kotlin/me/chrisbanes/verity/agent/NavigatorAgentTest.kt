@@ -7,7 +7,6 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
-import java.io.IOException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.test.Test
 import kotlinx.coroutines.TimeoutCancellationException
@@ -15,10 +14,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.core.interaction.Direction
+import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.Platform
-import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
-import me.chrisbanes.verity.device.MaestroFlowValidationPhase
-import me.chrisbanes.verity.device.validateMaestroFlow
+import me.chrisbanes.verity.device.ActionFlowPreparationException
+import me.chrisbanes.verity.device.ActionFlowPreparationPhase
 
 class NavigatorAgentTest {
   @Test
@@ -96,7 +96,7 @@ class NavigatorAgentTest {
       executeRequest = { systemPrompt, userMessage ->
         capturedSystemPrompt = systemPrompt
         capturedUserMessage = userMessage
-        modelReply("```yaml\nappId: com.example.app\n---\n- launchApp\n```")
+        modelReply("```json\n$VALID\n```")
       },
     )
 
@@ -110,8 +110,7 @@ class NavigatorAgentTest {
     assertThat(capturedSystemPrompt).contains("Bundled context")
     assertThat(capturedSystemPrompt).contains("Injected context")
     assertThat(capturedUserMessage).contains("Launch the app")
-    assertThat(result).doesNotContain("```")
-    assertThat(result).contains("appId: com.example.app")
+    assertThat(result).isEqualTo(ActionFlow("com.example.app", listOf(Interaction.LaunchApp())))
   }
 
   @Test fun `truncated otherwise valid navigator reply is a model failure`() = runTest {
@@ -156,16 +155,30 @@ class NavigatorAgentTest {
     }
   }
 
-  @Test fun `flow validator failures remain outside the backend request classification`() = runTest {
-    for (phase in MaestroFlowValidationPhase.entries) {
-      val infrastructure = MaestroFlowValidationInfrastructureException(phase)
+  @Test fun `truncation metadata rejects before structured decoding or validation`() = runTest {
+    var validations = 0
+    val navigator = NavigatorAgent("context", validateFlow = { validations++ }) { _, _ -> modelReply("invalid secret response", "length") }
+    val failure = runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull() as ModelFailureException
+    assertThat(failure.failure).isEqualTo(ModelFailureKind.TRUNCATED)
+    assertThat(validations).isEqualTo(0)
+    assertThat(failure.cause).isNull()
+  }
+
+  @Test fun `local preparation failures remain outside backend classification`() = runTest {
+    for (phase in ActionFlowPreparationPhase.entries) {
+      val infrastructure = ActionFlowPreparationException(phase)
       val navigator = NavigatorAgent("context", validateFlow = { throw infrastructure }) { _, _ -> modelReply(VALID) }
       assertThat(runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull()).isSameInstanceAs(infrastructure)
     }
-    val navigator = NavigatorAgent("context", validateFlow = { validateMaestroFlow(it, writeFlow = { _, _ -> throw IOException(SENTINEL) }) }) { _, _ -> modelReply(VALID) }
-    val error = runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull() as MaestroFlowValidationInfrastructureException
-    assertThat(error.phase).isEqualTo(MaestroFlowValidationPhase.WRITE)
-    assertThat(error.cause).isNull()
+  }
+
+  @Test fun `unsupported generated actions are safe invalid model responses`() = runTest {
+    for (reply in listOf("""{"actions":[{"type":"keyPress","keyName":"not-a-key"}]}""", """{"actions":[{"type":"tapOnText","text":"["}]}""", """{"appId":"other","actions":[]}""")) {
+      val navigator = NavigatorAgent("context") { _, _ -> modelReply(reply) }
+      val failure = runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull() as ModelFailureException
+      assertThat(failure.failure).isEqualTo(ModelFailureKind.INVALID_RESPONSE)
+      assertThat(failure.cause).isNull()
+    }
   }
 
   @Test fun `both navigator requests preserve explicit caller and enclosing timeout cancellation identity`() = runTest {
@@ -198,7 +211,7 @@ class NavigatorAgentTest {
     val marker = Any()
   }
   companion object {
-    const val VALID = "appId: com.example\n---\n- launchApp"
+    const val VALID = """{"actions":[{"type":"launchApp"}]}"""
     const val SENTINEL = "HTTP-RAW-BODY header Bearer danger sk-secret eyJheader.payload.signature"
   }
 }

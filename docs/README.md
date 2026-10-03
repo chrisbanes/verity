@@ -29,3 +29,5 @@ ADRs record durable trade-offs already made by the project. They are retrospecti
 New specs and task plans for proposed work belong in [GitHub Issues](agents/issue-tracker.md). Accepted behavior belongs in these reference specs, terminology in `CONTEXT.md`, and qualifying architecture decisions in `docs/adr/`.
 
 The six completed implementation plans formerly under `docs/superpowers/plans/` are removed. Their task checklists, copied source, and old command sequences remain available in Git history, along with the original designs. The older provider design under `verity/docs/plans/` is outside this migration.
+
+- [Internal structured actions](specs/structured-actions.md): validated action lists for CLI execution and previews; public MCP YAML boundary.

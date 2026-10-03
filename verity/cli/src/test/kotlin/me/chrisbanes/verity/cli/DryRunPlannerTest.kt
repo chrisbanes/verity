@@ -17,17 +17,20 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.modelReply
+import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
-import me.chrisbanes.verity.device.MaestroFlowValidationInfrastructureException
-import me.chrisbanes.verity.device.validateMaestroFlow
+import me.chrisbanes.verity.device.ActionFlowPreparationException
+import me.chrisbanes.verity.device.ActionFlowPreparationPhase
+import me.chrisbanes.verity.device.validateActionFlow
 
 class DryRunPlannerTest {
   @Test
-  fun `new interaction descriptions are pure and do not initialize the unmigrated navigator`() {
+  fun `new interaction descriptions are pure and do not initialize the navigator`() {
     val planner = DryRunPlanner(navigatorFactory = { error("must not initialize navigator") })
     val descriptions = listOf(
       Interaction.LaunchApp(),
@@ -87,7 +90,7 @@ class DryRunPlannerTest {
     val report = planner.plan(resolvedJourney(journey))
 
     assertThat(navigatorCalls).isEqualTo(0)
-    assertThat(report.launchYaml).isEqualTo("appId: com.example.app\n---\n- launchApp")
+    assertThat(report.launchYaml).isEqualTo(ActionFlowYamlRenderer.render(ActionFlow("com.example.app", listOf(Interaction.LaunchApp()))))
     assertThat(report.segments).transform { it.size }.isEqualTo(1)
     val segment = report.segments.single()
     assertThat(segment.index).isEqualTo(0)
@@ -99,6 +102,14 @@ class DryRunPlannerTest {
     assertThat(segment.assertion?.mode).isEqualTo(AssertMode.VISIBLE)
   }
 
+  @Test fun `invalid mapped final action fails setup without provider initialization`() = runTest {
+    val planner = DryRunPlanner(navigatorFactory = { error("must not initialize provider") })
+    val journey = Journey("Invalid", "com.example", Platform.ANDROID_MOBILE, listOf(JourneyStep.Action("Press back"), JourneyStep.Action("Tap [")))
+    val failure = runCatching { planner.plan(resolvedJourney(journey)) }.exceptionOrNull() as CliktError
+    assertThat(failure.statusCode).isEqualTo(3)
+    assertThat(failure.message.orEmpty()).contains("Mapped action preparation failed")
+  }
+
   @Test
   fun `slow path actions include generated yaml`() = runTest {
     val planner = DryRunPlanner(
@@ -108,7 +119,7 @@ class DryRunPlannerTest {
           assertThat(appId).isEqualTo("com.example.app")
           assertThat(platform).isEqualTo(Platform.ANDROID_MOBILE)
           assertThat(context).isEqualTo("project context")
-          "appId: com.example.app\n---\n- tapOn: \"Settings\""
+          ActionFlow(appId, listOf(Interaction.TapOnText("Settings")))
         }
       },
       context = "project context",
@@ -123,7 +134,7 @@ class DryRunPlannerTest {
     val segment = planner.plan(resolvedJourney(journey)).segments.single()
 
     assertThat(segment.actions?.kind).isEqualTo(DryRunExecutionKind.SLOW_PATH)
-    assertThat(segment.actions?.yaml).isEqualTo("appId: com.example.app\n---\n- tapOn: \"Settings\"")
+    assertThat(segment.actions?.yaml).isEqualTo(ActionFlowYamlRenderer.render(ActionFlow("com.example.app", listOf(Interaction.TapOnText("Settings")))))
   }
 
   @Test
@@ -179,7 +190,7 @@ class DryRunPlannerTest {
           assertThat(appId).isEqualTo("com.example.app")
           assertThat(platform).isEqualTo(Platform.ANDROID_MOBILE)
           assertThat(context).isEqualTo("loop context")
-          "appId: com.example.app\n---\n- tapOn: \"Settings\""
+          ActionFlow(appId, listOf(Interaction.TapOnText("Settings")))
         }
       },
       context = "loop context",
@@ -194,7 +205,7 @@ class DryRunPlannerTest {
     val loop = planner.plan(resolvedJourney(journey)).segments.single().loop
 
     assertThat(loop?.kind).isEqualTo(DryRunExecutionKind.SLOW_PATH)
-    assertThat(loop?.yaml).isEqualTo("appId: com.example.app\n---\n- tapOn: \"Settings\"")
+    assertThat(loop?.yaml).isEqualTo(ActionFlowYamlRenderer.render(ActionFlow("com.example.app", listOf(Interaction.TapOnText("Settings")))))
   }
 
   @Test
@@ -364,11 +375,12 @@ class DryRunPlannerTest {
   @Test
   fun `mixed loop body generates one complete body preserving the mapped prefix`() = runTest {
     val generated = mutableListOf<List<String>>()
-    val yaml = "appId: example.app\n---\n- pressKey: Remote Dpad Down\n- tapOn: Settings"
+    val selected = ActionFlow("example.app", listOf(Interaction.KeyPress("Remote Dpad Down"), Interaction.TapOnText("Settings")))
+    val yaml = ActionFlowYamlRenderer.render(selected)
     val planner = DryRunPlanner(navigatorFactory = {
       DryRunNavigator { actions, _, _, _ ->
         generated += actions
-        yaml
+        selected
       }
     })
     val journey = Journey(
@@ -385,25 +397,12 @@ class DryRunPlannerTest {
 
   @Test fun `action and complete loop previews classify every actual navigator failure safely`() = runTest {
     for (loop in listOf(false, true)) {
-      for (type in listOf("request", "timeout", "truncated", "empty", "invalid", "create", "write", "read", "cleanup", "resource", "sdk")) {
-        val navigator = NavigatorAgent("context", validateFlow = { yaml ->
+      for (type in listOf("request", "timeout", "truncated", "empty", "invalid", "compile", "runner")) {
+        val navigator = NavigatorAgent("context", validateFlow = { flow ->
           when (type) {
-            "create" -> validateMaestroFlow(yaml, createTempFile = { throw java.nio.file.AccessDeniedException(previewSentinel) })
-
-            "write" -> validateMaestroFlow(yaml, writeFlow = { _, _ -> throw java.io.IOException(previewSentinel) })
-
-            "read" -> validateMaestroFlow(yaml, readFlow = { throw java.io.IOException(previewSentinel) })
-
-            "cleanup" -> validateMaestroFlow(yaml, deleteFlow = {
-              java.nio.file.Files.delete(it)
-              throw java.io.IOException(previewSentinel)
-            })
-
-            "resource" -> validateMaestroFlow("appId: com.example\n---\n- runFlow: /unavailable/missing-verity.yaml")
-
-            "sdk" -> validateMaestroFlow(yaml, beforeResponseCheck = { throw IllegalStateException(previewSentinel) })
-
-            else -> validateMaestroFlow(yaml)
+            "compile" -> throw ActionFlowPreparationException(ActionFlowPreparationPhase.COMMAND_COMPILATION)
+            "runner" -> throw ActionFlowPreparationException(ActionFlowPreparationPhase.RUNNER_INITIALIZATION)
+            else -> validateActionFlow(flow)
           }
         }) { _, _ ->
           when (type) {
@@ -414,13 +413,13 @@ class DryRunPlannerTest {
               modelReply("unused")
             }
 
-            "truncated" -> modelReply("appId: com.example\n---\n- launchApp", "length")
+            "truncated" -> modelReply("""{"actions":[{"type":"launchApp"}]}""", "length")
 
             "empty" -> modelReply(" ")
 
             "invalid" -> modelReply("appId: com.example\n---\n- tapOn: \"$previewSentinel")
 
-            else -> modelReply("appId: com.example\n---\n- launchApp")
+            else -> modelReply("""{"actions":[{"type":"launchApp"}]}""")
           }
         }
         val planner = DryRunPlanner(navigatorFactory = { DryRunNavigator(navigator::generate) })

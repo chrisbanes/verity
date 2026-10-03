@@ -197,6 +197,17 @@ class ContextLoaderTest {
     assertThat(bundled).contains("TV Remote Controls")
   }
 
+  @Test
+  fun `structured context loads independently of the public YAML reference`() {
+    val actions = ContextLoader.loadBundledActions()
+    assertThat(actions).contains("Structured action reference")
+    assertThat(actions).contains("waitUntilVisible")
+    assertThat(actions.contains("Maestro YAML Reference")).isFalse()
+    val publicContext = ContextLoader.loadBundled()
+    assertThat(publicContext).contains("Maestro YAML Reference")
+    assertThat(publicContext.contains("Structured action reference")).isFalse()
+  }
+
   private fun createTempContextDir(vararg files: Pair<String, String>): File {
     val dir = kotlin.io.path.createTempDirectory("context-test").toFile()
     for ((name, content) in files) {

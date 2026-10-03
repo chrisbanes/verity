@@ -2,10 +2,10 @@
 
 Verity is a Kotlin/JVM tool that combines device automation (Maestro SDK) with LLM reasoning (via Koog) to run end-to-end journey tests on Android TV, Android mobile, and iOS devices. It operates in two modes:
 
-1. **CLI mode** (`verity run`) — Executes journey YAML files against a connected device, using LLMs to generate Maestro flows and evaluate assertions. `verity run --dry-run` parses, segments, renders fast-path actions, and generates slow-path Maestro YAML without device access.
+1. **CLI mode** (`verity run`) — Executes journey YAML files against a connected device, using LLMs to generate structured actions and evaluate assertions. `verity run --dry-run` parses, segments, and renders mapped or generated actions as YAML without device access.
 2. **MCP server mode** (`verity mcp`) — Exposes device control as MCP tools so an AI agent can interactively drive the device.
 
-LLMs serve two purposes: flow generation (turning English into Maestro YAML) and assertion evaluation (judging whether screen state matches an expectation). Deterministic interactions and assertions bypass those calls when possible.
+LLMs serve two purposes: action generation (turning English into a validated ordered action list) and assertion evaluation (judging whether screen state matches an expectation). Deterministic interactions and assertions bypass those calls when possible.
 
 Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation index](README.md) for behavior specs and ADRs. This file describes module ownership and execution; the specs hold detailed command and result contracts.
 
@@ -176,7 +176,7 @@ Each segment is a natural checkpoint: run actions, evaluate assertion, stop on f
 
 ### Dry-Run Planning
 
-Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate Maestro YAML. Assertions are reported without evaluation.
+Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate structured actions, which the preview renders as Maestro YAML. Assertions are reported without evaluation.
 
 Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator` or the inspector. Slow-path generation uses the navigator request and validation policy below. The entire suite is planned before Markdown writing: model failures exit `5`, while provider/context setup, local validation and required report-writing failures exit `3`, without a partial successful report or normal result JSON. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
 
@@ -190,6 +190,7 @@ Loop preview renders all mapped body interactions or one complete generated body
 interface DeviceSession : AutoCloseable {
     val platform: Platform
 
+    suspend fun executeActions(flow: ActionFlow): FlowResult
     suspend fun executeFlow(yaml: String): FlowResult
     suspend fun pressKey(keyName: String)
     suspend fun captureHierarchyTree(): HierarchyNode          // abstract
@@ -208,6 +209,12 @@ interface DeviceSession : AutoCloseable {
     suspend fun restoreAnimationState(state: AnimationState)
 }
 ```
+
+### Structured execution
+
+`ActionFlow` owns the app ID and complete ordered `Interaction` list. Core validates its schema and renders YAML for previews and saved artifacts. The device layer validates SDK keys and compiles the entire list to Maestro commands before any driver operation. Each list starts with app configuration; `LaunchApp` retains the caller's optional `clearState` value. No YAML file or parser participates in internal execution.
+
+Android and iOS execute those commands through the existing Orchestra and driver connections. Runtime command failure returns the existing `FlowResult`; local preparation failures propagate separately, and caller cancellation remains cancellation. Supplied YAML continues through `executeFlow(String)` for MCP callers, using the canonical reader and temporary-file lifecycle. See [structured actions](specs/structured-actions.md).
 
 ### Implementations
 
@@ -284,7 +291,7 @@ Verity uses a tiered model strategy via Koog. While Claude models are the recomm
 
 | Tier | Task | Suggested Models |
 |------|------|------------------|
-| **Navigator** (Cheap) | YAML generation | `claude-haiku-4-5`, `gemini-3.0-flash`, `gpt-5-mini` |
+| **Navigator** (Cheap) | Structured action generation | `claude-haiku-4-5`, `gemini-3.0-flash`, `gpt-5-mini` |
 | **Inspector** (Capable) | Assertion evaluation | `claude-sonnet-4-6`, `gemini-3.1-pro`, `gpt-5.4` |
 
 Configured through Koog — can swap providers by updating the executor and model ID.
@@ -293,11 +300,11 @@ The Google provider defaults to `gemini-2.5-flash-lite` for navigation and `gemi
 
 ### NavigatorAgent
 
-Converts natural language actions to Maestro YAML through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
+Converts natural language actions to an `ActionFlow` through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
 
-System prompt instructs: generate only valid Maestro YAML, no explanation, add `waitForAnimationToEnd` after navigation, use `extendedWaitUntil` for content that needs loading time.
+The system prompt requires a strict JSON object containing only an ordered `actions` array. The requested app ID supplies the flow context. Internal bundled guidance describes the supported action schema; app-specific context remains additive. Navigation uses `waitForAnimation`, and content readiness uses `waitUntilVisible`.
 
-After completion metadata is checked, generated YAML is validated with the canonical Maestro parser before the navigator returns it for saving, execution or preview. Malformed model syntax is a model failure. Temporary-file I/O, missing referenced resources and ambiguous SDK faults are safe local validation failures and exit `3`; successful validation does not execute the flow or contact a device. Existing nested-flow, script and media references remain supported.
+After completion metadata is checked, the navigator decodes the complete action list and validates it through the device-free command compiler. Unknown fields/types, malformed selectors, unsupported keys and invalid waits are model failures (exit `5`). Local command preparation or runner initialisation failures remain setup failures (exit `3`). Validation has no device or filesystem effects. Generated actions exclude scripts, nested flows, media, arbitrary configuration, coordinates, screenshots and assertions. Public supplied-YAML execution retains the canonical Maestro parser and its supported references.
 
 Scroll suggestions accept only a trimmed, case-insensitive `UP`, `DOWN`, `LEFT`, `RIGHT` or `NONE`. A valid `NONE` keeps the ordinary navigation outcome. Explanations or unknown directions are invalid responses, and a failed scroll request stops before fallback interaction or later work.
 
@@ -324,8 +331,8 @@ Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, bac
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
 
 **Action execution (two paths):**
-- Fast path: all actions map via `InteractionMapper` → `InteractionExecutor`, with scroll-to-find reasoning for off-screen named targets
-- Slow path: `NavigatorAgent` generates Maestro YAML → `executeFlow()`
+- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses keep the direct device path; other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets.
+- Slow path: `NavigatorAgent` returns a validated `ActionFlow`; that same object is rendered for an optional YAML artifact, then passed to `executeActions()`.
 
 **Assertion evaluation (four modes):**
 
@@ -478,7 +485,7 @@ Orchestrator.run() loops over segments:
     │
     ├── Actions present?
     │   ├── All map to interactions? → InteractionExecutor
-    │   └── Otherwise → NavigatorAgent → executeFlow()
+    │   └── Otherwise → NavigatorAgent → ActionFlow → executeActions()
     │
     ├── Assertion present?
     │   ├── VISIBLE → containsText()

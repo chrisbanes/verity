@@ -12,11 +12,11 @@ The planner belongs to the CLI and uses segmentation and interaction mapping dir
 
 ## Generated content
 
-The report includes the static application-launch YAML and each segment's actions, loop, and assertion when present. Fully mappable action groups show their interaction descriptions. Other groups invoke the navigator to generate Maestro YAML. A loop shows its action, condition, and maximum repetitions; a mapped loop shows every interaction in body order, and a slow-path loop includes one generated YAML flow for the complete body. Execution and preview consume the same core-derived semicolon instructions. Conditions, including a `visually` prefix, are reported without capture or evaluation; see [loop conditions](loop-conditions.md).
+The report includes the static application-launch YAML and each segment's actions, loop, and assertion when present. Fully mappable action groups show their interaction descriptions. Other groups invoke the navigator to generate validated structured actions, then render that selected list as Maestro YAML. A loop shows its action, condition, and maximum repetitions; a mapped loop shows every interaction in body order, and a slow-path loop includes one generated YAML flow for the complete body. Execution and preview consume the same core-derived semicolon instructions. Conditions, including a `visually` prefix, are reported without capture or evaluation; see [loop conditions](loop-conditions.md).
 
-Navigator creation and provider/navigator-model/credential preflight are deferred until generated YAML is needed. Fast-path-only suites require neither a valid provider configuration nor credentials. Inspector models are not validated because assertions are not evaluated. Slow-path planning may therefore make LLM calls and incur provider costs.
+Navigator creation and provider/navigator-model/credential preflight are deferred until generated actions are needed. Fast-path-only suites require neither a valid provider configuration nor credentials. Inspector models are not validated because assertions are not evaluated. Slow-path planning may therefore make LLM calls and incur provider costs.
 
-Generated action and complete-loop YAML passes canonical Maestro validation before it enters the report. Validation does not execute the flow or open a device session.
+Mapped groups and generated complete action lists pass the device-free command compiler before entering the report. Generated lists are decoded from strict JSON and rendered as YAML only for the preview. Validation performs no filesystem or device operations.
 
 Generation failures identify the journey file, segment and fixed model stage/failure class. All journeys are planned before report writing starts, so a generation failure stops later planning and does not produce a new partial report marked as successful.
 
@@ -41,7 +41,7 @@ Current input resolution also creates a timestamped directory under `<output-pat
 | `3` | Configuration/provider/model/context setup, local flow validation or required Markdown writing failed |
 | `5` | Slow-path navigator action or complete-loop generation had a model failure |
 
-Navigator generation shares the execution request policy: a request-owned 30-second timeout, failed request, known case-insensitive truncation reasons (`length`, `max_tokens`, `incomplete`), empty text and invalid YAML all produce a model failure. Metadata is checked before parsing. Raw model replies, backend exception text, HTTP bodies/headers and raw causes never enter the error report; fixed diagnostics and redacted authored text retain journey/segment context.
+Navigator generation shares the execution request policy: a request-owned 30-second timeout, failed request, known case-insensitive truncation reasons (`length`, `max_tokens`, `incomplete`), empty text and invalid action JSON all produce a model failure. Metadata is checked before parsing. Raw model replies, backend exception text, HTTP bodies/headers and raw causes never enter the error report; fixed diagnostics and redacted authored text retain journey/segment context.
 
 Provider/navigator creation occurs outside the generation failure boundary. Invalid provider/model configuration, required context, temporary-file I/O, missing referenced resources, cleanup and ambiguous SDK validation faults remain setup failures with exit `3`. Required Markdown writing also exits `3`. These preview failures do not create normal journey-result JSON or a suite summary.
 
