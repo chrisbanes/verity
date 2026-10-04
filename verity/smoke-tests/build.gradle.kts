@@ -71,6 +71,12 @@ dependencies {
   add(packagedRuntime.name, project(path = ":verity:cli", configuration = "packagedUniversal"))
 }
 val universalJar = packagedRuntime.elements.map { it.single().asFile }
+tasks.test {
+  inputs.file(universalJar).withPropertyName("packagedCliOptionArchive")
+  val archive = universalJar
+  doFirst { systemProperty("verity.packaged.cli.options.jar", archive.get().absolutePath) }
+}
+
 val smokeRuntime = configurations.testRuntimeClasspath
 val verifySmokeGrpc = tasks.register<VerifyPackagedGrpc>("verifySmokeGrpc") {
   grpcArtifacts.from(

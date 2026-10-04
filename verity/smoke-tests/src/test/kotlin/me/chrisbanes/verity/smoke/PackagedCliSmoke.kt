@@ -79,6 +79,8 @@ class PackagedIosSmoke {
   fun iosVariants() = packagedVariants(Platform.IOS)
 }
 
+private val Platform.cliArgument: String get() = name
+
 private val Platform.wireName: String get() = when (this) {
   Platform.ANDROID_MOBILE -> "android"
   Platform.ANDROID_TV -> "android-tv"
@@ -193,7 +195,7 @@ private class PackagedQualification {
         fixtures.mkdirs()
         File(fixtures, "settings.journey.yaml").writeText(packagedJourney(platform))
       }
-      val options = listOf("-jar", jar.absolutePath, "--provider", "ollama", "--api-key", endpoint, "--platform", platform.wireName, "--device", target, "--output-path", output.path)
+      val options = listOf("-jar", jar.absolutePath, "--provider", "ollama", "--api-key", endpoint, "--platform", platform.cliArgument, "--device", target, "--output-path", output.path)
       val help = start(directory, owned, "help", listOf("-jar", jar.absolutePath, "--help"))
       withTimeout(30_000) { awaitSuccess(help) }
       check(withContext(Dispatchers.IO) { help.stdout.readText().contains("Usage:") })
@@ -467,6 +469,65 @@ private class PackagedChild(val process: Process, val stdout: File, val stderr: 
     }
     check(!process.isAlive && descendants.none { it.isAlive }) { "Owned process tree remains alive" }
     if (scratch != null && scratch.exists()) check(scratch.deleteRecursively()) { "Owned temporary payload cleanup failed" }
+  }
+}
+
+/** Exercises the actual packaged CLI parser/list path without device or model work. */
+class PackagedCliPlatformOptionTest {
+  @Test
+  fun `CLI enum names list and distinct wire aliases fail without devices or models`() = runTest {
+    withContext(Dispatchers.IO) {
+      val jar = File(checkNotNull(System.getProperty("verity.packaged.cli.options.jar")))
+      check(jar.isFile)
+      val directory = Files.createTempDirectory("packaged-cli-platform-options").toFile()
+      val requests = AtomicInteger()
+      val trap = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+        createContext("/") { exchange ->
+          requests.incrementAndGet()
+          exchange.sendResponseHeaders(500, -1)
+          exchange.close()
+        }
+        start()
+      }
+      try {
+        val journeys = File(directory, "journeys").apply { mkdirs() }
+        File(journeys, "settings.journey.yaml").writeText(packagedJourney(Platform.ANDROID_MOBILE))
+        for (platform in Platform.entries) {
+          // Clikt enum parsing accepts case-only IOS/ios; Android wire names differ semantically.
+          val arguments = listOf(platform.cliArgument to true, platform.wireName to (platform == Platform.IOS)) +
+            if (platform == Platform.IOS) listOf("ios-simulator" to false) else emptyList()
+          for ((argument, accepted) in arguments) {
+            val label = argument + if (accepted) "-accepted" else "-rejected"
+            val stdout = File(directory, "$label.stdout")
+            val stderr = File(directory, "$label.stderr")
+            val process = ProcessBuilder(
+              File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m", "-jar", jar.absolutePath,
+              "--provider", "ollama", "--api-key", "http://127.0.0.1:${trap.address.port}",
+              "--platform", argument, "--device", "fixture-no-native-device",
+              "list", "--path", journeys.absolutePath,
+            ).directory(directory).redirectOutput(stdout).redirectError(stderr).start()
+            val child = PackagedChild(process, stdout, stderr)
+            try {
+              check(process.waitFor(30, TimeUnit.SECONDS)) { "CLI option/list fixture timed out" }
+              if (accepted) {
+                assertThat(process.exitValue()).isEqualTo(0)
+                assertThat(stdout.readText().contains("Settings visible")).isTrue()
+              } else {
+                assertThat(process.exitValue() != 0).isTrue()
+                assertThat(stderr.readText().contains("invalid value for --platform")).isTrue()
+              }
+            } finally {
+              child.stop()
+              assertThat(child.aliveOwnedCount()).isEqualTo(0)
+            }
+          }
+        }
+        assertThat(requests.get()).isEqualTo(0)
+      } finally {
+        trap.stop(0)
+        check(directory.deleteRecursively())
+      }
+    }
   }
 }
 
