@@ -34,7 +34,7 @@ jobs:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Build
-        run: ./gradlew build --no-scan
+        run: ./gradlew build --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
   smoke-android:
     runs-on: ubuntu-latest
@@ -56,7 +56,7 @@ jobs:
           uname -s
           uname -m
           python3 -c 'import platform; assert platform.system() == "Linux" and platform.machine() == "x86_64"'
-          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan
+          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Enable KVM
         run: |
@@ -84,8 +84,8 @@ jobs:
             receipt.parent.mkdir(parents=True, exist_ok=True);
             receipt.write_text(json.dumps(dict(target=online[0], kind="android", host=platform.system(), arch=platform.machine(), run=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"], job=os.environ["GITHUB_JOB"], head=os.environ["GITHUB_SHA"])));
             os.environ["VERITY_PACKAGED_TARGET_RECEIPT"] = str(receipt.resolve());
-            subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=linux-x86_64,universal", "--rerun-tasks", "--no-scan"], check=True);
-            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:test", "-Pinclude.tags=android", "--rerun-tasks", "--no-scan"]).returncode)'
+            subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=linux-x86_64,universal", "--rerun-tasks", "--no-scan", "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"], check=True);
+            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:test", "-Pinclude.tags=android", "--rerun-tasks", "--no-scan", "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"]).returncode)'
 
       - name: Retain Android smoke results
         if: always()
@@ -122,11 +122,12 @@ jobs:
           uname -s
           uname -m
           python3 -c 'import platform; assert platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")'
-          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan
+          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Set up Android SDK on macOS
         uses: android-actions/setup-android@v3
         with:
+          packages: platform-tools
           log-accepted-android-sdk-licenses: false
 
       - name: Verify Android SDK tools
@@ -151,7 +152,7 @@ jobs:
             receipt.parent.mkdir(parents=True, exist_ok=True);
             receipt.write_text(json.dumps(dict(target=online[0], kind="android", host=platform.system(), arch=platform.machine(), run=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"], job=os.environ["GITHUB_JOB"], head=os.environ["GITHUB_SHA"])));
             os.environ["VERITY_PACKAGED_TARGET_RECEIPT"] = str(receipt.resolve());
-            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=macos-aarch64,universal", "--rerun-tasks", "--no-scan"]).returncode)'
+            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=macos-aarch64,universal", "--rerun-tasks", "--no-scan", "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"]).returncode)'
 
       - name: Create job-owned iOS simulator
         run: |
@@ -211,8 +212,8 @@ jobs:
           VERITY_SMOKE_IOS_MODEL: iPhone 17
           VERITY_SMOKE_IOS_RUNTIME: "27"
         run: |
-          ./gradlew :verity:smoke-tests:packagedIosTest -PpackagedVariant=macos-aarch64,universal --rerun-tasks --no-scan
-          ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan
+          ./gradlew :verity:smoke-tests:packagedIosTest -PpackagedVariant=macos-aarch64,universal --rerun-tasks --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Clean up job-owned iOS simulator
         if: always()
