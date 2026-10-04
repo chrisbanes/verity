@@ -11,7 +11,8 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyNode
  */
 object XcTestTreeConverter {
 
-  fun convert(element: AXElement): HierarchyNode {
+  fun convert(element: AXElement, checkpoint: () -> Unit = {}): HierarchyNode {
+    checkpoint()
     val attributes = buildMap<String, String> {
       if (element.label.isNotEmpty()) put("text", element.label)
       element.value?.takeIf { it.isNotEmpty() }?.let { put("value", it) }
@@ -28,7 +29,7 @@ object XcTestTreeConverter {
     return HierarchyNode(
       attributes = attributes,
       states = states,
-      children = element.children.map { convert(it) },
+      children = element.children.map { convert(it, checkpoint) },
     )
   }
 }

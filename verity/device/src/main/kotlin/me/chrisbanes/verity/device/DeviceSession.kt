@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.device
 
 import java.nio.file.Path
+import kotlin.time.Duration
 import me.chrisbanes.verity.core.hierarchy.FocusDetector
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
@@ -53,6 +54,12 @@ interface DeviceSession : AutoCloseable {
   /** Capture the accessibility tree as a [HierarchyNode]. */
   suspend fun captureHierarchyTree(): HierarchyNode
 
+  /** Complete capture within a positive finite budget, supported only by cooperative sessions. */
+  suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+    require(timeout.isPositive() && timeout.isFinite()) { "Capture timeout must be positive and finite" }
+    throw UnsupportedOperationException("This session does not support bounded hierarchy capture")
+  }
+
   /** Capture and render the accessibility tree as indented text. */
   suspend fun captureHierarchy(
     filter: HierarchyFilter = HierarchyFilter.CONTENT,
@@ -94,3 +101,6 @@ interface DeviceSession : AutoCloseable {
 
   suspend fun restoreAnimationState(state: AnimationState) = Unit
 }
+
+/** A capture exhausted its owned complete-capture budget. */
+internal class HierarchyCaptureTimeoutException : kotlinx.coroutines.CancellationException("Hierarchy capture deadline expired")

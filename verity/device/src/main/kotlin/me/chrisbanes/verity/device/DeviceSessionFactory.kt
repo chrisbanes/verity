@@ -20,11 +20,14 @@ import maestro.drivers.AndroidDriver
 import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
+import me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 import util.IOSDeviceType
+import xcuitest.XCTestClient
 import xcuitest.XCTestDriverClient
 import xcuitest.installer.Context
 import xcuitest.installer.LocalXCTestInstaller
+import xcuitest.installer.XCTestInstaller
 
 /**
  * Creates [DeviceSession] instances with auto-discovery and animation management.
@@ -130,7 +133,8 @@ object DeviceSessionFactory {
       ),
       deviceController = simctlDevice,
     )
-    val driverClient = XCTestDriverClient(installer)
+    val endpoint = RecordingXCTestInstaller(installer)
+    val driverClient = XCTestDriverClient(endpoint)
     val xcTestDevice = XCTestIOSDevice(
       deviceId = resolvedId,
       client = driverClient,
@@ -144,7 +148,8 @@ object DeviceSessionFactory {
 
     val driver = IOSDriver(iosDevice)
     val maestro = Maestro.ios(driver, openDriver = true)
-    return IosDeviceSession(maestro, iosDevice, onCommandStart)
+    val capture = BoundedIosHierarchyCapture(endpoint = { endpoint.current() })
+    return IosDeviceSession(maestro, iosDevice, onCommandStart, capture::capture)
   }
 
   private suspend fun discoverBootedIosSimulatorIds(): List<String> = withContext(Dispatchers.IO) {
@@ -194,4 +199,11 @@ private class AnimationRestoringSession(
       delegate.close()
     }
   }
+}
+
+/** Records only main-owned starts; observation reads never affect installer lifecycle. */
+internal class RecordingXCTestInstaller(private val delegate: XCTestInstaller) : XCTestInstaller by delegate {
+  @Volatile private var endpoint: XCTestClient? = null
+  override fun start(): XCTestClient = delegate.start().also { endpoint = it }
+  fun current(): XCTestClient = checkNotNull(endpoint) { "Main XCTest endpoint has not started" }
 }

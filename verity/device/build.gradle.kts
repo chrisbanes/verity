@@ -18,6 +18,9 @@ dependencies {
   // iOS device
   implementation(libs.maestro.ios.driver)
   implementation(libs.maestro.ios)
+  implementation(libs.okhttp)
+  implementation(libs.jackson.core)
+  implementation(libs.jackson.databind)
 
   // gRPC with shaded Netty to avoid Ktor conflict
   implementation(libs.grpc.netty.shaded)
@@ -42,5 +45,17 @@ configurations.all {
     force("io.grpc:grpc-core:$grpcVersion")
     force("io.grpc:grpc-api:$grpcVersion")
     force("io.grpc:grpc-context:$grpcVersion")
+  }
+}
+
+// The fixed offline full-capture proof is bounded to the approved heap ceiling.
+tasks.withType<Test>().configureEach {
+  maxHeapSize = "512m"
+  useJUnitPlatform {
+    if (providers.gradleProperty("include.tags").orNull == "ios-bounded-proof") {
+      includeTags("ios-bounded-proof")
+    } else {
+      excludeTags("ios-bounded-proof")
+    }
   }
 }

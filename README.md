@@ -73,3 +73,7 @@ Minimal path to verify real-device integration:
 4. **Check visibility** — call `check_visible` with `text: <visible UI text>`
 5. **Capture hierarchy** — call `capture_hierarchy` with `filter: content` and verify the tree renders
 6. **Close session** — call `close_session` and verify device state is restored
+
+### Wait for focus after an MCP action
+
+Both `press_key` and `run_flow` support `await_focus_change: true` and optional `focus_timeout_ms` (default 2,000). For example, pass `{"session_id":"<id>","key":"DPAD_DOWN","await_focus_change":true,"focus_timeout_ms":2000}` to `press_key`. The JSON response preserves the action outcome and reports the observed focus change or timeout, elapsed wait and focused path/resource evidence. See [focus-change waiting](docs/specs/focus-change-waiting.md) for errors, identity rules and flow-level observation limits.

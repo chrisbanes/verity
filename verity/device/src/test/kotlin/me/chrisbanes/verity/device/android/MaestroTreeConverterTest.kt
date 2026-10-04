@@ -10,6 +10,29 @@ import maestro.TreeNode
 
 class MaestroTreeConverterTest {
   @Test
+  fun `checkpoint stops at nested child before later siblings are read`() {
+    val read = mutableListOf<String>()
+    fun node(name: String, children: List<TreeNode> = emptyList()): TreeNode {
+      val values = mutableMapOf("text" to name)
+      val tracked = object : MutableMap<String, String> by values {
+        override val entries: MutableSet<MutableMap.MutableEntry<String, String>>
+          get() {
+            read += name
+            return values.entries
+          }
+      }
+      return TreeNode(attributes = tracked, children = children)
+    }
+    val root = node("root", listOf(node("first", listOf(node("nested"))), node("later")))
+    var visited = 0
+    val stop = IllegalStateException("nested checkpoint")
+    val failure = runCatching { MaestroTreeConverter.convert(root) { if (++visited == 3) throw stop } }.exceptionOrNull()
+    assertThat(failure === stop).isEqualTo(true)
+    assertThat(visited).isEqualTo(3)
+    assertThat(read).isEqualTo(listOf("root", "first"))
+  }
+
+  @Test
   fun `converts empty TreeNode`() {
     val node = TreeNode()
     val result = MaestroTreeConverter.convert(node)

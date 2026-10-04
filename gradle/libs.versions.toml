@@ -10,6 +10,8 @@ ktor = "3.6.0"
 maestro-client = "2.11.0"
 maestro-ios = "2.11.0"
 dadb = "2.0.0"
+okhttp = "4.12.0"
+jackson = "2.17.1"
 mcp-kotlin = "0.15.0"
 grpc = "1.84.0"
 grpc-kotlin = "1.5.0"
@@ -41,6 +43,9 @@ maestro-client = { module = "dev.mobile:maestro-client", version.ref = "maestro-
 maestro-orchestra = { module = "dev.mobile:maestro-orchestra", version.ref = "maestro-client" }
 maestro-ios-driver = { module = "dev.mobile:maestro-ios-driver", version.ref = "maestro-ios" }
 maestro-ios = { module = "dev.mobile:maestro-ios", version.ref = "maestro-ios" }
+jackson-core = { module = "com.fasterxml.jackson.core:jackson-core", version.ref = "jackson" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 dadb = { module = "dev.mobile:dadb", version.ref = "dadb" }
 mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = "mcp-kotlin" }
 grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc-netty-shaded" }

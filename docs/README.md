@@ -14,6 +14,7 @@ These specs describe implemented behavior and point to its source and tests. The
 | [Project context](specs/project-context.md) | Optional/required context, loaded files, and MCP responses | 2026-07-07-project-context-validation-design.md, issue #47 |
 | [Dry run](specs/dry-run.md) | Device-free preview, lazy generation, and Markdown reports | 2026-07-08-dry-run-mode-design.md |
 | [Hierarchy snapshot diff](specs/hierarchy-snapshot-diff.md) | MCP capture ordering, structural comparison, focus summaries and bounded JSON | Issue #51 |
+| [Focus-change waiting](specs/focus-change-waiting.md) | Reusable focus identities, serial deadlines and both MCP action results | Issue #53 |
 | [Loop conditions](specs/loop-conditions.md) | Semantic tiers, complete bodies, limits and model failures | Issue #88 |
 | [Run artifacts](specs/run-artifacts.md) | Result schema, artifact layout, evidence, and CI exit codes | 2026-07-08-suite-artifacts-design.md, issue #49 |
 

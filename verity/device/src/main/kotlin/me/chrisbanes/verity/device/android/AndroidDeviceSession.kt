@@ -1,8 +1,12 @@
 package me.chrisbanes.verity.device.android
 
 import java.nio.file.Path
+import kotlin.time.Duration
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import maestro.KeyCode
 import maestro.Maestro
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
@@ -10,6 +14,7 @@ import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.HierarchyCaptureTimeoutException
 import me.chrisbanes.verity.device.executeMaestroActions
 import me.chrisbanes.verity.device.executeMaestroFlow
 
@@ -43,6 +48,38 @@ class AndroidDeviceSession(
   override suspend fun captureHierarchyTree(): HierarchyNode = withContext(Dispatchers.IO) {
     val hierarchy = maestro.viewHierarchy(false)
     MaestroTreeConverter.convert(hierarchy.root)
+  }
+
+  override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+    require(timeout.isPositive() && timeout.isFinite()) { "Capture timeout must be positive and finite" }
+    val started = System.nanoTime()
+    val parent = currentCoroutineContext()
+    val tree = try {
+      withTimeoutOrNull(timeout) {
+        withContext(Dispatchers.IO) {
+          val context = currentCoroutineContext()
+          fun checkpoint() {
+            context.ensureActive()
+            if (System.nanoTime() - started >= timeout.inWholeNanoseconds) throw HierarchyCaptureTimeoutException()
+          }
+          checkpoint()
+          val hierarchy = try {
+            maestro.viewHierarchy(false)
+          } catch (failure: Throwable) {
+            checkpoint()
+            throw failure
+          }
+          checkpoint()
+          MaestroTreeConverter.convert(hierarchy.root, ::checkpoint).also { checkpoint() }
+        }
+      }
+    } catch (failure: Throwable) {
+      parent.ensureActive()
+      throw failure
+    }
+    parent.ensureActive()
+    if (System.nanoTime() - started >= timeout.inWholeNanoseconds) throw HierarchyCaptureTimeoutException()
+    return tree ?: throw HierarchyCaptureTimeoutException()
   }
 
   @Suppress("DEPRECATION")
