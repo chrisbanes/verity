@@ -3,6 +3,13 @@ package me.chrisbanes.verity.agent
 import ai.koog.prompt.message.Message
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Only these diagnostics may leave a model request boundary. Never retain a raw cause. */
@@ -33,18 +40,58 @@ fun redactModelDiagnostic(message: String): String = message
   .replace(Regex("""(?i)(api[_-]?key\s*[:=]\s*)[^\s,;]+"""), "$1[redacted]")
 
 /** Only the backend callback is inside request-failure conversion. Decoding and I/O stay outside. */
-internal suspend fun requestModelText(stage: ModelRequestStage, execute: suspend () -> Message.Assistant): String {
-  val response = try {
-    withTimeoutOrNull(30.seconds) { execute() }
-  } catch (error: CancellationException) {
-    throw error
-  } catch (_: Exception) {
-    throw ModelFailureException(stage, ModelFailureKind.REQUEST)
-  } ?: throw ModelFailureException(stage, ModelFailureKind.TIMEOUT)
-  if (response.finishReason?.lowercase() in setOf("length", "max_tokens", "incomplete")) {
-    throw ModelFailureException(stage, ModelFailureKind.TRUNCATED)
+internal suspend fun requestModelText(stage: ModelRequestStage, execute: suspend () -> Message.Assistant): String = requestModelText(stage, null, execute)
+
+internal suspend fun requestModelText(
+  stage: ModelRequestStage,
+  onFailure: ((ModelFailureException) -> Unit)?,
+  execute: suspend () -> Message.Assistant,
+): String {
+  try {
+    val response = try {
+      if (onFailure == null) withTimeoutOrNull(30.seconds) { execute() } else observedRequest(stage, onFailure, execute)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (failure: ModelFailureException) {
+      throw failure
+    } catch (_: Exception) {
+      throw ModelFailureException(stage, ModelFailureKind.REQUEST)
+    } ?: throw ModelFailureException(stage, ModelFailureKind.TIMEOUT)
+    if (response.finishReason?.lowercase() in setOf("length", "max_tokens", "incomplete")) {
+      throw ModelFailureException(stage, ModelFailureKind.TRUNCATED)
+    }
+    val text = response.textContent()
+    if (text.isBlank()) throw ModelFailureException(stage, ModelFailureKind.EMPTY)
+    return text
+  } catch (failure: ModelFailureException) {
+    onFailure?.invoke(failure)
+    throw failure
   }
-  val text = response.textContent()
-  if (text.isBlank()) throw ModelFailureException(stage, ModelFailureKind.EMPTY)
-  return text
+}
+
+private class OwnedModelTimeout : CancellationException("Owned model request deadline expired")
+
+/** Record our timer before joining a callback whose cancellation cleanup may suspend. */
+private suspend fun observedRequest(
+  stage: ModelRequestStage,
+  onFailure: (ModelFailureException) -> Unit,
+  execute: suspend () -> Message.Assistant,
+): Message.Assistant = supervisorScope {
+  val request = async { execute() }
+  val failure = ModelFailureException(stage, ModelFailureKind.TIMEOUT)
+  val timer = launch {
+    delay(30.seconds)
+    onFailure(failure)
+    request.cancel(OwnedModelTimeout())
+  }
+  try {
+    request.await()
+  } catch (owned: OwnedModelTimeout) {
+    throw failure
+  } finally {
+    withContext(NonCancellable) {
+      timer.cancelAndJoin()
+      request.cancelAndJoin()
+    }
+  }
 }
