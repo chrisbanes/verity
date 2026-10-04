@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.cli
 
 import ai.koog.prompt.dsl.prompt
+import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
@@ -36,12 +37,15 @@ import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ArtifactStatus
 import me.chrisbanes.verity.core.result.AssertionArtifact
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
 import me.chrisbanes.verity.core.result.JourneyArtifactResult
 import me.chrisbanes.verity.core.result.SegmentArtifactResult
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.ActionFlowPreparationException
+import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.DeviceSessionFactory
 
 private const val EXIT_INPUT = 2
@@ -63,6 +67,8 @@ data class RunArtifactMetadata(
   val provider: String,
   val navigatorModel: String,
   val inspectorModel: String,
+  val navigatorEffort: EffortArtifactSetting = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
+  val inspectorEffort: EffortArtifactSetting = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
 )
 
 data class SuiteRunResult(
@@ -91,6 +97,12 @@ class RunCommand(
   private val writeJourneyResult: suspend (RunArtifactDirectory, String, JourneyArtifactResult) -> Unit = { runArtifacts, path, result ->
     runArtifacts.writeJourneyResult(path, result)
   },
+  private val preflightChecker: suspend (CliPreflightRequest, VerityConfig, Boolean, Boolean) -> CliPreflightResult =
+    { request, config, includeDevice, includeInspector ->
+      CliPreflightChecker().check(request, config, includeDevice, includeInspector)
+    },
+  private val sessionFactory: suspend (Platform, String?, Boolean) -> DeviceSession = DeviceSessionFactory::connect,
+  private val clientFactory: (VerityProvider, String) -> LLMClient = { provider, apiKey -> provider.createClient(apiKey) },
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -287,7 +299,7 @@ class RunCommand(
 
     printSuiteResult(suiteResult)
     try {
-      writeSuiteArtifacts(path, suiteResult, runArtifacts)
+      writeSuiteArtifacts(path, suiteResult, runArtifacts, metadata)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
@@ -365,20 +377,22 @@ class RunCommand(
     path: File,
     platform: Platform,
   ): DryRunNavigator {
-    val preflight = CliPreflightChecker().check(
-      request = CliPreflightRequest(
+    val preflight = preflightChecker(
+      CliPreflightRequest(
         cliProvider = parent.provider,
         cliNavigatorModel = parent.navigatorModel,
         cliInspectorModel = parent.inspectorModel,
+        cliNavigatorEffort = parent.navigatorEffort,
+        cliInspectorEffort = parent.inspectorEffort,
         apiKey = parent.apiKey,
         journeyPath = path.path,
         contextPath = null,
         platform = platform,
         deviceId = resolved.deviceId,
       ),
-      config = config,
-      includeDevicePreflight = false,
-      includeInspectorModelPreflight = false,
+      config,
+      false,
+      false,
     )
     if (!preflight.report.passed) {
       throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
@@ -386,12 +400,12 @@ class RunCommand(
 
     val provider = checkNotNull(preflight.provider)
     val navigatorModel = checkNotNull(preflight.navigatorModel)
-    val executor = MultiLLMPromptExecutor(provider.createClient(preflight.apiKey.orEmpty()))
+    val executor = MultiLLMPromptExecutor(clientFactory(provider, preflight.apiKey.orEmpty()))
     val navigatorAgent = NavigatorAgent(
       bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
       executeRequest = { systemPrompt, userMessage ->
         executor.execute(
-          prompt("navigator") {
+          prompt("navigator", params = preflight.navigatorParams) {
             system(systemPrompt)
             user(userMessage)
           },
@@ -452,6 +466,8 @@ class RunCommand(
         provider = metadata?.provider,
         navigatorModel = metadata?.navigatorModel,
         inspectorModel = metadata?.inspectorModel,
+        navigatorEffort = metadata?.navigatorEffort,
+        inspectorEffort = metadata?.inspectorEffort,
       ),
     )
   }
@@ -488,6 +504,8 @@ class RunCommand(
           provider = summaryMetadata?.provider,
           navigatorModel = summaryMetadata?.navigatorModel,
           inspectorModel = summaryMetadata?.inspectorModel,
+          navigatorEffort = summaryMetadata?.navigatorEffort,
+          inspectorEffort = summaryMetadata?.inspectorEffort,
         ),
       )
     } catch (e: CancellationException) {
@@ -549,6 +567,8 @@ class RunCommand(
         provider = metadata?.provider,
         navigatorModel = metadata?.navigatorModel,
         inspectorModel = metadata?.inspectorModel,
+        navigatorEffort = metadata?.navigatorEffort,
+        inspectorEffort = metadata?.inspectorEffort,
       ),
     )
   }
@@ -557,7 +577,9 @@ class RunCommand(
     path: File,
     suiteResult: SuiteRunResult,
     runArtifacts: RunArtifactDirectory,
+    metadata: RunArtifactMetadata?,
   ) {
+    val summaryMetadata = suiteResult.metadata ?: metadata
     val journeyRefs = suiteResult.results.mapIndexed { index, item ->
       val recorder = runArtifacts.journey(index + 1, item.resolvedJourney.journey.name)
       writeJourneyResult(runArtifacts, recorder.resultPath, item.toArtifactResult())
@@ -584,9 +606,11 @@ class RunCommand(
           ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Journey suite failed")
         },
         platform = suiteResult.results.firstOrNull()?.resolvedJourney?.journey?.platform,
-        provider = suiteResult.metadata?.provider,
-        navigatorModel = suiteResult.metadata?.navigatorModel,
-        inspectorModel = suiteResult.metadata?.inspectorModel,
+        provider = summaryMetadata?.provider,
+        navigatorModel = summaryMetadata?.navigatorModel,
+        inspectorModel = summaryMetadata?.inspectorModel,
+        navigatorEffort = summaryMetadata?.navigatorEffort,
+        inspectorEffort = summaryMetadata?.inspectorEffort,
       ),
     )
   }
@@ -685,45 +709,49 @@ class RunCommand(
       throw CliktError(e.message ?: "Project context validation failed")
     }
 
-    val preflight = CliPreflightChecker().check(
-      request = CliPreflightRequest(
+    val preflight = preflightChecker(
+      CliPreflightRequest(
         cliProvider = parent.provider,
         cliNavigatorModel = parent.navigatorModel,
         cliInspectorModel = parent.inspectorModel,
+        cliNavigatorEffort = parent.navigatorEffort,
+        cliInspectorEffort = parent.inspectorEffort,
         apiKey = parent.apiKey,
         journeyPath = path.path,
         contextPath = null,
         platform = platform,
         deviceId = resolved.deviceId,
       ),
-      config = config,
+      config,
+      true,
+      true,
     )
     if (!preflight.report.passed) {
-      throw CliktError(preflight.report.renderPlainText())
+      throw CliktError(preflight.report.renderPlainText(), statusCode = EXIT_SETUP)
     }
 
     val provider = checkNotNull(preflight.provider)
     val apiKey = preflight.apiKey.orEmpty()
-    val navigatorModel = resolved.navigatorModel
-    val inspectorModel = resolved.inspectorModel
+    val navigatorModel = checkNotNull(preflight.navigatorModel)
+    val inspectorModel = checkNotNull(preflight.inspectorModel)
     echo("Provider: ${provider.name}")
     echo("Navigator model: ${navigatorModel.id}")
     echo("Inspector model: ${inspectorModel.id}")
     projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
 
-    val session = DeviceSessionFactory.connect(
-      platform = platform,
-      deviceId = resolved.deviceId,
-      disableAnimations = resolved.disableAnimations,
+    val session = sessionFactory(
+      platform,
+      resolved.deviceId,
+      resolved.disableAnimations,
     )
 
-    val executor = MultiLLMPromptExecutor(provider.createClient(apiKey))
+    val executor = MultiLLMPromptExecutor(clientFactory(provider, apiKey))
     val navigatorFactory = {
       NavigatorAgent(
         bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
         executeRequest = { systemPrompt, userMessage ->
           executor.execute(
-            prompt("navigator") {
+            prompt("navigator", params = preflight.navigatorParams) {
               system(systemPrompt)
               user(userMessage)
             },
@@ -736,7 +764,7 @@ class RunCommand(
       InspectorAgent(
         evaluateTreeContent = { systemPrompt, userMessage, references ->
           executor.execute(
-            prompt("tree-eval") {
+            prompt("tree-eval", params = preflight.inspectorParams) {
               system(systemPrompt)
               user {
                 text(userMessage)
@@ -751,7 +779,7 @@ class RunCommand(
         },
         evaluateVisualContent = { systemPrompt, userMessage, screenshotPath, references ->
           executor.execute(
-            prompt("visual-eval") {
+            prompt("visual-eval", params = preflight.inspectorParams) {
               system(systemPrompt)
               user {
                 text(userMessage)

@@ -4,6 +4,8 @@ import ai.koog.prompt.llm.LLModel
 import java.io.File
 import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 
 data class ProjectCliOptions(
   val journeysPath: String? = null,
@@ -15,6 +17,8 @@ data class ProjectCliOptions(
   val provider: String? = null,
   val navigatorModel: String? = null,
   val inspectorModel: String? = null,
+  val navigatorEffort: String? = null,
+  val inspectorEffort: String? = null,
   val assertionStrategy: String? = null,
 )
 
@@ -29,6 +33,8 @@ data class ResolvedProjectConfig(
   val provider: VerityProvider,
   val navigatorModel: LLModel,
   val inspectorModel: LLModel,
+  val navigatorEffort: String?,
+  val inspectorEffort: String?,
   val assertionStrategy: AssertionStrategy,
 ) {
   companion object {
@@ -59,6 +65,8 @@ data class ResolvedProjectConfig(
           default = provider.defaultInspectorModel,
           provider = provider,
         ),
+        navigatorEffort = cli.navigatorEffort ?: config.effectiveNavigatorEffort,
+        inspectorEffort = cli.inspectorEffort ?: config.effectiveInspectorEffort,
         assertionStrategy = resolveAssertionStrategy(
           cli.assertionStrategy ?: config.assertions?.strategy,
         ),
@@ -99,7 +107,15 @@ fun ResolvedProjectConfig.toRunArtifactMetadata(): RunArtifactMetadata = RunArti
   provider = provider.name,
   navigatorModel = navigatorModel.id,
   inspectorModel = inspectorModel.id,
+  navigatorEffort = navigatorEffort.toEffortArtifactSetting(),
+  inspectorEffort = inspectorEffort.toEffortArtifactSetting(),
 )
+
+private fun String?.toEffortArtifactSetting(): EffortArtifactSetting = if (this == null) {
+  EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT)
+} else {
+  EffortArtifactSetting(EffortSettingMode.EXPLICIT, requested = this)
+}
 
 val Platform.serialName: String
   get() = when (this) {

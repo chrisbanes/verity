@@ -20,6 +20,8 @@ class Verity : CliktCommand(name = "verity") {
   val provider: String? by option("--provider", help = "LLM provider (e.g., anthropic, openai, google, ollama)")
   val navigatorModel: String? by option("--navigator-model", help = "Override navigator model ID")
   val inspectorModel: String? by option("--inspector-model", help = "Override inspector model ID")
+  val navigatorEffort: String? by option("--navigator-effort", help = "Override navigator reasoning effort")
+  val inspectorEffort: String? by option("--inspector-effort", help = "Override inspector reasoning effort")
   val apiKey: String? by option("--api-key", help = "LLM API key (or set provider-specific env var)")
   val journeysPath: String? by option("--journeys-path", help = "Default journey file or directory")
   val outputPath: String? by option("--output-path", help = "Directory for generated run artifacts")
@@ -60,5 +62,7 @@ fun Verity.projectCliOptions(): ProjectCliOptions = ProjectCliOptions(
   provider = provider,
   navigatorModel = navigatorModel,
   inspectorModel = inspectorModel,
+  navigatorEffort = navigatorEffort,
+  inspectorEffort = inspectorEffort,
   assertionStrategy = assertionStrategy,
 )

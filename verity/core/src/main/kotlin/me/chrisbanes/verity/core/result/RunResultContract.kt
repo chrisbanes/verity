@@ -90,7 +90,24 @@ data class SuiteArtifactSummary(
   val provider: String? = null,
   val navigatorModel: String? = null,
   val inspectorModel: String? = null,
+  val navigatorEffort: EffortArtifactSetting? = null,
+  val inspectorEffort: EffortArtifactSetting? = null,
 )
+
+@Serializable
+data class EffortArtifactSetting(
+  val mode: EffortSettingMode,
+  val requested: String? = null,
+)
+
+@Serializable
+enum class EffortSettingMode {
+  @SerialName("explicit")
+  EXPLICIT,
+
+  @SerialName("backend-default")
+  BACKEND_DEFAULT,
+}
 
 @Serializable
 enum class ArtifactStatus {

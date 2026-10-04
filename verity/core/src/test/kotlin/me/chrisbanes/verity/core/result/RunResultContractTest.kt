@@ -2,6 +2,7 @@ package me.chrisbanes.verity.core.result
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
 import kotlin.test.Test
 import kotlinx.serialization.json.Json
@@ -79,6 +80,57 @@ class RunResultContractTest {
     assertThat(encoded).contains("\"failed\":1")
     assertThat(encoded).contains("\"path\":\"journeys/001-login.json\"")
     assertThat(encoded).contains("\"platform\":\"ios\"")
+  }
+
+  @Test
+  fun `suite summary records explicit and backend default effort without inventing actual defaults`() {
+    val summary = SuiteArtifactSummary(
+      formatVersion = 1,
+      timestamp = "2026-07-08T14:35:12Z",
+      inputPath = "journeys",
+      status = ArtifactStatus.PASSED,
+      total = 1,
+      passed = 1,
+      failed = 0,
+      navigatorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"),
+      inspectorEffort = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
+    )
+
+    val encoded = json.encodeToString(SuiteArtifactSummary.serializer(), summary)
+
+    assertThat(encoded).contains("\"navigatorEffort\":{\"mode\":\"explicit\",\"requested\":\"none\"}")
+    assertThat(encoded).contains("\"inspectorEffort\":{\"mode\":\"backend-default\"}")
+    assertThat(encoded).doesNotContain("actualEffort")
+    assertThat(encoded).doesNotContain("defaultEffort")
+    assertThat(json.decodeFromString(SuiteArtifactSummary.serializer(), encoded)).isEqualTo(summary)
+  }
+
+  @Test
+  fun `suite summary preserves distinct requested effort values and legacy summaries omit settings`() {
+    val summary = SuiteArtifactSummary(
+      formatVersion = 1,
+      timestamp = "2026-07-08T14:35:12Z",
+      inputPath = "journeys",
+      status = ArtifactStatus.FAILED,
+      total = 2,
+      passed = 1,
+      failed = 1,
+      navigatorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "xhigh"),
+      inspectorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"),
+    )
+    val encoded = json.encodeToString(SuiteArtifactSummary.serializer(), summary)
+    val legacy = json.decodeFromString(
+      SuiteArtifactSummary.serializer(),
+      """
+        {"formatVersion":1,"timestamp":"2026-07-08T14:35:12Z","inputPath":"journeys","status":"passed","total":0,"passed":0,"failed":0}
+      """.trimIndent(),
+    )
+
+    assertThat(encoded).contains("\"navigatorEffort\":{\"mode\":\"explicit\",\"requested\":\"xhigh\"}")
+    assertThat(encoded).contains("\"inspectorEffort\":{\"mode\":\"explicit\",\"requested\":\"medium\"}")
+    assertThat(json.decodeFromString(SuiteArtifactSummary.serializer(), encoded)).isEqualTo(summary)
+    assertThat(legacy.navigatorEffort).isEqualTo(null)
+    assertThat(legacy.inspectorEffort).isEqualTo(null)
   }
 
   @Test

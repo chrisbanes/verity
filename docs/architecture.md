@@ -76,9 +76,9 @@ Maestro SDK uses gRPC with Netty 4.1; Ktor uses Netty 4.2. Resolved by:
 
 ## Project Configuration
 
-The CLI owns loading and resolving `verity/config.yaml`. Shared resolution applies CLI input first, project defaults second, and built-in defaults last; structured LLM settings preserve compatibility with legacy top-level keys. The resolved configuration supplies defaults to `run`, `list`, and the CLI command that starts MCP.
+The CLI owns loading and resolving `verity/config.yaml`. Shared resolution applies CLI input first, project defaults second, and built-in defaults last; structured LLM settings preserve compatibility with legacy top-level keys. The resolved configuration supplies defaults to `run`, `list`, and the CLI command that starts MCP. Navigator and inspector reasoning-effort settings resolve independently from CLI flags, nested `llm` keys, legacy top-level keys, then unset. Their exact raw strings remain unchanged; normal run preflight validates explicit values for the selected provider, model and backend before device work.
 
-See the [project-configuration spec](specs/project-configuration.md) for the schema, per-command settings, validation, and assertion strategy. Runtime project-context loading is separate from the repository's domain glossary; its required/optional behavior is defined in the [project-context spec](specs/project-context.md).
+See the [project-configuration spec](specs/project-configuration.md) for the schema, precedence, and assertion strategy, and the [preflight spec](specs/preflight-checks.md) for the supported effort/backend rows and rejection boundary. Runtime project-context loading is separate from the repository's domain glossary; its required/optional behavior is defined in the [project-context spec](specs/project-context.md).
 
 ---
 
@@ -305,6 +305,8 @@ Configured through Koog — can swap providers by updating the executor and mode
 
 The Google provider defaults to `gemini-2.5-flash-lite` for navigation and `gemini-2.5-pro` for inspection. `gemini-3.1-pro-preview` is available as an explicit model selection.
 
+Reasoning effort is an optional, independent string setting for each role. An explicit value is passed unchanged through that role's navigator or inspector requests using the selected backend's native field. An unset value leaves Koog's provider defaults in effect. Only the model/backend combinations listed in the [preflight spec](specs/preflight-checks.md) accept explicit settings; other rows continue to work with effort unset.
+
 ### NavigatorAgent
 
 Converts natural language actions to an `ActionFlow` through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
@@ -458,6 +460,8 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 --provider <name>        LLM provider (anthropic, openai, google, etc.)
 --navigator-model <id>   Model for flow generation (cheap tier)
 --inspector-model <id>   Model for assertion evaluation (capable tier)
+--navigator-effort <value> Explicit navigator reasoning effort
+--inspector-effort <value> Explicit inspector reasoning effort
 --api-key <key>          LLM API key (or provider-specific env var)
 --journeys-path <path>   Default journey file or directory
 --output-path <dir>      Root for generated artifacts
@@ -472,9 +476,9 @@ The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--p
 
 ### Configuration and Result Contracts
 
-CLI defaults and compatibility rules are defined in the [project-configuration spec](specs/project-configuration.md). The [project-context spec](specs/project-context.md) covers `--require-context` and loaded-file reporting.
+CLI defaults, effort-setting precedence and compatibility rules are defined in the [project-configuration spec](specs/project-configuration.md). The [project-context spec](specs/project-context.md) covers `--require-context` and loaded-file reporting.
 
-Normal runs persist their results under the resolved output root. Core owns the serializable result contract, agent owns segment metadata and recorder calls, and CLI owns directory layout, JSON writing, suite aggregation, and exit-code mapping. [ADR-0002](adr/0002-required-run-artifacts.md) records why required result writing is part of the command outcome; the [run-artifacts spec](specs/run-artifacts.md) defines the schema and failure boundaries.
+Normal runs persist their results under the resolved output root. Core owns the serializable result contract, agent owns segment metadata and recorder calls, and CLI owns directory layout, JSON writing, suite aggregation, and exit-code mapping. Suite summaries record each requested effort as explicit or backend-default metadata without claiming which effort a provider actually used. [ADR-0002](adr/0002-required-run-artifacts.md) records why required result writing is part of the command outcome; the [run-artifacts spec](specs/run-artifacts.md) defines the schema and failure boundaries.
 
 ---
 
@@ -521,6 +525,8 @@ Orchestrator.run() loops over segments:
 ```
 
 Directory inputs discover non-recursive `*.journey.yaml` files in filename order and require one resolved platform. A returned failed journey result allows the suite to continue; an execution exception stops it and preserves completed results. Navigator and inspector model failures abort the suite with exit `5`, retaining completed results and a `model_failure` result for the affected journey and summary. Local validation failures use `setup_failure` and exit `3`. Required result-writing failures take precedence and exit `3`; caller cancellation produces no completed failure result. See the [directory-suite spec](specs/directory-suite-runs.md) and [run-artifact contract](specs/run-artifacts.md).
+
+Before device preflight or connection, the CLI matches any explicit navigator or inspector effort to the selected provider, exact model ID and concrete backend/auth path. An unsupported value reports `provider.effort.unsupported` and exits `3` without device or model work. Validated role parameters are carried to navigator generation and scroll callbacks and inspector tree and visual callbacks. Unset settings use the backend defaults. See the [preflight spec](specs/preflight-checks.md) for the initial supported rows and the [dry-run spec](specs/dry-run.md) for its lazy navigator-only boundary.
 
 ### MCP Server
 

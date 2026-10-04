@@ -14,7 +14,7 @@ The planner belongs to the CLI and uses segmentation and interaction mapping dir
 
 The report includes the static application-launch YAML and each segment's actions, loop, and assertion when present. Fully mappable action groups show their interaction descriptions. Other groups invoke the navigator to generate validated structured actions, then render that selected list as Maestro YAML. A loop shows its action, condition, and maximum repetitions; a mapped loop shows every interaction in body order, and a slow-path loop includes one generated YAML flow for the complete body. Execution and preview consume the same core-derived semicolon instructions. Conditions, including a `visually` prefix, are reported without capture or evaluation; see [loop conditions](loop-conditions.md).
 
-Navigator creation and provider/navigator-model/credential preflight are deferred until generated actions are needed. Fast-path-only suites require neither a valid provider configuration nor credentials. Inspector models are not validated because assertions are not evaluated. Slow-path planning may therefore make LLM calls and incur provider costs.
+Navigator creation and provider/navigator-model/credential preflight are deferred until generated actions are needed. Fast-path-only suites require neither a valid provider configuration nor credentials, and explicit navigator effort is not validated. Inspector models and inspector effort are not validated because assertions are not evaluated. When generation is needed, only the navigator's explicit effort is checked against the selected provider/model/backend before client creation, then passed through unchanged. An unsupported setting exits with setup code `3`; a fast-only preview remains lazy even when the unused effort settings are invalid. Slow-path planning may make LLM calls and incur provider costs. See the [preflight spec](preflight-checks.md#reasoning-effort-capability) for supported rows and request fields.
 
 Mapped groups and generated complete action lists pass the device-free command compiler before entering the report. Generated lists are decoded from strict JSON and rendered as YAML only for the preview. Validation performs no filesystem or device operations.
 
@@ -31,6 +31,8 @@ The completed Markdown report is printed to stdout and written per journey under
 The root resolves from `--output-path`, `paths.output`, then `build/verity`. Reports include journey identity, platform, launch YAML, segment indexes, mapped interactions or generated YAML, loop details, assertion modes, and the artifact path. Filename collisions within one write receive numeric suffixes. The same renderer supplies file and console content.
 
 Current input resolution also creates a timestamped directory under `<output-path>/runs/` before branching to dry run. Successful dry runs do not write normal journey-result JSON or a suite summary there; input/parser failures use that directory for a failure summary. Dry-run generation/context/report-write failures are handled by the preview path and do not have the normal run's complete [CI result contract](run-artifacts.md).
+
+The parser-failure summary may carry the raw navigator and inspector effort requests resolved from CLI or configuration. A successful preview still writes only its Markdown report; it does not add the normal suite summary or journey-result JSON.
 
 ## Exit codes and failure boundaries
 

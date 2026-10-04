@@ -13,12 +13,16 @@ class VerityConfigTest {
       provider: openai
       navigator-model: gpt-4o-mini
       inspector-model: gpt-4o
+      navigator-effort: HIGH
+      inspector-effort: none
       require-context: true
       """.trimIndent()
     val config = VerityConfig.fromYaml(yaml)
     assertThat(config.provider).isEqualTo("openai")
     assertThat(config.navigatorModel).isEqualTo("gpt-4o-mini")
     assertThat(config.inspectorModel).isEqualTo("gpt-4o")
+    assertThat(config.navigatorEffort).isEqualTo("HIGH")
+    assertThat(config.inspectorEffort).isEqualTo("none")
     assertThat(config.requireContext).isEqualTo(true)
   }
 
@@ -38,6 +42,8 @@ class VerityConfigTest {
         provider: anthropic
         navigator-model: claude-haiku-4-5
         inspector-model: claude-sonnet-4-5
+        navigator-effort: " high "
+        inspector-effort: ""
       assertions:
         strategy: tree
       """.trimIndent()
@@ -53,6 +59,8 @@ class VerityConfigTest {
     assertThat(config.llm?.provider).isEqualTo("anthropic")
     assertThat(config.llm?.navigatorModel).isEqualTo("claude-haiku-4-5")
     assertThat(config.llm?.inspectorModel).isEqualTo("claude-sonnet-4-5")
+    assertThat(config.llm?.navigatorEffort).isEqualTo(" high ")
+    assertThat(config.llm?.inspectorEffort).isEqualTo("")
     assertThat(config.assertions?.strategy).isEqualTo("tree")
   }
 
@@ -63,16 +71,21 @@ class VerityConfigTest {
       provider: openai
       navigator-model: gpt-4o-mini
       inspector-model: gpt-4o
+      navigator-effort: top-nav
+      inspector-effort: top-inspector
       llm:
         provider: anthropic
         navigator-model: claude-haiku-4-5
         inspector-model: claude-sonnet-4-5
+        navigator-effort: nested-nav
       """.trimIndent(),
     )
 
     assertThat(config.effectiveProvider).isEqualTo("anthropic")
     assertThat(config.effectiveNavigatorModel).isEqualTo("claude-haiku-4-5")
     assertThat(config.effectiveInspectorModel).isEqualTo("claude-sonnet-4-5")
+    assertThat(config.effectiveNavigatorEffort).isEqualTo("nested-nav")
+    assertThat(config.effectiveInspectorEffort).isEqualTo("top-inspector")
   }
 
   @Test
@@ -82,6 +95,8 @@ class VerityConfigTest {
     assertThat(config.provider).isEqualTo("google")
     assertThat(config.navigatorModel).isNull()
     assertThat(config.inspectorModel).isNull()
+    assertThat(config.navigatorEffort).isNull()
+    assertThat(config.inspectorEffort).isNull()
     assertThat(config.requireContext).isNull()
   }
 
@@ -91,6 +106,8 @@ class VerityConfigTest {
     assertThat(config.provider).isNull()
     assertThat(config.navigatorModel).isNull()
     assertThat(config.inspectorModel).isNull()
+    assertThat(config.navigatorEffort).isNull()
+    assertThat(config.inspectorEffort).isNull()
     assertThat(config.requireContext).isNull()
   }
 

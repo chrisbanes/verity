@@ -38,6 +38,18 @@ Tree assertions and conditions save the hierarchy used for evaluation; visual as
 - `journeys`, each with `path`, `name`, and `status`.
 - Optional `error` with `kind` and `message`.
 - Optional `platform`, `provider`, `navigatorModel`, and `inspectorModel`.
+- Optional `navigatorEffort` and `inspectorEffort`, each describing the requested setting with a `mode` and, for explicit settings, the exact `requested` string.
+
+Effort metadata is suite-wide and is emitted when resolved run metadata is available. The wire modes are `explicit` and `backend-default`:
+
+```json
+{
+  "navigatorEffort": { "mode": "explicit", "requested": "none" },
+  "inspectorEffort": { "mode": "backend-default" }
+}
+```
+
+`explicit` records what was requested, unchanged. `backend-default` records that no value was requested; it does not claim what effort the provider chose. No `actualEffort` or provider-default estimate is stored. Null-valued summary properties are omitted. Older format-version-1 summaries without these fields remain valid; absence means effort metadata was unavailable or the summary predates this extension. The extension keeps `formatVersion: 1`.
 
 Each journey result contains `journey` identity (`name`, `file`, `app`, `platform`), `passed`, optional `failedAt`, `segments`, and an optional error. Each segment contains its `index`, `passed`, `executionMode`, source `actions`, optional assertion description/mode, `reasoning`, `generatedFlows`, `evidence`, and optional error. Evidence references contain `type` and `path`. Loop segments additionally contain optional `loop` metadata with `condition`, completed `iterations`, final `tier` and condition `reasoning`. An execution failure retains the previous evaluated condition metadata separately from the segment error. Non-loop segments omit `loop`. See [loop conditions](loop-conditions.md).
 
@@ -52,6 +64,7 @@ JSON property names use camelCase. Default values are included; null-valued prop
 | Error kind | `parser_failure`, `setup_failure`, `journey_failure`, `model_failure` |
 | Loop condition tier | `literal`, `focus`, `tree`, `visual` |
 | Platform | `android-tv`, `android`, `ios` |
+| Effort setting mode | `explicit`, `backend-default` |
 
 ## Exit codes and failure boundaries
 
