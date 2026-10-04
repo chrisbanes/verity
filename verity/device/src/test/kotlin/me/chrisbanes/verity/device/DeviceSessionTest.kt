@@ -5,8 +5,20 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.messageContains
 import kotlin.test.Test
+import kotlinx.coroutines.test.runTest
+import me.chrisbanes.verity.core.model.Platform
 
 class DeviceSessionTest {
+  @Test
+  fun `legacy session supports named short overload and rejects Android capabilities`() = runTest {
+    val session = FakeDeviceSession(platform = Platform.IOS)
+    session.pressKey("return", false)
+    assertThat(session.pressedKeys).isEqualTo(listOf("return"))
+    assertFailure { session.pressKey("return", true) }.messageContains("Long key presses")
+    assertFailure { session.pressKey(174, false) }.messageContains("Raw Android keycodes")
+    assertThat(session.pressedKeys).isEqualTo(listOf("return"))
+  }
+
   @Test
   fun `animation state accepts integer scale values`() {
     val state = DeviceSession.AnimationState("1", "0", "2")
