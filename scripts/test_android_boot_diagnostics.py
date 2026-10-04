@@ -189,14 +189,14 @@ class DiagnosticsTest(unittest.TestCase):
     def test_guest_commands_are_read_only_and_serial_bound(self):
         with patch.dict(os.environ, {"ANDROID_HOME": "/offline/sdk", "ANDROID_SERIAL": "ambient-device"}):
             commands = D.guest_commands()
-        self.assertEqual([name for name, _ in commands], ["state", "crash", "bootEvents"])
+        self.assertEqual([name for name, _ in commands], ["properties", "systemServer", "onlineCpu", "memTotal", "crash", "bootEvents"])
         for _, argv in commands:
             self.assertEqual(argv[:3], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554"])
             self.assertNotIn("devices", argv)
             self.assertNotIn("clear", argv)
-        self.assertIn("pidof system_server", commands[0][1][-1])
-        self.assertIn("-d", commands[1][1])
-        self.assertIn("-t", commands[2][1])
+        self.assertIn("pidof system_server", commands[1][1][-1])
+        self.assertIn("-d", commands[4][1])
+        self.assertIn("-t", commands[5][1])
 
     def test_single_property_list_filters_exact_names_before_retention(self):
         sdk = self.directory / "snapshot-sdk"
@@ -216,22 +216,54 @@ class DiagnosticsTest(unittest.TestCase):
         cpu.write_text("0-1\n")
         memory.write_text("MemFree: 500 kB\nMemTotal: 2621440 kB\nPrivateData: 123 kB\n")
         with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}):
-            argv = D.guest_commands()[0][1]
-        script = argv[-1]
+            commands = D.guest_commands()
+        self.assertEqual(commands[0][0], "properties")
+        script = commands[0][1][-1]
         self.assertEqual(script.count("getprop"), 1)
-        self.assertLess(script.index("pidof system_server"), script.index("getprop"))
-        self.assertNotIn("cat ", script)
-        script = script.replace("/sys/devices/system/cpu/online", str(cpu)).replace("/proc/meminfo", str(memory))
+        self.assertNotIn("pidof", script)
+        self.assertNotIn("/proc/", script)
+        outputs = []
         with patch.dict(os.environ, {"PATH": str(sdk) + os.pathsep + os.environ["PATH"]}):
-            result = subprocess.run(["/bin/sh", "-c", script], check=True, capture_output=True, text=True, timeout=5)
-        self.assertEqual(calls.read_text().splitlines(), ["pidof", "getprop"])
-        self.assertEqual(result.stdout.splitlines(), ["system_server=579", "online_cpu=0-1", "MemTotal=2621440 kB"] + allowed)
-        self.assertNotIn("secret", result.stdout)
-        self.assertNotIn("PrivateData", result.stdout)
+            for _, argv in commands[:4]:
+                script = argv[-1].replace("/sys/devices/system/cpu/online", str(cpu)).replace("/proc/meminfo", str(memory))
+                result = subprocess.run(["/bin/sh", "-c", script], check=True, capture_output=True, text=True, timeout=5)
+                outputs.extend(result.stdout.splitlines())
+        self.assertEqual(calls.read_text().splitlines(), ["getprop", "pidof"])
+        self.assertEqual(outputs, allowed + ["system_server=579", "online_cpu=0-1", "MemTotal=2621440 kB"])
+        self.assertFalse(any("secret" in line or "PrivateData" in line for line in outputs))
         (sdk / "pidof").write_text("#!" + sys.executable + "\nimport sys; sys.exit(1)\n")
         with patch.dict(os.environ, {"PATH": str(sdk) + os.pathsep + os.environ["PATH"]}):
-            missing = subprocess.run(["/bin/sh", "-c", script], check=True, capture_output=True, text=True, timeout=5)
-        self.assertEqual(missing.stdout.splitlines()[:3], ["system_server=", "online_cpu=0-1", "MemTotal=2621440 kB"])
+            missing = subprocess.run(["/bin/sh", "-c", commands[1][1][-1]], check=True, capture_output=True, text=True, timeout=5)
+        self.assertEqual(missing.stdout.splitlines(), ["system_server="])
+
+    def test_slow_memory_callback_preserves_prior_properties_and_later_callbacks(self):
+        sdk = self.directory / "slow-sdk/platform-tools"
+        sdk.mkdir(parents=True)
+        adb = sdk / "adb"
+        adb.write_text("#!" + sys.executable + "\nimport sys,time\n"
+                       "assert sys.argv[1:3] == ['-s','emulator-5554']\n"
+                       "command = sys.argv[-1]\n"
+                       "if 'MemTotal' in command: time.sleep(30)\n"
+                       "elif 'getprop' in command: print('[sys.boot_completed]: []')\n"
+                       "elif 'pidof' in command: print('system_server=590')\n"
+                       "elif 'online_cpu' in command: print('online_cpu=0-1')\n")
+        adb.chmod(0o755)
+        capture = D.capture
+        def owned_capture(argv, cancel, deadline):
+            result = capture(argv, cancel, deadline)
+            if "boot_progress_start:I" in argv:
+                D.write_json(self.directory / "stop.json", {"token": "offline-token"})
+            return result
+        with patch.dict(os.environ, {"ANDROID_HOME": str(sdk.parent)}), patch.object(D, "capture", side_effect=owned_capture):
+            self.assertEqual(D.observe(self.directory, self.control(), inventory=lambda *_: {}, duration=20), 0)
+        commands = json.loads((self.directory / "report.json").read_text())["snapshots"][0]["commands"]
+        self.assertEqual(list(commands), ["properties", "systemServer", "onlineCpu", "memTotal", "crash", "bootEvents"])
+        self.assertEqual(commands["properties"]["stdout"], "[sys.boot_completed]: []\n")
+        self.assertEqual(commands["properties"]["outcome"], "completed")
+        self.assertEqual(commands["memTotal"]["outcome"], "timeout")
+        self.assertTrue(commands["memTotal"]["joined"])
+        self.assertLess(commands["memTotal"]["seconds"], 5)
+        self.assertEqual(commands["bootEvents"]["outcome"], "completed")
 
     def test_late_pressure_once_with_no_probes_after_stop(self):
         clock = [0.0]

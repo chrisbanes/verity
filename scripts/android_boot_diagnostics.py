@@ -154,13 +154,13 @@ def host_pressure(cancel, deadline):
 
 def guest_commands():
     properties = "|".join(prop.replace(".", r"\.") for prop in PROPERTIES)
-    script = "printf 'system_server='; pidof system_server || printf '\n'; "
-    script += "IFS= read -r cpu < /sys/devices/system/cpu/online; printf 'online_cpu=%s\\n' \"$cpu\"; "
-    script += "while read -r key value unit; do case \"$key\" in MemTotal:) printf 'MemTotal=%s %s\\n' \"$value\" \"$unit\"; break;; esac; done < /proc/meminfo; "
-    script += "getprop | grep -E '^\\[(" + properties + ")\\]: \\['"
+    script = r"getprop | grep -E '^\[(" + properties + ")\]: \['"
     adb = str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb")
     prefix = [adb, "-s", SERIAL]
-    return [("state", prefix + ["shell", script]),
+    return [("properties", prefix + ["shell", script]),
+            ("systemServer", prefix + ["shell", "printf 'system_server='; pidof system_server || printf '\n'"]),
+            ("onlineCpu", prefix + ["shell", "IFS= read -r cpu < /sys/devices/system/cpu/online; printf 'online_cpu=%s\n' \"$cpu\""]),
+            ("memTotal", prefix + ["shell", "while read -r key value unit; do case \"$key\" in MemTotal:) printf 'MemTotal=%s %s\n' \"$value\" \"$unit\"; break;; esac; done < /proc/meminfo"]),
             ("crash", prefix + ["logcat", "-b", "crash", "-d", "-t", "20", "-v", "brief"]),
             ("bootEvents", prefix + ["logcat", "-b", "events", "-d", "-t", "40", "-v", "brief", "-s",
                                      "boot_progress_start:I", "boot_progress_preload_start:I", "boot_progress_preload_end:I",
