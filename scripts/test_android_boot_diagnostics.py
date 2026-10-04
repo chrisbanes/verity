@@ -127,12 +127,14 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertNotIn("install", argv[-1])
             self.assertNotIn("am instrument", argv[-1])
             self.assertNotIn("forward", argv[-1])
+        self.assertEqual([name for name, _ in commands[:3]], ["properties", "packageService", "systemServer"])
         scripts = dict(commands)
         fixture = self.directory / "bin"
         fixture.mkdir()
-        outputs = {"getprop": "[sys.boot_completed]: [1]\n[ro.build.version.sdk]: [34]\n[sys.boot_completed.secret]: [private]\n[unrelated]: [private]\n",
+        outputs = {"getprop": "[sys.boot_completed]: [1]\n[ro.build.version.sdk]: [34]\n[sys.system_server.start_count]: [2]\n[sys.system_server.start_elapsed]: [123]\n[sys.system_server.start_uptime]: [120]\n[sys.system_server.start_count.secret]: [private]\n[sys.system_serverXstart_count]: [private]\n[sys.boot_completed.secret]: [private]\n[unrelated]: [private]\n",
                    "pm": "instrumentation:dev.mobile.maestro.test/androidx.test.runner.AndroidJUnitRunner (target=dev.mobile.maestro)\ninstrumentation:other/private (target=private)\n",
-                   "logcat": "E/AndroidRuntime: private other crash\nE/AndroidRuntime: dev.mobile.maestro.private unrelated\nE/AndroidRuntime: dev.mobile.maestro startup failure\nI/TestRunner: dev.mobile.maestro.MaestroDriverService ready\n"}
+                   "logcat": "E/AndroidRuntime: private other crash\nE/AndroidRuntime: dev.mobile.maestro.private unrelated\nE/AndroidRuntime: dev.mobile.maestro startup failure\nI/TestRunner: dev.mobile.maestro.MaestroDriverService ready\nE/AndroidRuntime: FATAL EXCEPTION IN SYSTEM PROCESS: main\nE/AndroidRuntime: Process: system_server, PID: 569\nE/Watchdog: WATCHDOG KILLING SYSTEM PROCESS\nE/AndroidRuntime: Process: system_server.private\nE/Other: FATAL EXCEPTION IN SYSTEM PROCESS private\nE/Other: WATCHDOG KILLING SYSTEM PROCESS private\n",
+                   "service": "Service package: not found\n", "pidof": "569\n"}
         for name, output in outputs.items():
             path = fixture / name
             path.write_text("#!" + sys.executable + "\nprint(" + repr(output) + ", end='')\n")
@@ -142,6 +144,30 @@ class DiagnosticsTest(unittest.TestCase):
                 result = subprocess.run(["/bin/sh", "-c", scripts[name][-1]], capture_output=True, text=True, check=True)
                 self.assertNotIn("private", result.stdout)
                 self.assertTrue(result.stdout)
+                if name == "properties":
+                    self.assertEqual(result.stdout.splitlines(), ["[sys.boot_completed]: [1]", "[ro.build.version.sdk]: [34]",
+                                     "[sys.system_server.start_count]: [2]", "[sys.system_server.start_elapsed]: [123]",
+                                     "[sys.system_server.start_uptime]: [120]"])
+                if name in ("crash", "startupLog"):
+                    self.assertIn("FATAL EXCEPTION IN SYSTEM PROCESS", result.stdout)
+                    self.assertIn("WATCHDOG KILLING SYSTEM PROCESS", result.stdout)
+            self.assertEqual(subprocess.run(["/bin/sh", "-c", scripts["packageService"][-1]], capture_output=True, text=True, check=True).stdout,
+                             "Service package: not found\n")
+            self.assertEqual(subprocess.run(["/bin/sh", "-c", scripts["systemServer"][-1]], capture_output=True, text=True, check=True).stdout, "569\n")
+            (fixture / "pidof").write_text("#!/bin/sh\nexit 1\n")
+            self.assertEqual(subprocess.run(["/bin/sh", "-c", scripts["systemServer"][-1]], capture_output=True, text=True, check=True).stdout, "\n")
+
+    def test_actual_mac_gradle_argv_forces_only_complete_selected_test_task(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/ci.yml").read_text()
+        script = workflow.split("pre-emulator-launch-script:", 1)[1].split("python3 -c '", 1)[1].split("'", 1)[0]
+        parsed = ast.parse(script.replace("\n", " "))
+        tail = ast.Module(body=parsed.body[-3:], type_ignores=[])
+        with patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            with self.assertRaises(SystemExit):
+                exec(compile(tail, "actual-task-argv", "exec"), {"subprocess": subprocess})
+        self.assertEqual(run.call_args.args[0], ["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "--rerun",
+                                              "-PpackagedVariant=macos-aarch64,universal", "--no-scan",
+                                              "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"])
 
     def test_failed_gradle_code_preserved_even_when_diagnostics_fail(self):
         workflow = (Path(__file__).parents[1] / ".github/workflows/ci.yml").read_text()

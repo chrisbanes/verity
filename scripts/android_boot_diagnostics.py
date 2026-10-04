@@ -293,14 +293,16 @@ def stop(directory):
 def startup_commands():
     """Read only exact target/package/port data, filtered in the guest before retention."""
     prefix = [str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"), "-s", SERIAL, "shell"]
-    return [("properties", prefix + [r"getprop | grep -E '^\[(sys\.boot_completed|ro\.build\.version\.sdk)\]: \['"]),
+    return [("properties", prefix + [r"getprop | grep -E '^\[(sys\.boot_completed|ro\.build\.version\.sdk|sys\.system_server\.(start_count|start_elapsed|start_uptime))\]: \['"]),
+            ("packageService", prefix + ["service check package"]),
+            ("systemServer", prefix + ["pidof system_server || printf '\n'"]),
             ("driverPackage", prefix + ["pm path dev.mobile.maestro"]),
             ("instrumentationPackage", prefix + ["pm path dev.mobile.maestro.test"]),
             ("instrumentation", prefix + [r"pm list instrumentation | grep -E '^instrumentation:dev\.mobile\.maestro\.test/androidx\.test\.runner\.AndroidJUnitRunner \(target=dev\.mobile\.maestro\)$'"]),
             ("driverPid", prefix + ["pidof dev.mobile.maestro || printf '\n'"]),
             ("driverPort", prefix + [r"grep -E '^[ ]*[0-9]+: [0-9A-F]+:1B59 ' /proc/net/tcp /proc/net/tcp6"]),
-            ("crash", prefix + [r"logcat -b crash -d -t 40 -v brief | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)'"]),
-            ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)'"])]
+            ("crash", prefix + [r"logcat -b crash -d -t 40 -v brief | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^[EF]/Watchdog(\([ ]*[0-9]+\))?[ ]*: WATCHDOG KILLING SYSTEM PROCESS'"]),
+            ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I Watchdog:V SystemServer:E | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^[EF]/Watchdog(\([ ]*[0-9]+\))?[ ]*: WATCHDOG KILLING SYSTEM PROCESS'"])]
 
 
 def startup(directory, gradle_exit, duration=45, commands=startup_commands):

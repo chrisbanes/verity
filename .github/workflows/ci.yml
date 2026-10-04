@@ -160,7 +160,7 @@ jobs:
             receipt.parent.mkdir(parents=True, exist_ok=True);
             receipt.write_text(json.dumps(dict(target=online[0], kind="android", host=platform.system(), arch=platform.machine(), run=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"], job=os.environ["GITHUB_JOB"], head=os.environ["GITHUB_SHA"])));
             os.environ["VERITY_PACKAGED_TARGET_RECEIPT"] = str(receipt.resolve());
-            result = subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=macos-aarch64,universal", "--rerun-tasks", "--no-scan", "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"]).returncode;
+            result = subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "--rerun", "-PpackagedVariant=macos-aarch64,universal", "--no-scan", "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g"]).returncode;
             diagnostic = subprocess.run(["python3", "scripts/android_boot_diagnostics.py", "startup", "verity/smoke-tests/build/reports/packaged-targets/android-bootstrap", str(result)]) if result else None;
             raise SystemExit(result)'
 
