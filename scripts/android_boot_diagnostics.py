@@ -23,6 +23,9 @@ PROPERTIES = ("ro.boot.bootreason", "init.svc.zygote", "init.svc.bootanim", "ini
               "dalvik.vm.heapsize", "dalvik.vm.heapgrowthlimit")
 
 
+CRASH_LOG_SCRIPT = r"logcat -b crash -d -t 128 -v brief | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: |^F/DEBUG[ ]*(\([ ]*[0-9]+\))?[ ]*: pid: [0-9]+, tid: [0-9]+, name: .*  >>> system_server <<<$'"
+
+
 def binding():
     values = {key: os.environ[key] for key in KEYS}
     if any(not value or len(value) > 256 for value in values.values()):
@@ -161,7 +164,7 @@ def guest_commands():
             ("systemServer", prefix + ["shell", "printf 'system_server='; pidof system_server || printf '\n'"]),
             ("onlineCpu", prefix + ["shell", "IFS= read -r cpu < /sys/devices/system/cpu/online; printf 'online_cpu=%s\n' \"$cpu\""]),
             ("memTotal", prefix + ["shell", "while read -r key value unit; do case \"$key\" in MemTotal:) printf 'MemTotal=%s %s\n' \"$value\" \"$unit\"; break;; esac; done < /proc/meminfo"]),
-            ("crash", prefix + ["logcat", "-b", "crash", "-d", "-t", "20", "-v", "brief"]),
+            ("crash", prefix + ["shell", CRASH_LOG_SCRIPT.replace("logcat -b crash ", "logcat -b crash -b main -b system ", 1)]),
             ("bootEvents", prefix + ["logcat", "-b", "events", "-d", "-t", "40", "-v", "brief", "-s",
                                      "boot_progress_start:I", "boot_progress_preload_start:I", "boot_progress_preload_end:I",
                                      "boot_progress_system_run:I", "boot_progress_pms_start:I", "boot_progress_pms_ready:I",
@@ -301,7 +304,7 @@ def startup_commands():
             ("instrumentation", prefix + [r"pm list instrumentation | grep -E '^instrumentation:dev\.mobile\.maestro\.test/androidx\.test\.runner\.AndroidJUnitRunner \(target=dev\.mobile\.maestro\)$'"]),
             ("driverPid", prefix + ["pidof dev.mobile.maestro || printf '\n'"]),
             ("driverPort", prefix + [r"grep -E '^[ ]*[0-9]+: [0-9A-F]+:1B59 ' /proc/net/tcp /proc/net/tcp6"]),
-            ("crash", prefix + [r"logcat -b crash -d -t 128 -v brief | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: |^F/DEBUG[ ]*(\([ ]*[0-9]+\))?[ ]*: pid: [0-9]+, tid: [0-9]+, name: .*  >>> system_server <<<$'"]),
+            ("crash", prefix + [CRASH_LOG_SCRIPT]),
             ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I Watchdog:V SystemServer:E | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: '"])]
 
 

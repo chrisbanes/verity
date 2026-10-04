@@ -371,8 +371,40 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertNotIn("devices", argv)
             self.assertNotIn("clear", argv)
         self.assertIn("pidof system_server", commands[1][1][-1])
-        self.assertIn("-d", commands[4][1])
+        self.assertIn("-d", commands[4][1][-1])
         self.assertIn("-t", commands[5][1])
+
+    def test_observer_framework_callback_executes_exact_multi_buffer_filter(self):
+        with patch.dict(os.environ, {"ANDROID_HOME": "/offline/sdk", "ANDROID_SERIAL": "ambient-private-device"}):
+            commands = D.guest_commands()
+            startup = dict(D.startup_commands())["crash"]
+        self.assertEqual(len(commands), 6)
+        crash = dict(commands)["crash"]
+        self.assertEqual(crash[:4], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554", "shell"])
+        self.assertEqual(crash[-1].replace("-b crash -b main -b system", "-b crash"), startup[-1])
+        fixture = self.directory / "prehook-bin"
+        fixture.mkdir()
+        logcat = fixture / "logcat"
+        logcat.write_text("#!" + sys.executable + "\nimport sys\n"
+                          "assert sys.argv[1:] == ['-b','crash','-b','main','-b','system','-d','-t','128','-v','brief']\n"
+                          "print('F/DEBUG   ( 600): pid: 524, tid: 525, name: Binder Pool  >>> system_server <<<')\n"
+                          "print('W/Watchdog( 524): *** WATCHDOG KILLING SYSTEM PROCESS: blocked')\n"
+                          "print('E/AndroidRuntime( 524): FATAL EXCEPTION IN SYSTEM PROCESS: main')\n"
+                          "print('I/TestRunner: dev.mobile.maestro.MaestroDriverService ready')\n"
+                          "print('F/DEBUG   ( 600): pid: 524, tid: 525, name: Binder Pool  >>> system_server.private <<<')\n"
+                          "print('W/WatchdogPrivate: *** WATCHDOG KILLING SYSTEM PROCESS: private')\n"
+                          "print('E/PrivateApp: FATAL EXCEPTION IN SYSTEM PROCESS private')\n"
+                          "print('E/AndroidRuntime: private application crash')\n")
+        logcat.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(fixture) + os.pathsep + os.environ["PATH"]}):
+            result = D.capture(["/bin/sh", "-c", crash[-1]])
+        self.assertEqual(result["exit"], 0)
+        self.assertTrue(result["joined"])
+        self.assertFalse(result["truncated"])
+        self.assertEqual(len(result["stdout"].splitlines()), 4)
+        self.assertNotIn("private", result["stdout"])
+        self.assertIn("*** WATCHDOG", result["stdout"])
+        self.assertIn(">>> system_server <<<", result["stdout"])
 
     def test_single_property_list_filters_exact_names_before_retention(self):
         sdk = self.directory / "snapshot-sdk"
