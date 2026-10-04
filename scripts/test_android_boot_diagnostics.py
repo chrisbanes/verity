@@ -1,0 +1,224 @@
+"""Offline fixtures only: Python children and fake SDK commands, never a device."""
+
+import ast
+import hashlib
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+SPEC = importlib.util.spec_from_file_location("diagnostics", Path(__file__).with_name("android_boot_diagnostics.py"))
+D = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(D)
+ENV = {key: "fixture-" + key for key in D.KEYS}
+
+
+class DiagnosticsTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temp.name)
+        self.env = patch.dict(os.environ, ENV)
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.temp.cleanup()
+
+    def control(self):
+        return {"token": "offline-token", "binding": D.binding(), "scriptSha256": hashlib.sha256(Path(D.__file__).read_bytes()).hexdigest(),
+                "serial": D.SERIAL, "avd": D.AVD}
+
+    def test_huge_output_drains_both_pipes_and_reaps(self):
+        result = D.capture([sys.executable, "-c", "import os; os.write(1,b'x'*300000); os.write(2,b'y'*300000)"])
+        self.assertEqual(result["exit"], 0)
+        self.assertEqual(result["stdout"], "x" * D.MAX_STREAM)
+        self.assertEqual(result["stderr"], "y" * D.MAX_STREAM)
+        self.assertEqual(result["droppedBytes"], {"stdout": 300000 - D.MAX_STREAM, "stderr": 300000 - D.MAX_STREAM})
+        self.assertTrue(result["joined"])
+
+    def test_deadline_terminates_and_joins_exact_owned_child(self):
+        result = D.capture([sys.executable, "-c", "import os,time; print(os.getpid(),flush=True); time.sleep(30)"], deadline=time.monotonic() + 1)
+        self.assertEqual(result["outcome"], "timeout")
+        self.assertLess(result["seconds"], 2)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(result["stdout"].strip()), 0)
+
+    def test_no_spawn_without_remaining_cleanup_budget(self):
+        with patch.object(D.subprocess, "Popen", side_effect=AssertionError("spawned without cleanup allowance")):
+            result = D.capture(["never"], deadline=time.monotonic() + .5)
+        self.assertEqual(result["outcome"], "deadline")
+
+    def test_cancellation_joins_child_that_ignores_term(self):
+        start = time.monotonic()
+        result = D.capture([sys.executable, "-c", "import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print('ready',flush=True); time.sleep(30)"],
+                           cancel=lambda: time.monotonic() - start > .15)
+        self.assertEqual(result["outcome"], "stopped")
+        self.assertLess(result["seconds"], 2)
+        self.assertTrue(result["joined"])
+
+    def test_no_spawn_after_stop(self):
+        with patch.object(D.subprocess, "Popen", side_effect=AssertionError("spawned after stop")):
+            result = D.capture(["never"], cancel=lambda: True)
+        self.assertEqual(result["outcome"], "stopped")
+        D.write_json(self.directory / "stop.json", {"token": "offline-token"})
+        with patch.object(D, "capture", side_effect=AssertionError("probe after stop")):
+            self.assertEqual(D.observe(self.directory, self.control(), inventory=lambda *_: self.fail("input after stop"), commands=lambda: self.fail("commands after stop")), 0)
+        self.assertEqual(json.loads((self.directory / "report.json").read_text())["snapshots"], [])
+
+    def test_immutable_binding_and_target_rejected_before_probes(self):
+        for key, replacement in (("serial", "emulator-5556"), ("avd", "user-device"), ("scriptSha256", "bad"), ("binding", {})):
+            with self.subTest(key=key):
+                control = self.control()
+                control[key] = replacement
+                self.assertEqual(D.observe(self.directory, control, inventory=lambda *_: self.fail("probe with invalid binding")), 1)
+                self.assertEqual(json.loads((self.directory / "done.json").read_text())["status"], "failed")
+
+    def test_report_cap_preserves_early_and_late_and_accounts_drops(self):
+        report = {"snapshots": [{"index": i, "data": "\\\"" * 12000} for i in range(30)], "droppedSnapshots": 0, "droppedSnapshotBytes": 0, "truncated": False}
+        D.retain_report(self.directory / "report.json", report)
+        self.assertLessEqual((self.directory / "report.json").stat().st_size, D.REPORT_CAP)
+        self.assertEqual(report["snapshots"][0]["index"], 0)
+        self.assertEqual(report["snapshots"][-1]["index"], 29)
+        self.assertGreater(report["droppedSnapshotBytes"], 0)
+
+    def test_observe_deadline_and_later_host_pressure(self):
+        counts = []
+        self.assertEqual(D.observe(self.directory, self.control(), inventory=lambda *_: {"offline": True}, commands=lambda: [], duration=.2, cadence=.03,
+                                   pressure=lambda *_: counts.append("pressure") or {"offline": True}), 0)
+        report = json.loads((self.directory / "report.json").read_text())
+        self.assertEqual(report["status"], "deadline")
+        self.assertEqual(counts, ["pressure"])
+        self.assertFalse(report["qualification"])
+
+    def test_input_error_records_failure_and_done(self):
+        def fail(*_):
+            raise OSError("offline inventory fixture error")
+        self.assertEqual(D.observe(self.directory, self.control(), inventory=fail), 1)
+        self.assertEqual(json.loads((self.directory / "done.json").read_text())["status"], "failed")
+        self.assertIn("fixture error", json.loads((self.directory / "report.json").read_text())["error"])
+
+    def test_stop_during_first_command_prevents_later_probe(self):
+        calls = []
+        def fake_capture(argv, cancel, deadline):
+            calls.append(argv)
+            D.write_json(self.directory / "stop.json", {"token": "offline-token"})
+            return {"exit": 0, "outcome": "completed", "truncated": False}
+        with patch.object(D, "capture", side_effect=fake_capture):
+            self.assertEqual(D.observe(self.directory, self.control(), inventory=lambda *_: {}, commands=lambda: [("first", ["fixture"]), ("second", ["forbidden"])]), 0)
+        self.assertEqual(calls, [["fixture"]])
+
+    def fake_sdk(self):
+        sdk = self.directory / "sdk"
+        for name in ("emulator", "platform-tools", "bin", "avd/test.avd"):
+            (sdk / name).mkdir(parents=True)
+        (sdk / "emulator/source.properties").write_text("Pkg.Revision=offline\n")
+        (sdk / "emulator/emulator").write_text("not executable; hash fixture only")
+        (sdk / "avd/test.avd/config.ini").write_text("hw.cpu.ncore=2\nhw.ramSize=2048\n")
+        for path in (sdk / "platform-tools/adb", sdk / "bin/sysctl", sdk / "bin/vm_stat"):
+            path.write_text("#!" + sys.executable + "\nprint('offline fixture')\n")
+            path.chmod(0o755)
+        return {"ANDROID_HOME": str(sdk), "ANDROID_AVD_HOME": str(sdk / "avd"), "PATH": str(sdk / "bin") + os.pathsep + os.environ["PATH"]}
+
+    def test_real_start_stop_join_handshake_offline_commands_only(self):
+        directory = self.directory / "observer"
+        with patch.dict(os.environ, self.fake_sdk()):
+            process = D.start(directory)
+            try:
+                end = time.monotonic() + 3
+                while not (directory / "report.json").exists() and time.monotonic() < end:
+                    time.sleep(.02)
+            finally:
+                try:
+                    D.stop(directory)
+                finally:
+                    process.wait(timeout=3)
+            D.stop(directory)
+        joined = json.loads((directory / "joined.json").read_text())
+        self.assertTrue(joined["observerExited"])
+        self.assertLessEqual(sum(p.stat().st_size for p in directory.glob("*.json")), D.MAX_REPORT)
+        self.assertEqual(json.loads((directory / "control.json").read_text())["serial"], "emulator-5554")
+
+    def test_post_boot_script_stop_precedes_functional_work_and_propagates_failure(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/ci.yml").read_text()
+        script = workflow.split("pre-emulator-launch-script:", 1)[1].split("python3 -c '", 1)[1].split("'", 1)[0]
+        parsed = ast.parse(script.replace("\n", " "))
+        prefix = ast.Module(body=parsed.body[:3], type_ignores=[])
+        expected = ["python3", "scripts/android_boot_diagnostics.py", "stop",
+                    "verity/smoke-tests/build/reports/packaged-targets/android-bootstrap"]
+        with patch.object(subprocess, "run") as run:
+            exec(compile(prefix, "post-boot-fixture", "exec"), {})
+            run.assert_called_once_with(expected, check=True)
+        with patch.object(subprocess, "run", side_effect=subprocess.CalledProcessError(1, expected)) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                exec(compile(parsed, "post-boot-fixture", "exec"), {})
+            run.assert_called_once_with(expected, check=True)
+
+    def test_stop_binding_mismatch_never_requests_stop(self):
+        control = self.control()
+        control["binding"] = {}
+        D.write_json(self.directory / "control.json", control)
+        with self.assertRaisesRegex(RuntimeError, "binding mismatch"):
+            D.stop(self.directory)
+        self.assertFalse((self.directory / "stop.json").exists())
+
+    def test_post_spawn_control_write_failure_joins_owned_child(self):
+        original_write = D.write_json
+        original_popen = D.subprocess.Popen
+        owned = []
+        def write(path, value):
+            if path.name == "control.json" and "pid" in value:
+                raise OSError("offline post-spawn write fixture")
+            original_write(path, value)
+        def spawn(*args, **kwargs):
+            process = original_popen(*args, **kwargs)
+            owned.append(process)
+            return process
+        with patch.dict(os.environ, self.fake_sdk()), patch.object(D, "write_json", side_effect=write), patch.object(D.subprocess, "Popen", side_effect=spawn):
+            with self.assertRaisesRegex(OSError, "post-spawn"):
+                D.start(self.directory / "observer")
+        self.assertEqual(len(owned), 1)
+        self.assertIsNotNone(owned[0].poll())
+
+    def test_guest_commands_are_read_only_and_serial_bound(self):
+        with patch.dict(os.environ, {"ANDROID_HOME": "/offline/sdk", "ANDROID_SERIAL": "ambient-device"}):
+            commands = D.guest_commands()
+        self.assertEqual([name for name, _ in commands], ["state", "crash", "bootEvents"])
+        for _, argv in commands:
+            self.assertEqual(argv[:3], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554"])
+            self.assertNotIn("devices", argv)
+            self.assertNotIn("clear", argv)
+        self.assertIn("pidof system_server", commands[0][1][-1])
+        self.assertIn("-d", commands[1][1])
+        self.assertIn("-t", commands[2][1])
+
+    def test_host_command_failures_are_reported(self):
+        self.assertEqual(D.failures({"memory": {"exit": 1, "outcome": "completed"}, "swap": {"exit": -15, "outcome": "timeout"}}), 2)
+
+    def test_completion_token_mismatch_rejects_join(self):
+        control = self.control()
+        control["pid"] = os.getpid()
+        D.write_json(self.directory / "control.json", control)
+        D.write_json(self.directory / "done.json", {"token": "wrong-owner", "pid": os.getpid(), "status": "stopped"})
+        with self.assertRaisesRegex(RuntimeError, "completion binding mismatch"):
+            D.stop(self.directory)
+        self.assertFalse((self.directory / "joined.json").exists())
+
+    def test_missing_done_is_failure_not_join_success(self):
+        control = self.control()
+        control["pid"] = os.getpid()
+        D.write_json(self.directory / "control.json", control)
+        times = iter([0, 20])
+        with patch.object(D.time, "monotonic", side_effect=lambda: next(times)), self.assertRaisesRegex(RuntimeError, "did not acknowledge"):
+            D.stop(self.directory)
+        self.assertFalse((self.directory / "joined.json").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
