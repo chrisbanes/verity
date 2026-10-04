@@ -29,9 +29,8 @@ internal suspend fun captureBoundedScreenshot(
   val started = System.nanoTime()
   val target = output.toAbsolutePath()
   var staging: Path? = null
-  var previous: Path? = null
+  var previous: List<ByteArray>? = null
   var published = false
-  var committed = false
   try {
     val complete = withTimeoutOrNull(timeout) {
       withContext(Dispatchers.IO) {
@@ -57,20 +56,21 @@ internal suspend fun captureBoundedScreenshot(
         checkCapture()
         // A publication failure or cancellation observed after the atomic move must restore prior bytes.
         if (Files.exists(target)) {
-          previous = Files.createTempFile(target.parent, ".verity-screenshot-", ".previous")
+          // Retain checked chunks until admission, so disposing a file backup cannot create
+          // an unchecked cleanup stage after commit or destroy rollback data before expiry.
+          val chunks = mutableListOf<ByteArray>()
           Files.newInputStream(target).use { input ->
-            Files.newOutputStream(previous!!).use { destination ->
-              val buffer = ByteArray(8192)
-              while (true) {
-                checkCapture()
-                val count = input.read(buffer)
-                checkCapture()
-                if (count < 0) break
-                destination.write(buffer, 0, count)
-                checkCapture()
-              }
+            val buffer = ByteArray(8192)
+            while (true) {
+              checkCapture()
+              val count = input.read(buffer)
+              checkCapture()
+              if (count < 0) break
+              chunks += buffer.copyOf(count)
+              checkCapture()
             }
           }
+          previous = chunks
         }
         checkCapture()
         Files.move(staging, target, ATOMIC_MOVE, REPLACE_EXISTING)
@@ -84,21 +84,35 @@ internal suspend fun captureBoundedScreenshot(
     withContext(NonCancellable + Dispatchers.IO) {
       staging?.let(Files::deleteIfExists)
       onEvent("capture-closed")
+      onEvent("owned-cleanup-complete")
     }
     parent.ensureActive()
     if (complete != true || System.nanoTime() - started >= timeout.inWholeNanoseconds) throw ScreenshotCaptureTimeoutException()
-    committed = true
   } catch (failure: Throwable) {
-    parent.ensureActive()
-    throw failure
-  } finally {
-    withContext(NonCancellable + Dispatchers.IO) {
-      if (published && !committed) {
-        if (previous != null) Files.move(previous, target, ATOMIC_MOVE, REPLACE_EXISTING) else Files.deleteIfExists(target)
+    // A failed admission still owns publication rollback. Join recovery before prioritizing
+    // caller cancellation; no owned filesystem cleanup remains after successful admission.
+    val recoveryFailure = runCatching {
+      withContext(NonCancellable + Dispatchers.IO) {
+        if (published) {
+          val original = previous
+          if (original == null) {
+            Files.deleteIfExists(target)
+          } else {
+            val restore = Files.createTempFile(target.parent, ".verity-screenshot-", ".restore")
+            try {
+              Files.newOutputStream(restore).use { output -> original.forEach(output::write) }
+              Files.move(restore, target, ATOMIC_MOVE, REPLACE_EXISTING)
+            } finally {
+              Files.deleteIfExists(restore)
+            }
+          }
+        }
+        staging?.let(Files::deleteIfExists)
       }
-      staging?.let(Files::deleteIfExists)
-      previous?.let(Files::deleteIfExists)
-    }
+    }.exceptionOrNull()
+    parent.ensureActive()
+    recoveryFailure?.let(failure::addSuppressed)
+    throw failure
   }
 }
 

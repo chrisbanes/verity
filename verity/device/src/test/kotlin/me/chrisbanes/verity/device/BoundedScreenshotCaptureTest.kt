@@ -55,7 +55,7 @@ class BoundedScreenshotCaptureTest {
   fun `empty failed and foreign cancelled writers preserve prior output`() = runTest {
     fixture { output ->
       val foreign = runCatching { withTimeout(1.milliseconds) { awaitCancellation() } }.exceptionOrNull()!!
-      for (failure in listOf(null, IllegalStateException("writer failed"), CancellationException("foreign stop"), foreign)) {
+      for (failure in listOf(null, IllegalStateException("writer failed"), java.io.IOException("writer I/O failed"), CancellationException("foreign stop"), foreign)) {
         val observed = runCatching {
           captureBoundedScreenshot(output, 2.seconds) { sink, _, _ ->
             if (failure != null) {
@@ -101,42 +101,44 @@ class BoundedScreenshotCaptureTest {
   fun `cleanup consumes owned deadline and caller cancellation takes priority before admission`() = runTest {
     fixture { output ->
       supervisorScope {
-        for (caller in listOf(false, true)) {
-          val entered = CountDownLatch(1)
-          val release = CountDownLatch(1)
-          val accepted = AtomicBoolean()
-          val capture = async {
-            captureBoundedScreenshot(output, if (caller) 5.seconds else 80.milliseconds, onEvent = {
-              if (it == "capture-closed") {
-                entered.countDown()
-                check(release.await(3, TimeUnit.SECONDS))
+        for (barrierEvent in listOf("capture-closed", "owned-cleanup-complete")) {
+          for (caller in listOf(false, true)) {
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val accepted = AtomicBoolean()
+            val capture = async {
+              captureBoundedScreenshot(output, if (caller) 5.seconds else 80.milliseconds, onEvent = {
+                if (it == barrierEvent) {
+                  entered.countDown()
+                  check(release.await(3, TimeUnit.SECONDS))
+                }
+              }) { sink, _, _ -> sink.write(Buffer().writeUtf8("new"), 3) }
+              accepted.set(true)
+            }
+            try {
+              check(withContext(Dispatchers.IO) { entered.await(3, TimeUnit.SECONDS) })
+              if (caller) {
+                capture.cancel(CancellationException("caller during cleanup"))
+              } else {
+                withContext(Dispatchers.IO) { Thread.sleep(100) }
               }
-            }) { sink, _, _ -> sink.write(Buffer().writeUtf8("new"), 3) }
-            accepted.set(true)
-          }
-          try {
-            check(withContext(Dispatchers.IO) { entered.await(3, TimeUnit.SECONDS) })
-            if (caller) {
-              capture.cancel(CancellationException("caller during cleanup"))
-            } else {
-              withContext(Dispatchers.IO) { Thread.sleep(100) }
+              assertThat(capture.isCompleted).isEqualTo(false)
+              release.countDown()
+              capture.join()
+              val failure = runCatching { capture.await() }.exceptionOrNull()
+              if (caller) {
+                assertThat(failure?.message).isEqualTo("caller during cleanup")
+              } else {
+                assertThat(failure is ScreenshotCaptureTimeoutException).isEqualTo(true)
+              }
+              assertThat(accepted.get()).isEqualTo(false)
+              assertThat(Files.readString(output)).isEqualTo("prior")
+              assertOnlyOutput(output)
+            } finally {
+              release.countDown()
+              capture.cancel()
+              capture.join()
             }
-            assertThat(capture.isCompleted).isEqualTo(false)
-            release.countDown()
-            capture.join()
-            val failure = runCatching { capture.await() }.exceptionOrNull()
-            if (caller) {
-              assertThat(failure?.message).isEqualTo("caller during cleanup")
-            } else {
-              assertThat(failure is ScreenshotCaptureTimeoutException).isEqualTo(true)
-            }
-            assertThat(accepted.get()).isEqualTo(false)
-            assertThat(Files.readString(output)).isEqualTo("prior")
-            assertOnlyOutput(output)
-          } finally {
-            release.countDown()
-            capture.cancel()
-            capture.join()
           }
         }
       }
