@@ -155,7 +155,7 @@ class DiagnosticsTest(unittest.TestCase):
         fixture.mkdir()
         outputs = {"getprop": "[sys.boot_completed]: [1]\n[ro.build.version.sdk]: [34]\n[sys.system_server.start_count]: [2]\n[sys.system_server.start_elapsed]: [123]\n[sys.system_server.start_uptime]: [120]\n[sys.system_server.start_count.secret]: [private]\n[sys.system_serverXstart_count]: [private]\n[sys.boot_completed.secret]: [private]\n[unrelated]: [private]\n",
                    "pm": "instrumentation:dev.mobile.maestro.test/androidx.test.runner.AndroidJUnitRunner (target=dev.mobile.maestro)\ninstrumentation:other/private (target=private)\n",
-                   "logcat": "E/AndroidRuntime: private other crash\nE/AndroidRuntime: dev.mobile.maestro.private unrelated\nE/AndroidRuntime: dev.mobile.maestro startup failure\nI/TestRunner: dev.mobile.maestro.MaestroDriverService ready\nE/AndroidRuntime: FATAL EXCEPTION IN SYSTEM PROCESS: main\nE/AndroidRuntime: Process: system_server, PID: 569\nE/Watchdog: WATCHDOG KILLING SYSTEM PROCESS\nE/AndroidRuntime: Process: system_server.private\nE/Other: FATAL EXCEPTION IN SYSTEM PROCESS private\nE/Other: WATCHDOG KILLING SYSTEM PROCESS private\n",
+                   "logcat": "E/AndroidRuntime: private other crash\nE/AndroidRuntime: dev.mobile.maestro.private unrelated\nE/AndroidRuntime: dev.mobile.maestro startup failure\nI/TestRunner: dev.mobile.maestro.MaestroDriverService ready\nE/AndroidRuntime: FATAL EXCEPTION IN SYSTEM PROCESS: main\nE/AndroidRuntime: Process: system_server, PID: 569\nW/Watchdog( 524): *** WATCHDOG KILLING SYSTEM PROCESS: blocked\nE/AndroidRuntime: Process: system_server.private\nE/Other: FATAL EXCEPTION IN SYSTEM PROCESS private\nE/Other: WATCHDOG KILLING SYSTEM PROCESS private\nW/WatchdogPrivate: *** WATCHDOG KILLING SYSTEM PROCESS: private\nF/DEBUG   ( 600): pid: 524, tid: 525, name: Binder:524_1  >>> system_server <<<\nF/DEBUG   ( 600): pid: 524, tid: 526, name: Binder Pool  >>> system_server <<<\nF/DEBUG   ( 600): pid: 524, tid: 525, name: Binder:524_1  >>> system_server.private <<<\nF/DEBUGPrivate: pid: 524, tid: 525, name: Binder:524_1  >>> system_server <<< private\n",
                    "service": "Service package: not found\n", "pidof": "569\n"}
         for name, output in outputs.items():
             path = fixture / name
@@ -172,7 +172,13 @@ class DiagnosticsTest(unittest.TestCase):
                                      "[sys.system_server.start_uptime]: [120]"])
                 if name in ("crash", "startupLog"):
                     self.assertIn("FATAL EXCEPTION IN SYSTEM PROCESS", result.stdout)
-                    self.assertIn("WATCHDOG KILLING SYSTEM PROCESS", result.stdout)
+                    self.assertIn("W/Watchdog( 524): *** WATCHDOG KILLING SYSTEM PROCESS: blocked", result.stdout)
+                    if name == "crash":
+                        self.assertIn("F/DEBUG   ( 600): pid: 524, tid: 525, name: Binder:524_1  >>> system_server <<<", result.stdout)
+                        self.assertIn("name: Binder Pool  >>> system_server <<<", result.stdout)
+                        self.assertIn("-t 128", scripts[name][-1])
+                    else:
+                        self.assertNotIn("F/DEBUG", result.stdout)
             self.assertEqual(subprocess.run(["/bin/sh", "-c", scripts["packageService"][-1]], capture_output=True, text=True, check=True).stdout,
                              "Service package: not found\n")
             self.assertEqual(subprocess.run(["/bin/sh", "-c", scripts["systemServer"][-1]], capture_output=True, text=True, check=True).stdout, "569\n")
