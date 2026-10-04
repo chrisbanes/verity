@@ -4,6 +4,9 @@ plugins {
 }
 
 dependencies {
+  implementation(enforcedPlatform(libs.grpc.bom))
+  testImplementation(enforcedPlatform(libs.grpc.bom))
+  testFixturesImplementation(enforcedPlatform(libs.grpc.bom))
   implementation(project(":verity:core"))
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.serialization.json)
@@ -23,6 +26,7 @@ dependencies {
   implementation(libs.jackson.databind)
 
   // gRPC with shaded Netty to avoid Ktor conflict
+  implementation(libs.grpc.okhttp)
   implementation(libs.grpc.netty.shaded)
   implementation(libs.grpc.stub)
   implementation(libs.grpc.protobuf)
@@ -30,22 +34,6 @@ dependencies {
   testFixturesImplementation(project(":verity:core"))
   testFixturesImplementation(libs.maestro.client)
   testFixturesImplementation(libs.kotlinx.coroutines.core)
-}
-
-val grpcVersion = extensions.getByType<VersionCatalogsExtension>()
-  .named("libs")
-  .findVersion("grpc")
-  .get()
-  .requiredVersion
-
-configurations.all {
-  resolutionStrategy {
-    force("io.grpc:grpc-stub:$grpcVersion")
-    force("io.grpc:grpc-protobuf:$grpcVersion")
-    force("io.grpc:grpc-core:$grpcVersion")
-    force("io.grpc:grpc-api:$grpcVersion")
-    force("io.grpc:grpc-context:$grpcVersion")
-  }
 }
 
 // The fixed offline full-capture proof is bounded to the approved heap ceiling.
@@ -58,4 +46,8 @@ tasks.withType<Test>().configureEach {
       excludeTags("ios-bounded-proof")
     }
   }
+}
+
+configurations.configureEach {
+  exclude(group = "io.grpc", module = "grpc-netty")
 }

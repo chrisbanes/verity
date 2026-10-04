@@ -28,6 +28,9 @@ tasks.shadowJar {
 }
 
 dependencies {
+  implementation(enforcedPlatform(libs.grpc.bom))
+  testImplementation(enforcedPlatform(libs.grpc.bom))
+  testImplementation(libs.mcp.kotlin.sdk)
   implementation(project(":verity:core"))
   implementation(project(":verity:device"))
   implementation(project(":verity:agent"))
@@ -49,4 +52,33 @@ dependencies {
 
   testImplementation(testFixtures(project(":verity:device")))
   testImplementation(testFixtures(project(":verity:agent")))
+}
+
+// Other projects consume this artifact through a variant, without cross-project model access.
+val packagedUniversal = configurations.create("packagedUniversal") {
+  isCanBeConsumed = true
+  isCanBeResolved = false
+}
+artifacts.add(packagedUniversal.name, tasks.shadowJar)
+val runtime = configurations.runtimeClasspath
+val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc") {
+  dependsOn(tasks.shadowJar, ":verity:smoke-tests:verifySmokeGrpc")
+  archive.set(tasks.shadowJar.flatMap { it.archiveFile })
+  grpcArtifacts.from(
+    runtime.map { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.filter { it.moduleVersion.id.group == "io.grpc" }.map { it.file }
+    },
+  )
+  coordinates.set(
+    runtime.map { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.filter { it.moduleVersion.id.group == "io.grpc" }
+        .map { "${it.moduleVersion.id.name}:${it.moduleVersion.id.version}:${it.file.name}" }
+    },
+  )
+  receipt.set(layout.buildDirectory.file("reports/packaged-grpc.txt"))
+}
+
+// The device-free command regression intentionally uses its module runtime classpath.
+tasks.test {
+  systemProperty("verity.cli.test.classpath", sourceSets.test.get().runtimeClasspath.asPath)
 }

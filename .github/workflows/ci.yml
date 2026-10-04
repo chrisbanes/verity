@@ -64,10 +64,13 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: >-
-            python3 -c 'import subprocess;
+            python3 -c 'import os, platform, subprocess;
             devices = subprocess.run(["adb", "devices"], check=True, capture_output=True, text=True);
             online = [row.split()[0] for row in devices.stdout.splitlines()[1:] if len(row.split()) >= 2 and row.split()[1] == "device"];
             assert len(online) == 1 and online[0].startswith("emulator-"), "Expected exactly one online job-owned emulator";
+            assert platform.system() == "Linux" and platform.machine() == "x86_64", "Expected Linux x86-64";
+            os.environ["VERITY_PACKAGED_ANDROID_SERIAL"] = online[0];
+            subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=universal", "--rerun-tasks", "--no-scan"], check=True);
             raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:test", "-Pinclude.tags=android", "--rerun-tasks", "--no-scan"]).returncode)'
 
       - name: Retain Android smoke results
@@ -75,7 +78,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: smoke-android-test-results
-          path: verity/smoke-tests/build/test-results/test/*.xml
+          path: |
+            verity/smoke-tests/build/test-results/test/*.xml
+            verity/smoke-tests/build/test-results/packagedAndroidTest/*.xml
+            verity/smoke-tests/build/reports/packaged/
+            verity/smoke-tests/build/reports/smoke-grpc.txt
+            verity/cli/build/reports/packaged-grpc.txt
           if-no-files-found: error
 
   smoke-ios:

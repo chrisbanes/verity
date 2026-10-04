@@ -21,6 +21,9 @@ class McpCommand : CliktCommand(name = "mcp") {
     .default("127.0.0.1")
 
   override fun run() = runBlocking {
+    // Kotlin Logging initializes lazily and its optional startup message uses stdout.
+    // Reserve stdout for MCP frames before any server/config logger can initialize.
+    if (transport == "stdio") System.setProperty("kotlin-logging.logStartupMessage", "false")
     val parent = currentContext.parent?.command as Verity
     val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
     val requireContext = resolveRequiredContext(parent.requireContext, config)
@@ -43,7 +46,7 @@ class McpCommand : CliktCommand(name = "mcp") {
 
     when (transport) {
       "stdio" -> {
-        echo("Starting Verity MCP server (stdio)...")
+        echo("Starting Verity MCP server (stdio)...", err = true)
         server.startStdio()
       }
 
