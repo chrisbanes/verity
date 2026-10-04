@@ -352,7 +352,7 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
             if terminate[0] or time.monotonic() >= deadline:
                 break
             result = capture(argv, lambda: terminate[0], deadline, limit=256)
-            result["evidenceStatus"] = "observed" if result["outcome"] == "completed" and result["exit"] == 0 and result["stdout"].strip() else "unknown"
+            result["evidenceStatus"] = "observed" if result["outcome"] == "completed" and result["exit"] == 0 and result["stdout"].strip() and not result["truncated"] else "unknown"
             report["commands"][name] = result
             report["diagnosticFailures"] += failures(result)
             report["truncated"] |= result["truncated"]
@@ -374,6 +374,7 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
             result[key] = value[:len(value) // 2]
             report["droppedRetainedBytes"] += len(value.encode()) - len(result[key].encode())
             report["truncated"] = result["truncated"] = True
+            result["evidenceStatus"] = "unknown"
         if time.monotonic() >= started + duration:
             report["status"] = "failed"
             report["error"] = "Startup diagnostics exceeded wall deadline"

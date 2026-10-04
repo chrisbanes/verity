@@ -51,7 +51,7 @@ class DiagnosticsTest(unittest.TestCase):
         records["report"]["padding"] = "x" * (D.MAX_REPORT - 5000 - total - 15)
         D.write_json(self.directory / "report.json", records["report"])
         result = {"exit": 0, "outcome": "completed", "stdout": '\"\\' * 4000, "stderr": "字" * 4000,
-                  "droppedBytes": {"stdout": 9, "stderr": 7}, "joined": True, "truncated": True}
+                  "droppedBytes": {"stdout": 0, "stderr": 0}, "joined": True, "truncated": False}
         with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=lambda *_args, **_kwargs: json.loads(json.dumps(result))):
             self.assertEqual(D.startup(self.directory, 17, commands=lambda: [(str(i), ["offline"]) for i in range(8)]), 0)
         path = self.directory / "startup.json"
@@ -61,6 +61,28 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual(report["gradleExit"], 17)
         self.assertFalse(report["qualification"])
         self.assertGreater(report["droppedRetainedBytes"], 0)
+        trimmed = [r for r in report["commands"].values() if r["truncated"]]
+        self.assertTrue(trimmed)
+        self.assertTrue(all(r["evidenceStatus"] == "unknown" for r in trimmed))
+        self.assertTrue(all(r["droppedBytes"] == {"stdout": 0, "stderr": 0} for r in trimmed))
+
+    def test_startup_actual_capture_truncation_is_unknown_while_complete_output_observed(self):
+        self.startup_fixture()
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}):
+            self.assertEqual(D.startup(self.directory, 17, commands=lambda: [
+                ("huge", [sys.executable, "-c", "import os; os.write(1,b'x'*300000); os.write(2,b'y'*300000)"]),
+                ("complete", [sys.executable, "-c", "print('complete')"])]), 0)
+        report = json.loads((self.directory / "startup.json").read_text())
+        huge = report["commands"]["huge"]
+        self.assertEqual(huge["exit"], 0)
+        self.assertTrue(huge["joined"])
+        self.assertTrue(huge["truncated"])
+        self.assertEqual(huge["evidenceStatus"], "unknown")
+        self.assertEqual(huge["droppedBytes"], {"stdout": 300000 - 256, "stderr": 300000 - 256})
+        self.assertEqual(huge["stdout"], "x" * 256)
+        self.assertEqual(report["commands"]["complete"]["evidenceStatus"], "observed")
+        self.assertEqual(report["gradleExit"], 17)
+        self.assertFalse(report["qualification"])
 
     def test_startup_duplicate_is_refused_without_overwriting_prior_evidence(self):
         self.startup_fixture()
