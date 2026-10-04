@@ -83,7 +83,8 @@ class IosSettingsSmoke {
       fun nonempty(tree: me.chrisbanes.verity.core.hierarchy.HierarchyNode): Boolean = tree.attributes.isNotEmpty() || tree.states.isNotEmpty() || tree.children.any(::nonempty)
       assertThat(nonempty(qualified.captureHierarchyTree())).isTrue()
       assertThat(nonempty(qualified.captureHierarchyTree(2000.milliseconds))).isTrue()
-      qualified.pressKey("HOME")
+      // SDK ENTER uses this keyboard wire name. HOME uses the separate pressButton endpoint.
+      qualified.pressKey("return")
       assertThat(nonempty(qualified.captureHierarchyTree())).isTrue()
       capture = recordCapture { qualified.captureHierarchyTree(2000.milliseconds) }
       val inFlight = capture

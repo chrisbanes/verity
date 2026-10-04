@@ -59,6 +59,7 @@ class AndroidBoundedCaptureHarnessTest {
       val stall = AtomicBoolean(true)
       val serverActive = AtomicInteger()
       val driverActive = AtomicInteger()
+      val peakDriverActive = AtomicInteger()
       val delayed = AtomicBoolean()
       val lateEntered = CountDownLatch(1)
       val lateRelease = CountDownLatch(1)
@@ -91,7 +92,8 @@ class AndroidBoundedCaptureHarnessTest {
           "deviceInfo" -> DeviceInfo(maestro.device.Platform.ANDROID, 100, 100, 100, 100)
 
           "contentDescriptor" -> {
-            driverActive.incrementAndGet()
+            val active = driverActive.incrementAndGet()
+            peakDriverActive.updateAndGet { maxOf(it, active) }
             try {
               val response = stub.viewHierarchy(MaestroAndroid.ViewHierarchyRequest.newBuilder().build())
               if (delayed.get()) {
@@ -119,14 +121,15 @@ class AndroidBoundedCaptureHarnessTest {
         check(workers.threads.keys.any { "hierarchyRPC" in androidProofStages(it.stackTrace.toList()) })
         invocation.cancel()
         invocation.join()
+        assertThat(invocation.isCompleted).isEqualTo(true)
+        // DispatchedTask resumes continuations before restoring thread context. Tokens sample
+        // live work; joined invocations and actual driver/server counts prove completion.
         assertThat(driverActive.get()).isEqualTo(0)
-        assertThat(workers.threads.isEmpty()).isEqualTo(true)
         check(withContext(Dispatchers.IO) { exited.await(2, TimeUnit.SECONDS) })
         assertThat(serverActive.get()).isEqualTo(0)
         stall.set(false)
         assertThat(withContext(workers) { session.captureHierarchyTree(2.seconds) }.attributes["text"]).isEqualTo("supplemental-only")
         assertThat(driverActive.get()).isEqualTo(0)
-        assertThat(workers.threads.isEmpty()).isEqualTo(true)
         delayed.set(true)
         supervisorScope {
           val failed = async(workers) {
@@ -147,9 +150,10 @@ class AndroidBoundedCaptureHarnessTest {
           assertThat(parentFailure?.message).isEqualTo("ordinary parent assertion")
           assertThat(runCatching { failed.await() }.exceptionOrNull()?.message).isEqualTo("ordinary delayed assertion")
           assertThat(driverActive.get()).isEqualTo(0)
-          assertThat(workers.threads.isEmpty()).isEqualTo(true)
           assertThat(serverActive.get()).isEqualTo(0)
+          assertThat(failed.isCompleted).isEqualTo(true)
         }
+        assertThat(peakDriverActive.get()).isEqualTo(1)
       } finally {
         withContext(NonCancellable + Dispatchers.IO) {
           release.countDown()
