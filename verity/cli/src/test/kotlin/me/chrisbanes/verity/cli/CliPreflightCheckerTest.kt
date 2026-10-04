@@ -2,6 +2,7 @@ package me.chrisbanes.verity.cli
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNotNull
@@ -244,5 +245,76 @@ class CliPreflightCheckerTest {
     assertThat(text).contains("provider.credential.missing")
     assertThat(text).contains("Set ANTHROPIC_API_KEY or pass --api-key")
     assertThat(text).contains("Run `verity run <path.journey.yaml>`")
+  }
+
+  @Test
+  fun `rejects unsupported effort before device preflight and returns role parameters`() = runTest {
+    val journey = Files.createTempFile("journey-", ".journey.yaml")
+    var devicePreflightCalls = 0
+    val checker = CliPreflightChecker(
+      environment = { "test-key" },
+      devicePreflightChecker = DevicePreflightChecker { _, _ ->
+        devicePreflightCalls += 1
+        PreflightReport()
+      },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = "openai",
+        cliNavigatorModel = "gpt-5.2",
+        cliInspectorModel = "gpt-5.2-pro",
+        cliNavigatorEffort = "xhigh",
+        cliInspectorEffort = "low",
+        apiKey = null,
+        journeyPath = journey.toString(),
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(),
+    )
+
+    assertThat(result.report.errors.single().code).isEqualTo(PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED)
+    assertThat(result.report.errors.single().details["role"]).isEqualTo("inspector")
+    assertThat(result.report.renderPlainText()).contains("leave the setting unset")
+    assertThat(devicePreflightCalls).isEqualTo(0)
+    assertThat(result.navigatorParams.additionalProperties.orEmpty().keys).contains("reasoning_effort")
+    assertThat(result.inspectorParams.additionalProperties.orEmpty().keys).isEmpty()
+  }
+
+  @Test
+  fun `uses cli effort before nested config and rejects unknown backend identity`() = runTest {
+    val journey = Files.createTempFile("journey-", ".journey.yaml")
+    val checker = CliPreflightChecker(
+      environment = { "test-key" },
+      devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+      backendIdentity = { _, _ -> "openai-chatgpt-codex" },
+    )
+
+    val result = checker.check(
+      request = CliPreflightRequest(
+        cliProvider = "openai",
+        cliNavigatorModel = "gpt-5.2",
+        cliInspectorModel = "gpt-5.2-pro",
+        cliNavigatorEffort = "xhigh",
+        cliInspectorEffort = null,
+        apiKey = null,
+        journeyPath = journey.toString(),
+        contextPath = null,
+        platform = Platform.ANDROID_TV,
+        deviceId = null,
+      ),
+      config = VerityConfig(
+        llm = VerityLlmConfig(
+          navigatorEffort = "low",
+          inspectorEffort = "medium",
+        ),
+      ),
+      includeDevicePreflight = false,
+    )
+
+    assertThat(result.report.errors.map { it.code })
+      .isEqualTo(listOf(PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED, PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED))
   }
 }

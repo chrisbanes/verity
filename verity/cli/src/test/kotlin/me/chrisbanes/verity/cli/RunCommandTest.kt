@@ -1,5 +1,8 @@
 package me.chrisbanes.verity.cli
 
+import ai.koog.http.client.KoogHttpClient
+import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
+import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.containsExactly
@@ -12,13 +15,20 @@ import assertk.assertions.isTrue
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.ModelFailureException
@@ -36,6 +46,8 @@ import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ArtifactStatus
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
@@ -45,11 +57,260 @@ import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.ActionFlowPreparationPhase
+import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
+import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.validateActionFlow
 
 class RunCommandTest {
   private val json = Json { ignoreUnknownKeys = true }
+
+  @Test
+  fun `production callbacks forward independent effort through navigator scroll and both inspector requests`() {
+    val dir = createTempDirectory("verity-effort-callbacks").toFile()
+    try {
+      val journey = writeJourneyWithSteps(
+        dir,
+        "callbacks.journey.yaml",
+        "Callbacks",
+        platform = "android",
+        steps = listOf("tap Missing", "[?tree] Settings exists", "complete onboarding wizard", "[?visual] Backdrop image loads"),
+      )
+      val requests = mutableListOf<CapturedEffortRequest>()
+      val fakeSession = ScreenshotDeviceSession(
+        FakeDeviceSession(Platform.ANDROID_MOBILE, HierarchyNode(attributes = mapOf("text" to "Home"))),
+      )
+      val command = successfulProductionCommand(requests, fakeSession)
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "out").absolutePath} --provider openai --api-key test-key " +
+          "--navigator-model gpt-5.2 --navigator-effort xhigh " +
+          "--inspector-model gpt-5.2-pro --inspector-effort medium run ${journey.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(0)
+      val chatRequests = requests.filter { it.url.contains("chat/completions") }
+      assertThat(chatRequests.size).isEqualTo(6)
+      chatRequests.forEach { request ->
+        assertThat(request.body.jsonObject["reasoning_effort"]?.jsonPrimitive?.content).isEqualTo("xhigh")
+      }
+      assertThat(chatRequests.count { it.body.toString().contains("suggest which direction to scroll") }).isEqualTo(5)
+      assertThat(chatRequests.count { it.body.toString().contains("Generate ONLY a strict JSON object") }).isEqualTo(1)
+      val responsesRequests = requests.filter { it.url.contains("responses") }
+      assertThat(responsesRequests.size).isEqualTo(2)
+      responsesRequests.forEach { request ->
+        assertThat(request.body.jsonObject["reasoning"]?.jsonObject?.get("effort")?.jsonPrimitive?.content)
+          .isEqualTo("medium")
+      }
+      assertThat(responsesRequests.any { it.body.toString().contains("Accessibility tree:") }).isTrue()
+      assertThat(responsesRequests.any { it.body.toString().contains("Current screenshot") }).isTrue()
+      assertThat(chatRequests.map { it.model }.toSet()).isEqualTo(setOf("gpt-5.2"))
+      assertThat(responsesRequests.map { it.model }.toSet()).isEqualTo(setOf("gpt-5.2-pro"))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `production callbacks omit effort fields when both roles are unset`() {
+    val dir = createTempDirectory("verity-effort-unset-callbacks").toFile()
+    try {
+      val journey = writeJourneyWithSteps(
+        dir,
+        "callbacks.journey.yaml",
+        "Callbacks",
+        platform = "android",
+        steps = listOf("tap Missing", "[?tree] Settings exists", "complete onboarding wizard", "[?visual] Backdrop image loads"),
+      )
+      val requests = mutableListOf<CapturedEffortRequest>()
+      val command = successfulProductionCommand(
+        requests,
+        ScreenshotDeviceSession(FakeDeviceSession(Platform.ANDROID_MOBILE, HierarchyNode(attributes = mapOf("text" to "Home")))),
+      )
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "out").absolutePath} --provider openai --api-key test-key " +
+          "--navigator-model gpt-5.2 --inspector-model gpt-5.2-pro run ${journey.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(requests.size).isEqualTo(8)
+      requests.forEach { request ->
+        assertThat(request.body.keys).doesNotContain("reasoning_effort")
+        assertThat(request.body.keys).doesNotContain("reasoning")
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `generated preview forwards navigator effort through the production client`() {
+    val dir = createTempDirectory("verity-effort-preview-callback").toFile()
+    try {
+      val journey = writeJourneyWithSteps(dir, "generated.journey.yaml", "Generated", steps = listOf("complete onboarding wizard"))
+      val requests = mutableListOf<CapturedEffortRequest>()
+      val command = successfulProductionCommand(
+        requests,
+        session = null,
+      )
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "out").absolutePath} --provider openai --api-key test-key " +
+          "--navigator-model gpt-5.2 --navigator-effort xhigh " +
+          "--inspector-model unsupported-model --inspector-effort invalid run --dry-run ${journey.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(requests.size).isEqualTo(1)
+      assertThat(requests.single().body["reasoning_effort"]?.jsonPrimitive?.content).isEqualTo("xhigh")
+      assertThat(requests.single().model).isEqualTo("gpt-5.2")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `unsupported navigator effort exits setup before device session or client creation`() {
+    val dir = createTempDirectory("verity-effort-preflight").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val outputDir = File(dir, "output")
+      var devicePreflightCalls = 0
+      var sessionCalls = 0
+      var clientCalls = 0
+      val checker = CliPreflightChecker(
+        environment = { null },
+        devicePreflightChecker = DevicePreflightChecker { _, _ ->
+          devicePreflightCalls += 1
+          me.chrisbanes.verity.core.preflight.PreflightReport()
+        },
+      )
+      val command = RunCommand(
+        clock = fixedClock(),
+        preflightChecker = { request, config, includeDevice, includeInspector ->
+          checker.check(request, config, includeDevice, includeInspector)
+        },
+        sessionFactory = { _, _, _ ->
+          sessionCalls += 1
+          error("Device session must not be created")
+        },
+        clientFactory = { _, _ ->
+          clientCalls += 1
+          error("LLM client must not be created")
+        },
+      )
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${outputDir.absolutePath} --provider openai --api-key test-key " +
+          "--navigator-model gpt-5 --navigator-effort none run ${file.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("provider.effort.unsupported")
+      assertThat(devicePreflightCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+      assertThat(clientCalls).isEqualTo(0)
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `unsupported inspector effort exits setup before device preflight session client or request`() {
+    val dir = createTempDirectory("verity-inspector-effort-preflight").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      var devicePreflightCalls = 0
+      var sessionCalls = 0
+      var clientCalls = 0
+      var requestCalls = 0
+      val checker = CliPreflightChecker(
+        environment = { null },
+        devicePreflightChecker = DevicePreflightChecker { _, _ ->
+          devicePreflightCalls += 1
+          me.chrisbanes.verity.core.preflight.PreflightReport()
+        },
+      )
+      val command = RunCommand(
+        preflightChecker = { request, config, includeDevice, includeInspector ->
+          checker.check(request, config, includeDevice, includeInspector)
+        },
+        sessionFactory = { _, _, _ ->
+          sessionCalls += 1
+          error("Device session must not be created")
+        },
+        clientFactory = { _, _ ->
+          clientCalls += 1
+          requestCalls += 1
+          error("LLM client must not be created")
+        },
+      )
+
+      val result = Verity().subcommands(command).test(
+        "--provider openai --api-key test-key --navigator-model gpt-5.2 --navigator-effort xhigh " +
+          "--inspector-model gpt-5 --inspector-effort none run ${file.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("provider.effort.unsupported")
+      assertThat(devicePreflightCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+      assertThat(clientCalls).isEqualTo(0)
+      assertThat(requestCalls).isEqualTo(0)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `generated preview rejects unsupported navigator before client while fast preview stays lazy`() {
+    val dir = createTempDirectory("verity-effort-preview").toFile()
+    try {
+      val generated = writeJourneyWithSteps(dir, "generated.journey.yaml", "Generated", steps = listOf("complete onboarding wizard"))
+      var preflightCalls = 0
+      var clientCalls = 0
+      var sessionCalls = 0
+      val command = RunCommand(
+        preflightChecker = { request, config, includeDevice, includeInspector ->
+          preflightCalls += 1
+          CliPreflightChecker(environment = { "test-key" }).check(request, config, includeDevice, includeInspector)
+        },
+        clientFactory = { _, _ ->
+          clientCalls += 1
+          error("LLM client must not be created")
+        },
+        sessionFactory = { _, _, _ ->
+          sessionCalls += 1
+          error("Device session must not be created")
+        },
+      )
+
+      val rejected = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "generated-output").absolutePath} --provider openai --api-key test-key --navigator-model gpt-5 --navigator-effort none run --dry-run ${generated.absolutePath}",
+      )
+      assertThat(rejected.statusCode).isEqualTo(3)
+      assertThat(rejected.output).contains("provider.effort.unsupported")
+      assertThat(preflightCalls).isEqualTo(1)
+      assertThat(clientCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+
+      preflightCalls = 0
+      val fast = writeJourney(dir, "fast.journey.yaml", "Fast")
+      val accepted = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "fast-output").absolutePath} --provider unknown --navigator-effort invalid --inspector-effort invalid run --dry-run ${fast.absolutePath}",
+      )
+      assertThat(accepted.statusCode).isEqualTo(0)
+      assertThat(preflightCalls).isEqualTo(0)
+      assertThat(clientCalls).isEqualTo(0)
+      assertThat(sessionCalls).isEqualTo(0)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
 
   @Test
   fun `single-file input runs one journey`() {
@@ -301,6 +562,8 @@ class RunCommandTest {
             provider = "ollama",
             navigatorModel = "qwen2.5-coder",
             inspectorModel = "llava",
+            navigatorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "high"),
+            inspectorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "low"),
           ),
         )
       }
@@ -326,6 +589,8 @@ class RunCommandTest {
       assertThat(summary.provider).isEqualTo("ollama")
       assertThat(summary.navigatorModel).isEqualTo("qwen2.5-coder")
       assertThat(summary.inspectorModel).isEqualTo("llava")
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "high"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "low"))
       assertThat(summary.journeys).containsExactly(
         SuiteJourneyArtifact(
           path = "journeys/001-single-journey.json",
@@ -357,6 +622,33 @@ class RunCommandTest {
         EvidenceArtifact(EvidenceType.HIERARCHY, "evidence/001-single-journey/segment-000-tree.txt"),
       )
       assertThat(segment.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "diagnostic only"))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `successful suite without runner metadata falls back to resolved requested effort`() {
+    val dir = createTempDirectory("verity-run-effort-fallback").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) { journeys ->
+        SuiteRunResult(
+          results = journeys.map { resolved ->
+            ResolvedJourneyResult(resolved, JourneyResult(resolved.journey.name, emptyList()))
+          },
+        )
+      }
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${outputDir.absolutePath} --navigator-effort none --inspector-effort medium run ${file.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(0)
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"))
     } finally {
       dir.deleteRecursively()
     }
@@ -397,7 +689,7 @@ class RunCommandTest {
 
       val result = Verity()
         .subcommands(command)
-        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+        .test("--output-path ${outputDir.absolutePath} --navigator-effort xhigh --inspector-effort medium run ${file.absolutePath}")
 
       val runDir = File(outputDir, "runs/20260708-143512-single-journey")
       val summaryFile = File(runDir, "summary.json")
@@ -411,6 +703,8 @@ class RunCommandTest {
       assertThat(summary.total).isEqualTo(1)
       assertThat(summary.passed).isEqualTo(0)
       assertThat(summary.failed).isEqualTo(1)
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "xhigh"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"))
       assertThat(summary.journeys).containsExactly(
         SuiteJourneyArtifact(
           path = "journeys/001-single-journey.json",
@@ -698,7 +992,7 @@ class RunCommandTest {
 
       val result = Verity()
         .subcommands(command)
-        .test("--output-path ${outputDir.absolutePath} run ${missing.absolutePath}")
+        .test("--output-path ${outputDir.absolutePath} --navigator-effort high --inspector-effort none run ${missing.absolutePath}")
 
       assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("summary disk full")
@@ -707,6 +1001,8 @@ class RunCommandTest {
       assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
       assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
       assertThat(summary.error?.message).isEqualTo("summary disk full")
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "high"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
     } finally {
       dir.deleteRecursively()
     }
@@ -750,7 +1046,7 @@ class RunCommandTest {
 
       val result = Verity()
         .subcommands(runCommand(clock = fixedClock()) { error("Suite runner should not be called") })
-        .test("--output-path ${outputDir.absolutePath} run ${missing.absolutePath}")
+        .test("--output-path ${outputDir.absolutePath} --navigator-effort ' high ' --inspector-effort none run ${missing.absolutePath}")
 
       val summary = File(outputDir, "runs/20260708-143512-missing-journey/summary.json")
       assertThat(result.statusCode).isEqualTo(2)
@@ -764,6 +1060,8 @@ class RunCommandTest {
       assertThat(summaryJson.failed).isEqualTo(0)
       assertThat(summaryJson.journeys).containsExactly()
       assertThat(summaryJson.error?.kind).isEqualTo(ArtifactErrorKind.PARSER_FAILURE)
+      assertThat(summaryJson.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, " high "))
+      assertThat(summaryJson.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
     } finally {
       dir.deleteRecursively()
     }
@@ -1140,7 +1438,7 @@ class RunCommandTest {
           artifactRecorder = recorder,
         ).run(resolved.journey)
       }) { error("unused suite runner") }
-      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} --navigator-effort xhigh --inspector-effort medium run ${dir.absolutePath}")
       assertThat(result.statusCode).isEqualTo(5)
       assertThat(seen).containsExactly("First", "Second")
       val runDir = File(outputDir, "runs").listFiles()!!.single()
@@ -1150,6 +1448,8 @@ class RunCommandTest {
       assertThat(summary.total).isEqualTo(2)
       assertThat(summary.passed).isEqualTo(1)
       assertThat(summary.error).isEqualTo(ArtifactError(ArtifactErrorKind.MODEL_FAILURE, "Inspector tree request failed"))
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "xhigh"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"))
       assertThat(readJourney(File(runDir, "journeys/001-first.json")).passed).isEqualTo(true)
       assertThat(readJourney(secondFile).error).isEqualTo(summary.error)
       assertThat(File(runDir, "journeys/003-third.json").exists()).isFalse()
@@ -1495,6 +1795,95 @@ class RunCommandTest {
     ),
     passed = true,
   )
+
+  private fun successfulProductionCommand(
+    requests: MutableList<CapturedEffortRequest>,
+    session: DeviceSession?,
+  ): RunCommand {
+    val checker = CliPreflightChecker(
+      environment = { "test-key" },
+      devicePreflightChecker = DevicePreflightChecker { _, _ ->
+        me.chrisbanes.verity.core.preflight.PreflightReport()
+      },
+    )
+    return RunCommand(
+      preflightChecker = { request, config, includeDevice, includeInspector ->
+        checker.check(request, config, includeDevice, includeInspector)
+      },
+      sessionFactory = { _, _, _ -> checkNotNull(session) { "Preview must not create a device session" } },
+      clientFactory = { _, _ ->
+        OpenAILLMClient(OpenAIClientSettings(), fixtureKoogHttpClient(requests))
+      },
+    )
+  }
+
+  private fun fixtureKoogHttpClient(requests: MutableList<CapturedEffortRequest>): KoogHttpClient = java.lang.reflect.Proxy.newProxyInstance(
+    KoogHttpClient::class.java.classLoader,
+    arrayOf(KoogHttpClient::class.java),
+  ) { _, method, arguments ->
+    when (method.name) {
+      "getClientName" -> "offline-run-command-fixture"
+
+      "post" -> {
+        val url = arguments?.getOrNull(0).toString()
+        val request = arguments?.getOrNull(1) ?: error("Koog POST fixture did not receive a request body")
+        val requestJson = json.parseToJsonElement(request as String).jsonObject
+        val model = requestJson["model"]?.jsonPrimitive?.content.orEmpty()
+        val bodyText = requestJson.toString()
+        val responseType = arguments.getOrNull(3) as kotlin.reflect.KClass<Any>
+        requests += CapturedEffortRequest(url, model, requestJson)
+        val responseJson = if (url.contains("responses")) {
+          """
+            {"id":"resp_fixture","object":"response","created_at":0,"status":"completed","model":"$model","parallelToolCalls":false,"text":{},"output_text":"{\"passed\":true,\"reasoning\":\"fixture\"}","output":[{"type":"message","id":"msg_fixture","status":"completed","role":"assistant","content":[{"type":"output_text","text":"{\"passed\":true,\"reasoning\":\"fixture\"}","annotations":[]}]}]}
+          """.trimIndent()
+        } else {
+          val content = if (bodyText.contains("suggest which direction to scroll")) {
+            "NONE"
+          } else {
+            "{\"actions\":[{\"type\":\"tapOnText\",\"text\":\"Missing\"}]}"
+          }
+          """
+            {"id":"chat_fixture","object":"chat.completion","created":0,"model":"$model","choices":[{"index":0,"message":{"role":"assistant","content":${Json.encodeToString(content)}},"finish_reason":"stop"}]}
+          """.trimIndent()
+        }
+        if (responseType == String::class) return@newProxyInstance responseJson
+        val responseSerializer = serializerFor(responseType)
+        json.decodeFromString(responseSerializer, responseJson)
+      }
+
+      "close" -> Unit
+
+      else -> {
+        requests += CapturedEffortRequest("operation:${method.name}", "", JsonObject(emptyMap()))
+        error("Unexpected fixture HTTP operation: ${method.name}")
+      }
+    }
+  } as KoogHttpClient
+
+  private fun serializerFor(type: kotlin.reflect.KClass<*>): kotlinx.serialization.KSerializer<Any> {
+    val companion = type.java.getField("Companion").get(null)
+    return companion.javaClass.getMethod("serializer").invoke(companion) as kotlinx.serialization.KSerializer<Any>
+  }
+
+  private data class CapturedEffortRequest(
+    val url: String,
+    val model: String,
+    val body: JsonObject,
+  )
+
+  private class ScreenshotDeviceSession(
+    private val delegate: DeviceSession,
+  ) : DeviceSession by delegate {
+    override suspend fun captureScreenshot(output: Path) {
+      withContext(Dispatchers.IO) { Files.write(output, PNG_PIXEL) }
+    }
+  }
+
+  private companion object {
+    val PNG_PIXEL = java.util.Base64.getDecoder().decode(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/pWQAAAAASUVORK5CYII=",
+    )
+  }
 
   private fun writeJourney(
     dir: File,

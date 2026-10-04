@@ -71,4 +71,5 @@ object PreflightCodes {
   const val PROVIDER_UNKNOWN = "provider.unknown"
   const val PROVIDER_MODEL_UNKNOWN = "provider.model.unknown"
   const val PROVIDER_CREDENTIAL_MISSING = "provider.credential.missing"
+  const val PROVIDER_EFFORT_UNSUPPORTED = "provider.effort.unsupported"
 }
