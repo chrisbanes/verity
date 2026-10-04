@@ -84,6 +84,46 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual(report["gradleExit"], 17)
         self.assertFalse(report["qualification"])
 
+    def test_failure_dump_retains_old_marker_and_drains_filtered_oversize_as_unknown(self):
+        self.startup_fixture()
+        fixture = self.directory / "retention-bin"
+        fixture.mkdir()
+        mode = fixture / "huge"
+        logcat = fixture / "logcat"
+        logcat.write_text("#!" + sys.executable + "\nimport sys\nfrom pathlib import Path\n"
+                          "args=sys.argv[1:]\n"
+                          "expected=['-b','crash','-b','main','-b','system','-d','-v','brief']\n"
+                          "assert args == expected or args == expected[:7]+['-t','128']+expected[7:]\n"
+                          "marker='W/Watchdog( 524): *** WATCHDOG KILLING SYSTEM PROCESS: blocked'\n"
+                          "records=[marker]+['E/PrivateApp: private record']*200\n"
+                          "if Path(" + repr(str(mode)) + ").exists(): records=[marker]*10000\n"
+                          "if '-t' in args: records=records[-128:]\n"
+                          "print('\\n'.join(records))\n")
+        logcat.chmod(0o755)
+        with patch.dict(os.environ, {"ANDROID_HOME": "/offline/sdk", "PATH": str(fixture) + os.pathsep + os.environ["PATH"],
+                                     "MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}):
+            script = dict(D.startup_commands())["crash"][-1]
+            baseline = script.replace(" -d -v", " -d -t 128 -v", 1)
+            old = D.capture(["/bin/sh", "-c", baseline], limit=256)
+            self.assertEqual(old["exit"], 1)
+            self.assertFalse(old["stdout"])
+            current = D.capture(["/bin/sh", "-c", script], limit=256)
+            self.assertEqual(current["exit"], 0)
+            self.assertIn("*** WATCHDOG", current["stdout"])
+            self.assertNotIn("private", current["stdout"])
+            mode.touch()
+            self.assertEqual(D.startup(self.directory, 17, commands=lambda: [("crash", ["/bin/sh", "-c", script])]), 0)
+        report = json.loads((self.directory / "startup.json").read_text())
+        result = report["commands"]["crash"]
+        self.assertEqual(result["exit"], 0)
+        self.assertTrue(result["joined"])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(len(result["stdout"].encode()), 256)
+        self.assertGreater(result["droppedBytes"]["stdout"], 500000)
+        self.assertEqual(result["evidenceStatus"], "unknown")
+        self.assertEqual(report["gradleExit"], 17)
+        self.assertFalse(report["qualification"])
+
     def test_startup_duplicate_is_refused_without_overwriting_prior_evidence(self):
         self.startup_fixture()
         path = self.directory / "startup.json"
@@ -176,7 +216,7 @@ class DiagnosticsTest(unittest.TestCase):
                     if name == "crash":
                         self.assertIn("F/DEBUG   ( 600): pid: 524, tid: 525, name: Binder:524_1  >>> system_server <<<", result.stdout)
                         self.assertIn("name: Binder Pool  >>> system_server <<<", result.stdout)
-                        self.assertIn("-t 128", scripts[name][-1])
+                        self.assertNotIn(" -t ", scripts[name][-1])
                     else:
                         self.assertNotIn("F/DEBUG", result.stdout)
             self.assertEqual(subprocess.run(["/bin/sh", "-c", scripts["packageService"][-1]], capture_output=True, text=True, check=True).stdout,
@@ -381,7 +421,7 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual(len(commands), 6)
         crash = dict(commands)["crash"]
         self.assertEqual(crash[:4], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554", "shell"])
-        self.assertEqual(crash[-1].replace("-b crash -b main -b system", "-b crash"), startup[-1])
+        self.assertEqual(crash[-1].replace(" -t 128", ""), startup[-1])
         fixture = self.directory / "prehook-bin"
         fixture.mkdir()
         logcat = fixture / "logcat"

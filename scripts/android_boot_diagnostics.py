@@ -304,7 +304,7 @@ def startup_commands():
             ("instrumentation", prefix + [r"pm list instrumentation | grep -E '^instrumentation:dev\.mobile\.maestro\.test/androidx\.test\.runner\.AndroidJUnitRunner \(target=dev\.mobile\.maestro\)$'"]),
             ("driverPid", prefix + ["pidof dev.mobile.maestro || printf '\n'"]),
             ("driverPort", prefix + [r"grep -E '^[ ]*[0-9]+: [0-9A-F]+:1B59 ' /proc/net/tcp /proc/net/tcp6"]),
-            ("crash", prefix + [CRASH_LOG_SCRIPT]),
+            ("crash", prefix + [CRASH_LOG_SCRIPT.replace("logcat -b crash ", "logcat -b crash -b main -b system ", 1).replace(" -t 128", "", 1)]),
             ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I Watchdog:V SystemServer:E | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: '"])]
 
 
