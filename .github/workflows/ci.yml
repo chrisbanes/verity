@@ -140,7 +140,7 @@ jobs:
           VERITY_BOOT_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 30
           target: default
           arch: arm64-v8a
           pre-emulator-launch-script: python3 scripts/android_boot_diagnostics.py start verity/smoke-tests/build/reports/packaged-targets/android-bootstrap
