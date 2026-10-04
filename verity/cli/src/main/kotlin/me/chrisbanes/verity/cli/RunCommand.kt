@@ -37,6 +37,8 @@ import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ArtifactStatus
 import me.chrisbanes.verity.core.result.AssertionArtifact
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
 import me.chrisbanes.verity.core.result.JourneyArtifactResult
 import me.chrisbanes.verity.core.result.SegmentArtifactResult
@@ -65,6 +67,8 @@ data class RunArtifactMetadata(
   val provider: String,
   val navigatorModel: String,
   val inspectorModel: String,
+  val navigatorEffort: EffortArtifactSetting = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
+  val inspectorEffort: EffortArtifactSetting = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
 )
 
 data class SuiteRunResult(
@@ -295,7 +299,7 @@ class RunCommand(
 
     printSuiteResult(suiteResult)
     try {
-      writeSuiteArtifacts(path, suiteResult, runArtifacts)
+      writeSuiteArtifacts(path, suiteResult, runArtifacts, metadata)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Exception) {
@@ -462,6 +466,8 @@ class RunCommand(
         provider = metadata?.provider,
         navigatorModel = metadata?.navigatorModel,
         inspectorModel = metadata?.inspectorModel,
+        navigatorEffort = metadata?.navigatorEffort,
+        inspectorEffort = metadata?.inspectorEffort,
       ),
     )
   }
@@ -498,6 +504,8 @@ class RunCommand(
           provider = summaryMetadata?.provider,
           navigatorModel = summaryMetadata?.navigatorModel,
           inspectorModel = summaryMetadata?.inspectorModel,
+          navigatorEffort = summaryMetadata?.navigatorEffort,
+          inspectorEffort = summaryMetadata?.inspectorEffort,
         ),
       )
     } catch (e: CancellationException) {
@@ -559,6 +567,8 @@ class RunCommand(
         provider = metadata?.provider,
         navigatorModel = metadata?.navigatorModel,
         inspectorModel = metadata?.inspectorModel,
+        navigatorEffort = metadata?.navigatorEffort,
+        inspectorEffort = metadata?.inspectorEffort,
       ),
     )
   }
@@ -567,7 +577,9 @@ class RunCommand(
     path: File,
     suiteResult: SuiteRunResult,
     runArtifacts: RunArtifactDirectory,
+    metadata: RunArtifactMetadata?,
   ) {
+    val summaryMetadata = suiteResult.metadata ?: metadata
     val journeyRefs = suiteResult.results.mapIndexed { index, item ->
       val recorder = runArtifacts.journey(index + 1, item.resolvedJourney.journey.name)
       writeJourneyResult(runArtifacts, recorder.resultPath, item.toArtifactResult())
@@ -594,9 +606,11 @@ class RunCommand(
           ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Journey suite failed")
         },
         platform = suiteResult.results.firstOrNull()?.resolvedJourney?.journey?.platform,
-        provider = suiteResult.metadata?.provider,
-        navigatorModel = suiteResult.metadata?.navigatorModel,
-        inspectorModel = suiteResult.metadata?.inspectorModel,
+        provider = summaryMetadata?.provider,
+        navigatorModel = summaryMetadata?.navigatorModel,
+        inspectorModel = summaryMetadata?.inspectorModel,
+        navigatorEffort = summaryMetadata?.navigatorEffort,
+        inspectorEffort = summaryMetadata?.inspectorEffort,
       ),
     )
   }

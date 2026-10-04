@@ -46,6 +46,8 @@ import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ArtifactStatus
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
@@ -173,6 +175,7 @@ class RunCommandTest {
     val dir = createTempDirectory("verity-effort-preflight").toFile()
     try {
       val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val outputDir = File(dir, "output")
       var devicePreflightCalls = 0
       var sessionCalls = 0
       var clientCalls = 0
@@ -184,6 +187,7 @@ class RunCommandTest {
         },
       )
       val command = RunCommand(
+        clock = fixedClock(),
         preflightChecker = { request, config, includeDevice, includeInspector ->
           checker.check(request, config, includeDevice, includeInspector)
         },
@@ -198,7 +202,8 @@ class RunCommandTest {
       )
 
       val result = Verity().subcommands(command).test(
-        "--provider openai --api-key test-key --navigator-model gpt-5 --navigator-effort none run ${file.absolutePath}",
+        "--output-path ${outputDir.absolutePath} --provider openai --api-key test-key " +
+          "--navigator-model gpt-5 --navigator-effort none run ${file.absolutePath}",
       )
 
       assertThat(result.statusCode).isEqualTo(3)
@@ -206,6 +211,9 @@ class RunCommandTest {
       assertThat(devicePreflightCalls).isEqualTo(0)
       assertThat(sessionCalls).isEqualTo(0)
       assertThat(clientCalls).isEqualTo(0)
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT))
     } finally {
       dir.deleteRecursively()
     }
@@ -554,6 +562,8 @@ class RunCommandTest {
             provider = "ollama",
             navigatorModel = "qwen2.5-coder",
             inspectorModel = "llava",
+            navigatorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "high"),
+            inspectorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "low"),
           ),
         )
       }
@@ -579,6 +589,8 @@ class RunCommandTest {
       assertThat(summary.provider).isEqualTo("ollama")
       assertThat(summary.navigatorModel).isEqualTo("qwen2.5-coder")
       assertThat(summary.inspectorModel).isEqualTo("llava")
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "high"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "low"))
       assertThat(summary.journeys).containsExactly(
         SuiteJourneyArtifact(
           path = "journeys/001-single-journey.json",
@@ -610,6 +622,33 @@ class RunCommandTest {
         EvidenceArtifact(EvidenceType.HIERARCHY, "evidence/001-single-journey/segment-000-tree.txt"),
       )
       assertThat(segment.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "diagnostic only"))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `successful suite without runner metadata falls back to resolved requested effort`() {
+    val dir = createTempDirectory("verity-run-effort-fallback").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val command = runCommand(clock = fixedClock()) { journeys ->
+        SuiteRunResult(
+          results = journeys.map { resolved ->
+            ResolvedJourneyResult(resolved, JourneyResult(resolved.journey.name, emptyList()))
+          },
+        )
+      }
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${outputDir.absolutePath} --navigator-effort none --inspector-effort medium run ${file.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(0)
+      val summary = readSummary(File(outputDir, "runs/20260708-143512-single-journey/summary.json"))
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"))
     } finally {
       dir.deleteRecursively()
     }
@@ -650,7 +689,7 @@ class RunCommandTest {
 
       val result = Verity()
         .subcommands(command)
-        .test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+        .test("--output-path ${outputDir.absolutePath} --navigator-effort xhigh --inspector-effort medium run ${file.absolutePath}")
 
       val runDir = File(outputDir, "runs/20260708-143512-single-journey")
       val summaryFile = File(runDir, "summary.json")
@@ -664,6 +703,8 @@ class RunCommandTest {
       assertThat(summary.total).isEqualTo(1)
       assertThat(summary.passed).isEqualTo(0)
       assertThat(summary.failed).isEqualTo(1)
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "xhigh"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"))
       assertThat(summary.journeys).containsExactly(
         SuiteJourneyArtifact(
           path = "journeys/001-single-journey.json",
@@ -951,7 +992,7 @@ class RunCommandTest {
 
       val result = Verity()
         .subcommands(command)
-        .test("--output-path ${outputDir.absolutePath} run ${missing.absolutePath}")
+        .test("--output-path ${outputDir.absolutePath} --navigator-effort high --inspector-effort none run ${missing.absolutePath}")
 
       assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("summary disk full")
@@ -960,6 +1001,8 @@ class RunCommandTest {
       assertThat(summary.status).isEqualTo(ArtifactStatus.FAILED)
       assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
       assertThat(summary.error?.message).isEqualTo("summary disk full")
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "high"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
     } finally {
       dir.deleteRecursively()
     }
@@ -1003,7 +1046,7 @@ class RunCommandTest {
 
       val result = Verity()
         .subcommands(runCommand(clock = fixedClock()) { error("Suite runner should not be called") })
-        .test("--output-path ${outputDir.absolutePath} run ${missing.absolutePath}")
+        .test("--output-path ${outputDir.absolutePath} --navigator-effort ' high ' --inspector-effort none run ${missing.absolutePath}")
 
       val summary = File(outputDir, "runs/20260708-143512-missing-journey/summary.json")
       assertThat(result.statusCode).isEqualTo(2)
@@ -1017,6 +1060,8 @@ class RunCommandTest {
       assertThat(summaryJson.failed).isEqualTo(0)
       assertThat(summaryJson.journeys).containsExactly()
       assertThat(summaryJson.error?.kind).isEqualTo(ArtifactErrorKind.PARSER_FAILURE)
+      assertThat(summaryJson.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, " high "))
+      assertThat(summaryJson.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"))
     } finally {
       dir.deleteRecursively()
     }
@@ -1393,7 +1438,7 @@ class RunCommandTest {
           artifactRecorder = recorder,
         ).run(resolved.journey)
       }) { error("unused suite runner") }
-      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} --navigator-effort xhigh --inspector-effort medium run ${dir.absolutePath}")
       assertThat(result.statusCode).isEqualTo(5)
       assertThat(seen).containsExactly("First", "Second")
       val runDir = File(outputDir, "runs").listFiles()!!.single()
@@ -1403,6 +1448,8 @@ class RunCommandTest {
       assertThat(summary.total).isEqualTo(2)
       assertThat(summary.passed).isEqualTo(1)
       assertThat(summary.error).isEqualTo(ArtifactError(ArtifactErrorKind.MODEL_FAILURE, "Inspector tree request failed"))
+      assertThat(summary.navigatorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "xhigh"))
+      assertThat(summary.inspectorEffort).isEqualTo(EffortArtifactSetting(EffortSettingMode.EXPLICIT, "medium"))
       assertThat(readJourney(File(runDir, "journeys/001-first.json")).passed).isEqualTo(true)
       assertThat(readJourney(secondFile).error).isEqualTo(summary.error)
       assertThat(File(runDir, "journeys/003-third.json").exists()).isFalse()

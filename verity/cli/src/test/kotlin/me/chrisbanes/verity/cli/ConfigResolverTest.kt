@@ -9,6 +9,8 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 
 class ConfigResolverTest {
   @Test
@@ -136,6 +138,7 @@ class ConfigResolverTest {
       cli = ProjectCliOptions(
         navigatorModel = "claude-haiku-4-5",
         inspectorModel = "claude-sonnet-4-5",
+        navigatorEffort = "none",
       ),
     )
 
@@ -144,6 +147,8 @@ class ConfigResolverTest {
         provider = "anthropic",
         navigatorModel = "claude-haiku-4-5",
         inspectorModel = "claude-sonnet-4-5",
+        navigatorEffort = EffortArtifactSetting(EffortSettingMode.EXPLICIT, "none"),
+        inspectorEffort = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
       ),
     )
   }

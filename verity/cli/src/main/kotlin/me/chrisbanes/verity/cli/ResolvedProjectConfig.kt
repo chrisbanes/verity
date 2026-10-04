@@ -4,6 +4,8 @@ import ai.koog.prompt.llm.LLModel
 import java.io.File
 import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.EffortArtifactSetting
+import me.chrisbanes.verity.core.result.EffortSettingMode
 
 data class ProjectCliOptions(
   val journeysPath: String? = null,
@@ -105,7 +107,15 @@ fun ResolvedProjectConfig.toRunArtifactMetadata(): RunArtifactMetadata = RunArti
   provider = provider.name,
   navigatorModel = navigatorModel.id,
   inspectorModel = inspectorModel.id,
+  navigatorEffort = navigatorEffort.toEffortArtifactSetting(),
+  inspectorEffort = inspectorEffort.toEffortArtifactSetting(),
 )
+
+private fun String?.toEffortArtifactSetting(): EffortArtifactSetting = if (this == null) {
+  EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT)
+} else {
+  EffortArtifactSetting(EffortSettingMode.EXPLICIT, requested = this)
+}
 
 val Platform.serialName: String
   get() = when (this) {
