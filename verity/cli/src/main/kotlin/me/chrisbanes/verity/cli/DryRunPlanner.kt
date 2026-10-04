@@ -47,6 +47,7 @@ data class DryRunSegmentReport(
   val actions: DryRunActionGroupReport? = null,
   val loop: DryRunLoopReport? = null,
   val assertion: DryRunAssertionReport? = null,
+  val wait: DryRunWaitReport? = null,
 )
 
 data class DryRunActionGroupReport(
@@ -65,6 +66,8 @@ data class DryRunLoopReport(
   val yaml: String? = null,
   val interactions: List<String> = listOfNotNull(interaction),
 )
+
+data class DryRunWaitReport(val condition: String, val timeoutSeconds: Int)
 
 data class DryRunAssertionReport(
   val description: String,
@@ -104,6 +107,7 @@ class DryRunPlanner(
         )
       },
       assertion = segment.assertion?.let { DryRunAssertionReport(it.description, it.mode) },
+      wait = segment.wait?.let { DryRunWaitReport(it.until, it.timeoutSeconds) },
     )
   }
 

@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.Test
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -26,6 +27,20 @@ import okio.Sink
 import okio.Timeout
 
 class BoundedScreenshotCaptureTest {
+  @Test fun `fractional millisecond owned budget is not rounded up and preserves earlier output`() = runTest {
+    fixture { output ->
+      val failure = runCatching {
+        captureBoundedScreenshot(output, 500.microseconds, checkpoint = {
+          val start = System.nanoTime()
+          while (System.nanoTime() - start < 1_000_000) { /* bounded fixture work */ }
+        }) { sink, _, _ -> sink.write(Buffer().writeUtf8("late"), 4) }
+      }.exceptionOrNull()
+      assertThat(failure is ScreenshotCaptureTimeoutException).isEqualTo(true)
+      assertThat(Files.readString(output)).isEqualTo("prior")
+      assertOnlyOutput(output)
+    }
+  }
+
   @Test
   fun `complete bytes replace prior output and staging is removed`() = runTest {
     fixture { output ->

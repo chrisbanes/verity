@@ -63,6 +63,25 @@ import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.validateActionFlow
 
 class RunCommandTest {
+  @Test fun `production static wait suite previews stdout and saved Markdown without provider or device access`() {
+    val dir = createTempDirectory("verity-wait-preview").toFile()
+    try {
+      writeJourneyWithSteps(dir, "a.journey.yaml", "Default wait", steps = listOf("Wait until Home"))
+      writeJourneyWithSteps(dir, "b.journey.yaml", "Mixed wait", steps = listOf("Press back", "Wait until visually spinner disappears up to 3 seconds", "[?visible] Settings"))
+      val output = File(dir, "out")
+      val result = Verity().subcommands(RunCommand(loadConfig = { VerityConfig(provider = "definitely-not-real") }))
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", dir.absolutePath))
+      assertThat(result.statusCode).isEqualTo(0)
+      for ((file, expected) in listOf("a.md" to "Wait until Home, up to 20 seconds", "b.md" to "Wait until visually spinner disappears, up to 3 seconds")) {
+        assertThat(result.output).contains(expected)
+        assertThat(File(output, "dry-run/$file").readText()).contains(expected)
+      }
+      assertThat(result.output).contains("Assertion: [VISIBLE] Settings")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
   private val json = Json { ignoreUnknownKeys = true }
 
   @Test

@@ -17,6 +17,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import me.chrisbanes.verity.device.DeviceSession
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -33,6 +37,33 @@ class IosBoundedConditionCaptureSmoke {
     fun boot() {
       lifecycle = runBlocking { DeviceLifecycle.discoverOrBootIos() }
       session = runBlocking { lifecycle.connect() }
+      runBlocking { withContext(Dispatchers.IO) { recordIdentity() } }
+    }
+
+    private fun recordIdentity() {
+      val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "booted", "--json").redirectErrorStream(true).start()
+      try {
+        check(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) { "Owned identity query timed out" }
+        check(process.exitValue() == 0)
+        val devices = Json.parseToJsonElement(process.inputStream.bufferedReader().readText()).jsonObject["devices"]!!.jsonObject
+        val model = System.getenv("VERITY_SMOKE_IOS_MODEL")
+        val runtime = System.getenv("VERITY_SMOKE_IOS_RUNTIME")
+        val requested = System.getProperty("verity.smoke.ios.udid")
+        val selected = devices.filter { (runtime == null || it.key.contains(runtime)) }.values.flatMap { it.jsonArray }
+          .map { it.jsonObject }.filter {
+            it["state"]?.jsonPrimitive?.content == "Booted" &&
+              (requested == null || it["udid"]?.jsonPrimitive?.content == requested) &&
+              (model == null || it["name"]?.jsonPrimitive?.content == model)
+          }
+        check(selected.size == 1) { "Expected one configured job-owned simulator for qualification" }
+        println("IosBoundedConditionCaptureSmoke device_identity=${selected.single()["udid"]!!.jsonPrimitive.content} platform=${session.platform}")
+      } finally {
+        if (process.isAlive) {
+          process.destroy()
+          if (!process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly()
+          check(process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) { "Owned identity query did not exit" }
+        }
+      }
     }
 
     @AfterAll @JvmStatic
@@ -52,6 +83,7 @@ class IosBoundedConditionCaptureSmoke {
     val output = directory.resolve("capture.png")
     fun inProductionCapture(): Boolean = Thread.getAllStackTraces().values.any { frames -> frames.any { it.className.startsWith("me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture") } && frames.any { it.methodName.contains("read", ignoreCase = true) || it.methodName == "execute" } }
     val bodyFailure = CompletableDeferred<Throwable?>()
+    val bodyCompletedAt = java.util.concurrent.atomic.AtomicLong()
     var invocation: kotlinx.coroutines.Deferred<Unit>? = null
     try {
       session.captureHierarchyTree()
@@ -62,11 +94,13 @@ class IosBoundedConditionCaptureSmoke {
       assertThat(withContext(Dispatchers.IO) { Files.size(output) > 0 }).isTrue()
       val prior = withContext(Dispatchers.IO) { Files.readAllBytes(output).toList() }
       val caller = CancellationException("Ios screenshot caller qualification")
+      val entryAt = System.nanoTime()
       invocation = async(start = CoroutineStart.UNDISPATCHED) {
         try {
           session.captureScreenshot(output, 2.seconds)
           bodyFailure.complete(null)
         } catch (failure: Throwable) {
+          bodyCompletedAt.set(System.nanoTime())
           bodyFailure.complete(failure)
           throw failure
         }
@@ -79,21 +113,23 @@ class IosBoundedConditionCaptureSmoke {
         }
       }
       println("IosBoundedConditionCaptureSmoke sampled exclusive production screenshot worker")
+      val cancelAt = System.nanoTime()
       active.cancel(caller)
       active.join()
+      val joinAt = System.nanoTime()
       assertThat(bodyFailure.isCompleted).isTrue()
       val observed = bodyFailure.await()
       assertThat(observed === caller || (observed?.javaClass == caller.javaClass && observed.message == caller.message && observed.cause === caller)).isTrue()
       assertThat(withContext(Dispatchers.IO) { inProductionCapture() }).isEqualTo(false)
       assertThat(withContext(Dispatchers.IO) { Files.readAllBytes(output).toList() }).isEqualTo(prior)
-      println("IosBoundedConditionCaptureSmoke caller_body_join_and_file_rollback_verified=true")
+      println("IosBoundedConditionCaptureSmoke caller_body_join_and_file_rollback_verified=true entry_ns=$entryAt cancel_ns=$cancelAt body_complete_ns=${bodyCompletedAt.get()} join_ns=$joinAt active_after_join=0")
       session.captureScreenshot(output, 2.seconds)
       session.captureScreenshot(output)
       session.captureHierarchyTree(2.seconds)
       session.captureHierarchyTree()
       assertThat(withContext(Dispatchers.IO) { Files.size(output) > 0 }).isTrue()
       withContext(Dispatchers.IO) { Files.list(directory).use { assertThat(it.toList()).isEqualTo(listOf(output)) } }
-      println("IosBoundedConditionCaptureSmoke bounded_and_noarg_screenshot_hierarchy_reuse_verified=true")
+      println("IosBoundedConditionCaptureSmoke bounded_and_noarg_screenshot_hierarchy_reuse_verified=true reuse_complete_ns=${System.nanoTime()} head=${System.getenv("GITHUB_SHA")} run=${System.getenv("GITHUB_RUN_ID")} runtime=${System.getProperty("java.version")}/${System.getProperty("os.arch")}")
     } finally {
       withContext(NonCancellable) {
         invocation?.cancelAndJoin()
