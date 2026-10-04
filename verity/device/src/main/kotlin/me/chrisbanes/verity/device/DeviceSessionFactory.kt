@@ -21,6 +21,7 @@ import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture
+import me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 import util.IOSDeviceType
 import xcuitest.XCTestClient
@@ -149,7 +150,8 @@ object DeviceSessionFactory {
     val driver = IOSDriver(iosDevice)
     val maestro = Maestro.ios(driver, openDriver = true)
     val capture = BoundedIosHierarchyCapture(endpoint = { endpoint.current() })
-    return IosDeviceSession(maestro, iosDevice, onCommandStart, capture::capture)
+    val screenshot = BoundedIosScreenshotCapture(endpoint = { endpoint.current() })
+    return IosDeviceSession(maestro, iosDevice, onCommandStart, capture::capture, screenshot::capture)
   }
 
   private suspend fun discoverBootedIosSimulatorIds(): List<String> = withContext(Dispatchers.IO) {

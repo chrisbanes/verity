@@ -15,6 +15,7 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.HierarchyCaptureTimeoutException
+import me.chrisbanes.verity.device.captureBoundedScreenshot
 import me.chrisbanes.verity.device.executeMaestroActions
 import me.chrisbanes.verity.device.executeMaestroFlow
 
@@ -135,6 +136,20 @@ class AndroidDeviceSession(
   @Suppress("DEPRECATION")
   override suspend fun captureScreenshot(output: Path): Unit = withContext(Dispatchers.IO) {
     maestro.takeScreenshot(output.toFile(), false)
+  }
+
+  override suspend fun captureScreenshot(output: Path, timeout: Duration) {
+    captureBoundedScreenshot(output, timeout) { sink, checkpoint, _ ->
+      checkpoint()
+      // The public uncropped SDK route owns its interruptible acquisition and closes the sink.
+      try {
+        maestro.takeScreenshot(sink, false)
+      } catch (failure: Throwable) {
+        checkpoint()
+        throw failure
+      }
+      checkpoint()
+    }
   }
 
   override suspend fun shell(command: String): String = withContext(Dispatchers.IO) {
