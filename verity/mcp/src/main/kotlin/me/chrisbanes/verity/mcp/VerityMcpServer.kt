@@ -18,19 +18,25 @@ import java.nio.file.Path
 import java.util.Base64
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
@@ -40,6 +46,7 @@ import me.chrisbanes.verity.core.context.ContextBundle
 import me.chrisbanes.verity.core.context.ContextLoader
 import me.chrisbanes.verity.core.context.ContextStatus
 import me.chrisbanes.verity.core.context.ContextValidationException
+import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.journey.JourneyLoader
@@ -47,6 +54,9 @@ import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.preflight.PathPreflightChecker
 import me.chrisbanes.verity.core.preflight.PreflightReport
+import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FocusCaptureResult
+import me.chrisbanes.verity.device.FocusChangeObserver
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.preflight.PlatformDevicePreflightChecker
 
@@ -66,6 +76,7 @@ class VerityMcpServer(
     HierarchyDiff.render(sessionId, pair)
   },
   private val screenshotFileSaver: McpScreenshotFileSaver = McpScreenshotFileSaver(),
+  private val focusObserver: FocusChangeObserver = FocusChangeObserver(),
 ) {
 
   fun create(): Server {
@@ -142,6 +153,7 @@ class VerityMcpServer(
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
+        currentCoroutineContext().ensureActive()
         error("${e::class.simpleName}: ${e.message}")
       }
     }
@@ -283,10 +295,126 @@ class VerityMcpServer(
     }
   }
 
+  private data class FocusWaitOptions(val await: Boolean, val timeoutMs: Int)
+
+  private fun JsonObject?.focusWaitOptions(): FocusWaitOptions {
+    val awaitValue = this?.get("await_focus_change")
+    val await = if (awaitValue == null) {
+      false
+    } else {
+      val primitive = awaitValue as? JsonPrimitive
+      require(primitive != null && !primitive.isString && primitive.booleanOrNull != null) {
+        "await_focus_change must be a JSON boolean"
+      }
+      primitive.booleanOrNull!!
+    }
+    if (!await) return FocusWaitOptions(false, 2000)
+    val value = this?.get("focus_timeout_ms") ?: return FocusWaitOptions(true, 2000)
+    val primitive = value as? JsonPrimitive
+    val timeout = primitive?.takeUnless { it.isString }?.intOrNull
+    require(timeout != null && timeout > 0 && primitive.content.matches(Regex("[0-9]+"))) {
+      "focus_timeout_ms must be a positive JSON integer up to ${Int.MAX_VALUE}"
+    }
+    return FocusWaitOptions(true, timeout)
+  }
+
+  private fun kotlinx.serialization.json.JsonObjectBuilder.focusWaitSchema() {
+    putJsonObject("await_focus_change") {
+      put("type", "boolean")
+      put("default", false)
+      put("description", "Observe focus before the action and wait for a directly focused identity to change")
+    }
+    putJsonObject("focus_timeout_ms") {
+      put("type", "integer")
+      put("minimum", 1)
+      put("maximum", Int.MAX_VALUE)
+      put("default", 2000)
+      put("description", "Post-action focus deadline in milliseconds; baseline has a separate equal capture budget")
+    }
+  }
+
+  private data class FocusAction(val succeeded: Boolean, val output: String)
+
+  private fun focusResult(
+    actionStatus: String,
+    output: String?,
+    before: FocusObservation?,
+    after: FocusObservation? = null,
+    changed: Boolean = false,
+    timedOut: Boolean = false,
+    elapsedMs: Long = 0,
+    errorCode: String? = null,
+    errorMessage: String? = null,
+  ): CallToolResult {
+    fun observation(value: FocusObservation?) = value?.let {
+      buildJsonArray {
+        it.focusedNodes.forEach { node ->
+          add(
+            buildJsonObject {
+              put("path", node.path)
+              put("resource_id", node.resourceId?.let(::JsonPrimitive) ?: JsonNull)
+            },
+          )
+        }
+      }
+    } ?: JsonNull
+    val json = buildJsonObject {
+      putJsonObject("action") {
+        put("status", actionStatus)
+        put("output", output?.let(::JsonPrimitive) ?: JsonNull)
+      }
+      put("focus_changed", changed)
+      put("timed_out", timedOut)
+      put("elapsed_ms", elapsedMs)
+      put("focus_before", observation(before))
+      put("focus_after", observation(after))
+      put(
+        "focus_error",
+        if (errorCode == null) {
+          JsonNull
+        } else {
+          buildJsonObject {
+            put("code", errorCode)
+            put("message", errorMessage ?: errorCode)
+          }
+        },
+      )
+    }
+    return CallToolResult(content = listOf(TextContent(text = json.toString())), isError = actionStatus != "succeeded" || errorCode != null)
+  }
+
+  private suspend fun awaitFocusAction(
+    session: DeviceSession,
+    options: FocusWaitOptions,
+    action: suspend () -> FocusAction,
+  ): CallToolResult {
+    val timeout = options.timeoutMs.milliseconds
+    val before = when (val baseline = focusObserver.capture(session, timeout)) {
+      is FocusCaptureResult.Captured -> baseline.observation
+      FocusCaptureResult.TimedOut -> return focusResult("not_executed", null, null, errorCode = "baseline_capture_timed_out", errorMessage = "Baseline capture deadline expired")
+      is FocusCaptureResult.Failed -> return focusResult("not_executed", null, null, errorCode = "baseline_capture_failed", errorMessage = baseline.cause.message ?: baseline.cause.toString())
+    }
+    val outcome = try {
+      action().also { currentCoroutineContext().ensureActive() }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      currentCoroutineContext().ensureActive()
+      FocusAction(false, e.message ?: e.toString())
+    }
+    if (!outcome.succeeded) return focusResult("failed", outcome.output, before)
+    val wait = focusObserver.awaitChange(session, before, timeout)
+    return focusResult(
+      "succeeded", outcome.output, before, wait.after, wait.changed, wait.timedOut, wait.elapsedMs,
+      if (wait.captureError != null) "focus_capture_failed" else null,
+      wait.captureError?.let { it.message ?: it.toString() },
+    )
+  }
+
   private fun registerRunFlow(server: Server) {
     server.addSafeTool(
       name = "run_flow",
-      description = "Execute a Maestro YAML flow on the device",
+      description = "Execute a Maestro YAML flow on the device, optionally waiting for focus to change",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
           putJsonObject("session_id") {
@@ -297,26 +425,24 @@ class VerityMcpServer(
             put("type", "string")
             put("description", "Maestro YAML flow content to execute")
           }
-          putJsonObject("await_focus_change") {
-            put("type", "boolean")
-            put("description", "Wait for focus to change after execution (Android TV)")
-          }
+          focusWaitSchema()
         },
       ),
       required = listOf("session_id", "yaml"),
     ) { args ->
+      val options = args.focusWaitOptions()
       val sessionId = UUID.fromString(args.requireString("session_id"))
       val yaml = args.requireString("yaml")
-      val awaitFocusChange = args.bool("await_focus_change") ?: false
-      val result = sessionManager.withSession(sessionId) { session ->
-        val flowResult = session.executeFlow(yaml)
-        if (awaitFocusChange) session.waitForAnimationToEnd()
-        flowResult
-      }
-      if (result.success) {
-        success("SUCCESS")
-      } else {
-        success("FAILED: ${result.output}")
+      sessionManager.withSession(sessionId) { session ->
+        if (options.await) {
+          awaitFocusAction(session, options) {
+            val result = session.executeFlow(yaml)
+            FocusAction(result.success, result.output)
+          }
+        } else {
+          val result = session.executeFlow(yaml)
+          success(if (result.success) "SUCCESS" else "FAILED: ${result.output}")
+        }
       }
     }
   }
@@ -324,7 +450,7 @@ class VerityMcpServer(
   private fun registerPressKey(server: Server) {
     server.addSafeTool(
       name = "press_key",
-      description = "Press a key on the device (e.g., DPAD_CENTER, BACK, HOME)",
+      description = "Press a device key, optionally waiting for focus to change",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
           putJsonObject("session_id") {
@@ -335,17 +461,26 @@ class VerityMcpServer(
             put("type", "string")
             put("description", "Key name to press (e.g., DPAD_UP, DPAD_CENTER, BACK)")
           }
+          focusWaitSchema()
         },
       ),
       required = listOf("session_id", "key"),
     ) { args ->
+      val options = args.focusWaitOptions()
       val sessionId = UUID.fromString(args.requireString("session_id"))
       val key = args.requireString("key")
       sessionManager.withSession(sessionId) { session ->
-        session.pressKey(key)
-        session.waitForAnimationToEnd()
+        if (options.await) {
+          awaitFocusAction(session, options) {
+            session.pressKey(key)
+            FocusAction(true, "Pressed key: $key")
+          }
+        } else {
+          session.pressKey(key)
+          session.waitForAnimationToEnd()
+          success("Pressed key: $key")
+        }
       }
-      success("Pressed key: $key")
     }
   }
 
