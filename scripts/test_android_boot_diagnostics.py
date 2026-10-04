@@ -35,6 +35,128 @@ class DiagnosticsTest(unittest.TestCase):
         return {"token": "offline-token", "binding": D.binding(), "scriptSha256": hashlib.sha256(Path(D.__file__).read_bytes()).hexdigest(),
                 "serial": D.SERIAL, "avd": D.AVD}
 
+    def startup_fixture(self):
+        control = {**self.control(), "pid": 1234}
+        identity = {"token": control["token"], "pid": control["pid"]}
+        records = {"control": control, "ready": identity, "stop": {"token": control["token"]},
+                   "done": {**identity, "status": "deadline"}, "joined": {**identity, "observerExited": True},
+                   "report": {"binding": control, "target": {"serial": D.SERIAL, "avd": D.AVD}}}
+        for name, value in records.items():
+            D.write_json(self.directory / (name + ".json"), value)
+        return records
+
+    def test_startup_encoded_cap_and_aggregate_accounting(self):
+        records = self.startup_fixture()
+        total = sum(p.stat().st_size for p in self.directory.glob("*.json"))
+        records["report"]["padding"] = "x" * (D.MAX_REPORT - 5000 - total - 15)
+        D.write_json(self.directory / "report.json", records["report"])
+        result = {"exit": 0, "outcome": "completed", "stdout": '\"\\' * 4000, "stderr": "字" * 4000,
+                  "droppedBytes": {"stdout": 9, "stderr": 7}, "joined": True, "truncated": True}
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=lambda *_args, **_kwargs: json.loads(json.dumps(result))):
+            self.assertEqual(D.startup(self.directory, 17, commands=lambda: [(str(i), ["offline"]) for i in range(8)]), 0)
+        path = self.directory / "startup.json"
+        report = json.loads(path.read_text())
+        self.assertLessEqual(path.stat().st_size, 6000)
+        self.assertLessEqual(sum(p.stat().st_size for p in self.directory.glob("*.json")), D.MAX_REPORT)
+        self.assertEqual(report["gradleExit"], 17)
+        self.assertFalse(report["qualification"])
+        self.assertGreater(report["droppedRetainedBytes"], 0)
+
+    def test_startup_duplicate_is_refused_without_overwriting_prior_evidence(self):
+        self.startup_fixture()
+        path = self.directory / "startup.json"
+        path.write_text('{"prior": true}\n')
+        previous = path.read_bytes()
+        with patch.object(D, "capture", side_effect=AssertionError("duplicate probe")):
+            with self.assertRaisesRegex(RuntimeError, "prior evidence, not a new invocation"):
+                D.startup(self.directory, 17)
+        self.assertEqual(path.read_bytes(), previous)
+
+    def test_startup_stale_identity_source_and_success_refused_before_probe(self):
+        for name, key, value in (("control", "scriptSha256", "bad"), ("control", "serial", "ambient"),
+                                 ("ready", "token", "stale"), ("done", "pid", 999),
+                                 ("joined", "observerExited", False), ("report", "binding", {})):
+            with self.subTest(name=name, key=key):
+                records = self.startup_fixture()
+                records[name][key] = value
+                D.write_json(self.directory / (name + ".json"), records[name])
+                with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=AssertionError("invalid probe")):
+                    with self.assertRaises(RuntimeError):
+                        D.startup(self.directory, 1)
+        self.startup_fixture()
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=AssertionError("successful suite probe")):
+            with self.assertRaises(RuntimeError):
+                D.startup(self.directory, 0)
+
+    def test_startup_deadline_cancels_and_joins_command_without_later_probe(self):
+        self.startup_fixture()
+        started = time.monotonic()
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}):
+            self.assertEqual(D.startup(self.directory, 1, duration=1.2,
+                                     commands=lambda: [("slow", [sys.executable, "-c", "import os,time; print(os.getpid(),flush=True); time.sleep(30)"]),
+                                                       ("later", [sys.executable, "-c", "print('offline')"])]), 0)
+        report = json.loads((self.directory / "startup.json").read_text())
+        self.assertLess(time.monotonic() - started, 1.2)
+        self.assertTrue(report["commands"]["slow"]["joined"])
+        self.assertEqual(report["commands"]["slow"]["outcome"], "timeout")
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(report["commands"]["slow"]["stdout"].strip()), 0)
+        self.assertNotEqual(report["commands"].get("later", {}).get("outcome"), "completed")
+
+    def test_startup_signal_stops_after_owned_command_and_restores_handler(self):
+        self.startup_fixture()
+        calls = []
+        def fake_capture(argv, cancel, deadline, limit):
+            calls.append(argv)
+            os.kill(os.getpid(), D.signal.SIGTERM)
+            self.assertTrue(cancel())
+            return {"exit": -15, "outcome": "stopped", "stdout": "", "stderr": "", "joined": True,
+                    "truncated": False, "droppedBytes": {"stdout": 0, "stderr": 0}}
+        previous = D.signal.getsignal(D.signal.SIGTERM)
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=fake_capture):
+            self.assertEqual(D.startup(self.directory, 1, commands=lambda: [("first", ["offline"]), ("later", ["forbidden"])]), 0)
+        self.assertEqual(calls, [["offline"]])
+        self.assertEqual(D.signal.getsignal(D.signal.SIGTERM), previous)
+        self.assertEqual(json.loads((self.directory / "startup.json").read_text())["status"], "stopped")
+
+    def test_startup_command_scope_and_guest_filters(self):
+        with patch.dict(os.environ, {"ANDROID_HOME": "/offline/sdk"}):
+            commands = D.startup_commands()
+        for name, argv in commands:
+            self.assertEqual(argv[:4], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554", "shell"])
+            self.assertNotIn("install", argv[-1])
+            self.assertNotIn("am instrument", argv[-1])
+            self.assertNotIn("forward", argv[-1])
+        scripts = dict(commands)
+        fixture = self.directory / "bin"
+        fixture.mkdir()
+        outputs = {"getprop": "[sys.boot_completed]: [1]\n[ro.build.version.sdk]: [34]\n[sys.boot_completed.secret]: [private]\n[unrelated]: [private]\n",
+                   "pm": "instrumentation:dev.mobile.maestro.test/androidx.test.runner.AndroidJUnitRunner (target=dev.mobile.maestro)\ninstrumentation:other/private (target=private)\n",
+                   "logcat": "E/AndroidRuntime: private other crash\nE/AndroidRuntime: dev.mobile.maestro.private unrelated\nE/AndroidRuntime: dev.mobile.maestro startup failure\nI/TestRunner: dev.mobile.maestro.MaestroDriverService ready\n"}
+        for name, output in outputs.items():
+            path = fixture / name
+            path.write_text("#!" + sys.executable + "\nprint(" + repr(output) + ", end='')\n")
+            path.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(fixture) + os.pathsep + os.environ["PATH"]}):
+            for name in ("properties", "instrumentation", "crash", "startupLog"):
+                result = subprocess.run(["/bin/sh", "-c", scripts[name][-1]], capture_output=True, text=True, check=True)
+                self.assertNotIn("private", result.stdout)
+                self.assertTrue(result.stdout)
+
+    def test_failed_gradle_code_preserved_even_when_diagnostics_fail(self):
+        workflow = (Path(__file__).parents[1] / ".github/workflows/ci.yml").read_text()
+        script = workflow.split("pre-emulator-launch-script:", 1)[1].split("python3 -c '", 1)[1].split("'", 1)[0]
+        parsed = ast.parse(script.replace("\n", " "))
+        tail = ast.Module(body=parsed.body[-3:], type_ignores=[])
+        for failed in (0, 19):
+            with patch.object(subprocess, "run", side_effect=[subprocess.CompletedProcess([], failed), subprocess.CompletedProcess([], 99)]) as run:
+                with self.assertRaises(SystemExit) as exit_result:
+                    exec(compile(tail, "failure-tail", "exec"), {"subprocess": subprocess})
+                self.assertEqual(exit_result.exception.code, failed)
+                self.assertEqual(run.call_count, 1 if failed == 0 else 2)
+                if failed:
+                    self.assertEqual(run.call_args.args[0][-1], "19")
+
     def test_huge_output_drains_both_pipes_and_reaps(self):
         result = D.capture([sys.executable, "-c", "import os; os.write(1,b'x'*300000); os.write(2,b'y'*300000)"])
         self.assertEqual(result["exit"], 0)

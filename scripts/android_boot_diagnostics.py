@@ -290,9 +290,104 @@ def stop(directory):
     raise RuntimeError("Observer did not acknowledge stop and exit; iOS must not start")
 
 
+def startup_commands():
+    """Read only exact target/package/port data, filtered in the guest before retention."""
+    prefix = [str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"), "-s", SERIAL, "shell"]
+    return [("properties", prefix + [r"getprop | grep -E '^\[(sys\.boot_completed|ro\.build\.version\.sdk)\]: \['"]),
+            ("driverPackage", prefix + ["pm path dev.mobile.maestro"]),
+            ("instrumentationPackage", prefix + ["pm path dev.mobile.maestro.test"]),
+            ("instrumentation", prefix + [r"pm list instrumentation | grep -E '^instrumentation:dev\.mobile\.maestro\.test/androidx\.test\.runner\.AndroidJUnitRunner \(target=dev\.mobile\.maestro\)$'"]),
+            ("driverPid", prefix + ["pidof dev.mobile.maestro || printf '\n'"]),
+            ("driverPort", prefix + [r"grep -E '^[ ]*[0-9]+: [0-9A-F]+:1B59 ' /proc/net/tcp /proc/net/tcp6"]),
+            ("crash", prefix + [r"logcat -b crash -d -t 40 -v brief | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)'"]),
+            ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)'"])]
+
+
+def startup(directory, gradle_exit, duration=45, commands=startup_commands):
+    """One bounded post-failure observation after the original observer has joined."""
+    started = time.monotonic()
+    if (directory / "startup.json").exists():
+        raise RuntimeError("Duplicate startup collection refused; existing startup.json is prior evidence, not a new invocation")
+    deadline = started + duration - min(2, duration / 4)
+    names = ("control", "ready", "report", "done", "stop", "joined")
+    original = {}
+    size = 0
+    for name in names:
+        path = directory / (name + ".json")
+        with path.open("rb") as stream:
+            data = stream.read(MAX_REPORT + 1)
+        size += len(data)
+        if size > MAX_REPORT - 1024:
+            raise RuntimeError("Original diagnostic metadata exceeds aggregate allowance")
+        original[name] = json.loads(data)
+    control = original["control"]
+    if control["binding"] != binding() or control["scriptSha256"] != hashlib.sha256(Path(__file__).read_bytes()).hexdigest():
+        raise RuntimeError("Startup immutable source/job binding mismatch")
+    if control["serial"] != SERIAL or control["avd"] != AVD:
+        raise RuntimeError("Startup target mismatch")
+    identity = {"token": control["token"], "pid": control["pid"]}
+    if original["ready"] != identity or original["stop"] != {"token": control["token"]}:
+        raise RuntimeError("Startup observer ownership mismatch")
+    if any(original[name].get(key) != value for name in ("done", "joined") for key, value in identity.items()):
+        raise RuntimeError("Startup completion identity mismatch")
+    if original["joined"].get("observerExited") is not True or original["done"].get("status") not in ("deadline", "stopped"):
+        raise RuntimeError("Startup requires successful observer stop/join")
+    if original["report"]["binding"] != control or original["report"]["target"] != {"serial": SERIAL, "avd": AVD}:
+        raise RuntimeError("Startup original report binding mismatch")
+    if gradle_exit == 0 or os.environ.get("MAESTRO_DRIVER_STARTUP_TIMEOUT") != "120000":
+        raise RuntimeError("Startup requires original failed suite and exact SDK allowance")
+    report = {"binding": control, "phase": "post-failed-packaged-android-suite", "gradleExit": gradle_exit,
+              "sdkStartupAllowanceMs": 120000, "qualification": False, "commands": {}, "diagnosticFailures": 0,
+              "truncated": False, "droppedRetainedBytes": 0, "status": "running"}
+    terminate = [False]
+    previous = {}
+    def stop_signal(*_):
+        terminate[0] = True
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous[sig] = signal.signal(sig, stop_signal)
+    try:
+        for name, argv in commands():
+            if terminate[0] or time.monotonic() >= deadline:
+                break
+            result = capture(argv, lambda: terminate[0], deadline, limit=256)
+            result["evidenceStatus"] = "observed" if result["outcome"] == "completed" and result["exit"] == 0 and result["stdout"].strip() else "unknown"
+            report["commands"][name] = result
+            report["diagnosticFailures"] += failures(result)
+            report["truncated"] |= result["truncated"]
+        report["status"] = "stopped" if terminate[0] else "deadline" if time.monotonic() >= deadline else "completed"
+    except Exception as failure:
+        report["status"] = "failed"
+        report["error"] = str(failure)[:256]
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        report["elapsedSeconds"] = round(time.monotonic() - started, 3)
+        cap = min(6000, MAX_REPORT - size) - 256  # Reserve encoded final timing/error metadata.
+        while len((json.dumps(report, ensure_ascii=False) + "\n").encode()) > cap:
+            fields = [(result, key) for result in report["commands"].values() for key in ("stdout", "stderr") if result[key]]
+            if not fields:
+                raise RuntimeError("Startup metadata exceeds encoded report allowance")
+            result, key = max(fields, key=lambda item: len(item[0][item[1]].encode()))
+            value = result[key]
+            result[key] = value[:len(value) // 2]
+            report["droppedRetainedBytes"] += len(value.encode()) - len(result[key].encode())
+            report["truncated"] = result["truncated"] = True
+        if time.monotonic() >= started + duration:
+            report["status"] = "failed"
+            report["error"] = "Startup diagnostics exceeded wall deadline"
+            raise RuntimeError(report["error"])
+        write_json(directory / "startup.json", report)
+        report["elapsedSeconds"] = round(time.monotonic() - started, 3)
+        if time.monotonic() >= started + duration:
+            report["status"] = "failed"
+            report["error"] = "Startup diagnostics exceeded wall deadline during publication"
+        write_json(directory / "startup.json", report)
+    return 1 if report["status"] == "failed" else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("start", "observe", "stop"))
+    parser.add_argument("mode", choices=("start", "observe", "stop", "startup"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("token", nargs="?")
     args = parser.parse_args()
@@ -300,6 +395,8 @@ def main():
         start(args.directory)
     elif args.mode == "stop":
         stop(args.directory)
+    elif args.mode == "startup":
+        raise SystemExit(startup(args.directory, int(args.token)))
     else:
         control = json.loads((args.directory / "control.json").read_text())
         if control["token"] != args.token:
