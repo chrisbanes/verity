@@ -131,3 +131,22 @@ val verifyHostJars = tasks.register<VerifyHostJars>("verifyHostJars") {
   receipt.set(layout.buildDirectory.file("reports/host-packaging.tsv"))
 }
 tasks.check { dependsOn(verifyHostJars, verifyPackagedGrpc) }
+
+// Release input generation is offline and consumes only the three verified archives.
+val releaseScript = layout.projectDirectory.file("../../scripts/release_artifacts.py")
+val releaseDirectory = layout.buildDirectory.dir("release")
+val releaseVersion = providers.gradleProperty("version").orElse(project.version.toString())
+tasks.register<Exec>("packageRelease") {
+  dependsOn(verifyHostJars, verifyPackagedGrpc)
+  inputs.file(releaseScript)
+  inputs.files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  inputs.property("releaseVersion", releaseVersion)
+  outputs.dir(releaseDirectory)
+  commandLine(
+    "python3", releaseScript.asFile.absolutePath, "build", "--version", releaseVersion.get(),
+    "--output", releaseDirectory.get().asFile.absolutePath,
+    tasks.shadowJar.get().archiveFile.get().asFile.absolutePath,
+    macosArm64Jar.get().archiveFile.get().asFile.absolutePath,
+    linuxX64Jar.get().archiveFile.get().asFile.absolutePath,
+  )
+}
