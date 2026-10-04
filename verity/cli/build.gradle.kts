@@ -1,3 +1,5 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
 plugins {
   id("verity.kotlin-jvm")
   application
@@ -9,9 +11,12 @@ application {
   mainClass.set("me.chrisbanes.verity.cli.VerityKt")
 }
 
-tasks.shadowJar {
+tasks.withType<ShadowJar>().configureEach {
   archiveBaseName.set("verity")
-  archiveClassifier.set("")
+  manifest.attributes["Main-Class"] = application.mainClass.get()
+  isPreserveFileTimestamps = false
+  isReproducibleFileOrder = true
+  exclude("module-info.class", "META-INF/versions/**/module-info.class", "META-INF/INDEX.LIST")
   isZip64 = true
   mergeServiceFiles()
   // Let the transformers see every service descriptor and Kotlin module metadata file.
@@ -26,6 +31,22 @@ tasks.shadowJar {
     exclude(dependency("org.graalvm.js:js-community"))
   }
 }
+
+tasks.shadowJar { archiveClassifier.set("") }
+
+fun hostJar(host: HostPackaging.Host) = tasks.register<ShadowJar>(
+  if (host == HostPackaging.Host.MACOS_ARM64) "macosArm64Jar" else "linuxX64Jar",
+) {
+  archiveClassifier.set(host.classifier)
+  from(sourceSets.main.map { it.output })
+  configurations = listOf(project.configurations.runtimeClasspath.get())
+  manifest.from(tasks.jar.get().manifest)
+  exclude { !HostPackaging.retain(it.path, host) }
+}
+
+val macosArm64Jar = hostJar(HostPackaging.Host.MACOS_ARM64)
+val linuxX64Jar = hostJar(HostPackaging.Host.LINUX_X64)
+val hostJars = tasks.register("hostJars") { dependsOn(tasks.shadowJar, macosArm64Jar, linuxX64Jar) }
 
 dependencies {
   implementation(enforcedPlatform(libs.grpc.bom))
@@ -82,3 +103,20 @@ val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc"
 tasks.test {
   systemProperty("verity.cli.test.classpath", sourceSets.test.get().runtimeClasspath.asPath)
 }
+
+val verifyHostJars = tasks.register<VerifyHostJars>("verifyHostJars") {
+  dependsOn(hostJars)
+  universal.set(tasks.shadowJar.flatMap { it.archiveFile })
+  macos.set(macosArm64Jar.flatMap { it.archiveFile })
+  linux.set(linuxX64Jar.flatMap { it.archiveFile })
+  runtimeArtifacts.from(runtime.map { it.resolvedConfiguration.resolvedArtifacts.map { artifact -> artifact.file } })
+  coordinates.set(
+    runtime.map { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.map {
+        "${it.moduleVersion.id}|${it.classifier ?: ""}|${it.file.name}"
+      }
+    },
+  )
+  receipt.set(layout.buildDirectory.file("reports/host-packaging.tsv"))
+}
+tasks.check { dependsOn(verifyHostJars, verifyPackagedGrpc) }
