@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.device.ios
 
 import java.nio.file.Path
+import kotlin.time.Duration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import maestro.Maestro
@@ -22,6 +23,7 @@ class IosDeviceSession(
   internal val maestro: Maestro,
   private val iosDevice: device.IOSDevice,
   private val onCommandStart: ((Int) -> Unit)? = null,
+  private val boundedCapture: (suspend (Duration) -> HierarchyNode)? = null,
 ) : DeviceSession {
 
   override val platform: Platform = Platform.IOS
@@ -37,6 +39,11 @@ class IosDeviceSession(
   override suspend fun captureHierarchyTree(): HierarchyNode = withContext(Dispatchers.IO) {
     val hierarchy = iosDevice.viewHierarchy(false)
     XcTestTreeConverter.convert(hierarchy.axElement)
+  }
+
+  override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+    require(timeout.isPositive() && timeout.isFinite()) { "Capture timeout must be positive and finite" }
+    return checkNotNull(boundedCapture) { "This iOS session has no bounded hierarchy endpoint" }(timeout)
   }
 
   @Suppress("DEPRECATION")

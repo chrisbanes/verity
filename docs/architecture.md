@@ -194,6 +194,7 @@ interface DeviceSession : AutoCloseable {
     suspend fun executeFlow(yaml: String): FlowResult
     suspend fun pressKey(keyName: String)
     suspend fun captureHierarchyTree(): HierarchyNode          // abstract
+    suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode // cooperative; default unsupported
     suspend fun captureScreenshot(output: Path)
     suspend fun shell(command: String): String
     suspend fun waitForAnimationToEnd()
@@ -221,6 +222,8 @@ Android and iOS execute those commands through the existing Orchestra and driver
 **`AndroidDeviceSession`**: Connects via Dadb (ADB over TCP). Creates a Maestro instance with persistent gRPC connection. Supports device ID, IP:port, or auto-discovery.
 
 **`IosDeviceSession`**: Installs XCTest runner on device/simulator. Communicates via HTTP to the on-device XCTest server (localhost:22087). Simulator management via `xcrun simctl`, physical devices via `devicectl`.
+
+Bounded capture includes complete acquisition, parsing, conversion and owned cleanup. Android preserves the interruptible SDK route with converter checkpoints. iOS owns a call to the recorded main runner endpoint, checked chunked body input and a fixed-schema Jackson-token decoder; no-argument capture stays SDK-backed. The helper never starts or closes the main runner. These cooperative routes do not guarantee forced termination of arbitrary SDK CPU work.
 
 ### Factory
 
@@ -268,6 +271,10 @@ Android TV (and sometimes iOS) places `focused=true` on container nodes while te
 - A descendant of a focused node contains the text
 - A sibling of a focused node contains the text
 - An ancestor of a text node is focused
+
+`FocusObservation` is a pure core representation of directly focused resource/path records plus internal whole-tree resource multiplicities. `observeFocus` visits the complete tree; `hasFocusChanged` uses resource-only identity when unique in both trees, otherwise resource+path or path alone. It compares sets, so unrelated text changes and a nonfocused duplicate added at another path do not alone change focus. Positional fallback is ambiguous across sibling edits. These observations are reusable by device and agent consumers without MCP dependencies.
+
+Device `FocusChangeObserver.capture/awaitChange` supplies a separate baseline budget and serial monotonic post-action wait. It captures immediately, then waits 100 ms after each unchanged completed capture, capping every capture/delay by remaining time. Extraction and comparison use cancellation/deadline checkpoints. Last valid after-state is retained on timeout/error, and external cancellation propagates. See [focus-change waiting](specs/focus-change-waiting.md).
 
 ### Interaction Mapper
 
@@ -395,8 +402,8 @@ Saved files survive `close_session`, and callers eventually delete them after us
 | `close_session` | session_id | confirmation | Restores animations if disabled |
 | `list_journeys` | — | formatted list | Optional: path |
 | `load_journey` | path | parsed steps | |
-| `run_flow` | session_id, yaml | SUCCESS/FAILED + output | Optional: await_focus_change |
-| `press_key` | session_id, key | confirmation | Optional focus change result |
+| `run_flow` | session_id, yaml | Legacy SUCCESS/FAILED + output or focus-wait JSON | Optional: await_focus_change, focus_timeout_ms |
+| `press_key` | session_id, key | Legacy confirmation or focus-wait JSON | Optional: await_focus_change, focus_timeout_ms |
 | `capture_screenshot` | session_id | base64 JPEG or normalised absolute PNG path | Optional string: save_to_file; no overwrite; caller owns saved file |
 | `capture_hierarchy` | session_id | hierarchy text + snapshot_id | Optional: filter (focus/content/all) |
 | `capture_focused_tree` | session_id | bounded focused context + full snapshot_id | Optional: filter (focus/content/all); defaults to content |
@@ -406,6 +413,12 @@ Saved files survive `close_session`, and callers eventually delete them after us
 | `run_loop` | session_id, action, until | SATISFIED/NOT + iterations | Optional: max, wait_ms |
 | `get_context` | optional path | loaded-file metadata + bundled defaults + markdown context text | Required context can error |
 
+
+### Focus waits on actions
+
+Both action tools validate focus options before device work. With waiting enabled, one session mutex spans bounded baseline, exactly one action and serial observation. The post-action deadline defaults to 2,000 ms; baseline has its own equal budget. Awaited key presses skip their generic animation wait, and flows retain any explicitly supplied animation commands. Failure prevents post-wait; cancellation remains cancellation even when the SDK wraps an interrupted operation as an ordinary exception.
+
+Awaited JSON separates `action{status,output}` from `focus_changed`, `timed_out`, actual `elapsed_ms`, nullable `focus_before/focus_after` focused lists and nullable `focus_error{code,message}`. Empty focus is `[]`; unknown is null. Baseline failures prevent the action and use distinct error codes. Normal unchanged timeout is a successful tool result, while action/capture errors set `isError`. No full hierarchy snapshots are persisted by waiting. The same registrations serve stdio and HTTP; there are no separate UI, deep-link or notification action entry points. See the [result contract](specs/focus-change-waiting.md#result).
 
 ### Focused hierarchy capture
 

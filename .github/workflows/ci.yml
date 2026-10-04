@@ -63,7 +63,20 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: ./gradlew :verity:smoke-tests:test -Pinclude.tags=android --no-scan
+          script: >-
+            python3 -c 'import subprocess;
+            devices = subprocess.run(["adb", "devices"], check=True, capture_output=True, text=True);
+            online = [row.split()[0] for row in devices.stdout.splitlines()[1:] if len(row.split()) >= 2 and row.split()[1] == "device"];
+            assert len(online) == 1 and online[0].startswith("emulator-"), "Expected exactly one online job-owned emulator";
+            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:test", "-Pinclude.tags=android", "--rerun-tasks", "--no-scan"]).returncode)'
+
+      - name: Retain Android smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-android-test-results
+          path: verity/smoke-tests/build/test-results/test/*.xml
+          if-no-files-found: error
 
   smoke-ios:
     runs-on: xcode-27
@@ -85,4 +98,12 @@ jobs:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
           VERITY_SMOKE_IOS_MODEL: iPhone 17
           VERITY_SMOKE_IOS_RUNTIME: "27"
-        run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --no-scan
+        run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan
+
+      - name: Retain iOS smoke results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-ios-test-results
+          path: verity/smoke-tests/build/test-results/test/*.xml
+          if-no-files-found: error

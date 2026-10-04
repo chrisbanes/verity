@@ -8,7 +8,8 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyNode
  */
 object MaestroTreeConverter {
 
-  fun convert(node: TreeNode): HierarchyNode {
+  fun convert(node: TreeNode, checkpoint: () -> Unit = {}): HierarchyNode {
+    checkpoint()
     val attributes = node.attributes
       .filterValues { it.isNotEmpty() }
 
@@ -23,7 +24,7 @@ object MaestroTreeConverter {
     return HierarchyNode(
       attributes = attributes,
       states = states,
-      children = node.children.map { convert(it) },
+      children = node.children.map { convert(it, checkpoint) },
     )
   }
 }

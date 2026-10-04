@@ -10,6 +10,9 @@ dependencies {
   testImplementation(testFixtures(project(":verity:agent")))
   testImplementation(libs.kotlinx.serialization.json)
   testImplementation(libs.dadb)
+  testImplementation(libs.maestro.client)
+  testImplementation(libs.grpc.netty.shaded)
+  testImplementation(libs.grpc.stub)
   testImplementation(libs.koog.agents)
 }
 
@@ -25,6 +28,7 @@ configurations.all {
 }
 
 tasks.test {
+  maxHeapSize = "512m"
   // Device smoke tests require -Pinclude.tags=android or -Pinclude.tags=ios.
   // Without tags, only untagged tests (e.g. JourneyLoadTest) run.
   val includeTags = providers.gradleProperty("include.tags")
