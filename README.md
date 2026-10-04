@@ -35,6 +35,8 @@ Verity splits each journey into segments and drives the device through the Maest
 - **CLI** (`verity run`) — Run journey files autonomously against connected devices.
 - **MCP server** (`verity mcp`) — Expose device control as MCP tools for interactive AI workflows (e.g., in Claude Code).
 
+For interactive MCP work, give your agent the [run](verity/skills/run/SKILL.md), [author](verity/skills/author/SKILL.md) or [debug](verity/skills/debug/SKILL.md) workflow file after connecting it to a running `verity mcp` server. Run confirms and executes a journey; author reviews suggestions and saves journey YAML; debug previews each segment and lets you execute, skip or edit it. See the [workflow reference](docs/specs/mcp-skills.md) and [shared procedures](verity/skills/context/procedures.md). The repository files do not automatically register host slash commands.
+
 See the [documentation index](docs/README.md) for the domain glossary, architecture decisions, and behavior specifications, including suite runs, configuration, dry-run previews, and CI artifacts.
 
 ## Architecture

@@ -6,7 +6,7 @@ Resolve the journey's name, app ID and platform before device work. Wire platfor
 
 1. Connect the host agent to Verity MCP over stdio or HTTP. Resolve the journey with `list_journeys`/`load_journey` before opening a device session; these tools need no session. `load_journey` returns identity and typed steps, not segments or generated flows.
 2. Use `get_context` for bundled platform/Maestro guidance and available project context. Respect required-context errors. Resolve app-specific details rather than guessing them. See [project context](../../../docs/specs/project-context.md).
-3. After the workflow's execution confirmation, call `open_session(platform, device?, disable_animations: true)`. The server performs [device preflight](../../../docs/specs/preflight-checks.md); show its errors and remediation before retrying. Local `adb devices` or `xcrun simctl list` can help diagnose co-located devices, but a remote HTTP client need not have those tools.
+3. After the workflow's execution confirmation, call `open_session(platform, device?)`. Omit `disable_animations` to use the configured server default; pass an explicit value only when the user requests that override. The server performs [device preflight](../../../docs/specs/preflight-checks.md); show its errors and remediation before retrying. Local `adb devices` or `xcrun simctl list` can help diagnose co-located devices, but a remote HTTP client need not have those tools.
 4. Store the actual returned `session_id` only after a successful open. Every later exit follows [Session Cleanup](#session-cleanup). If opening fails, there is no opened session to close. An error encountered after opening, including missing context, requires cleanup.
 
 Server defaults come from [project configuration](../../../docs/specs/project-configuration.md). MCP callers own flow generation and semantic evaluation; CLI model settings and result writers are separate facilities.
@@ -28,7 +28,7 @@ appId: com.example.demo
 - waitForAnimationToEnd
 ```
 
-Pass the accepted YAML exactly as `run_flow(session_id, yaml)`. Read the returned text: `SUCCESS` means execution succeeded; `FAILED: ...` means it failed even if the MCP error flag is false. MCP errors are separate failures. The current `await_focus_change` option performs an animation wait; do not use it as evidence of an observed focus change. `press_key` currently takes `session_id` and `key` only.
+Pass the accepted YAML exactly as `run_flow(session_id, yaml)`. Read the returned text: `SUCCESS` means execution succeeded; `FAILED: ...` means it failed even if the MCP error flag is false. MCP errors are separate failures. These workflows use the default calls and omit focus-wait options. For a single named key, call `press_key(session_id, key)` and read its default `SUCCESS` or `FAILED: ...` text in the same way. Optional observed focus waiting returns structured evidence; see the [focus-wait contract](../../../docs/specs/focus-change-waiting.md) before requesting it.
 
 ## Step Classification
 

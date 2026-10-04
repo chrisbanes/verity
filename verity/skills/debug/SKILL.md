@@ -10,7 +10,7 @@ Use `load_journey(path)`, or `list_journeys` followed by the selected path, befo
 
 ## Preview and Choose
 
-Before any app launch/setup or segment action, generate YAML using shared [Flow Generation](../context/procedures.md#flow-generation) and display its exact contents. Launch/setup is a separate reviewed flow, never an invisible preparatory action. Keep Verity assertions outside YAML.
+Before any app launch/setup or segment action, generate YAML using shared [Flow Generation](../context/procedures.md#flow-generation) and display its exact contents. Launch/setup is a separate flow with the same execute, skip, edit or stop choices below. Obtain an explicit execute choice before running the original or accepted edited setup flow; showing its YAML alone does not permit execution. Skip performs no setup flow, and stop reaches session cleanup. Keep Verity assertions outside YAML.
 
 For each segment, show its index, original source, planned actions/assertion and exact generated flow. An assertion-only segment has no action YAML: preview the check/evidence instead. Offer:
 
