@@ -198,6 +198,75 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertIn("-d", commands[1][1])
         self.assertIn("-t", commands[2][1])
 
+    def test_single_property_list_filters_exact_names_before_retention(self):
+        sdk = self.directory / "snapshot-sdk"
+        sdk.mkdir()
+        calls = sdk / "calls"
+        allowed = ["[" + name + "]: [allowed-" + name + "]" for name in D.PROPERTIES]
+        deceptive = ["[sysXboot_completed]: [secret-dot]", "[sys.boot_completed.extra]: [secret-suffix]",
+                     "[dalvik.vm.heapsize.extra]: [secret-heap]", "[unrelated.private]: [secret-private]",
+                     "prefix [sys.boot_completed]: [secret-prefix]"]
+        for name, output in (("pidof", "579\n"), ("getprop", "\n".join(allowed + deceptive) + "\n")):
+            executable = sdk / name
+            executable.write_text("#!" + sys.executable + "\nfrom pathlib import Path\np = Path(" + repr(str(calls)) + ")\n"
+                                  + "with p.open('a') as f: f.write(" + repr(name + "\n") + ")\n"
+                                  + "print(" + repr(output) + ", end='')\n")
+            executable.chmod(0o755)
+        cpu, memory = sdk / "cpu", sdk / "meminfo"
+        cpu.write_text("0-1\n")
+        memory.write_text("MemFree: 500 kB\nMemTotal: 2621440 kB\nPrivateData: 123 kB\n")
+        with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}):
+            argv = D.guest_commands()[0][1]
+        script = argv[-1]
+        self.assertEqual(script.count("getprop"), 1)
+        self.assertLess(script.index("pidof system_server"), script.index("getprop"))
+        self.assertNotIn("cat ", script)
+        script = script.replace("/sys/devices/system/cpu/online", str(cpu)).replace("/proc/meminfo", str(memory))
+        with patch.dict(os.environ, {"PATH": str(sdk) + os.pathsep + os.environ["PATH"]}):
+            result = subprocess.run(["/bin/sh", "-c", script], check=True, capture_output=True, text=True, timeout=5)
+        self.assertEqual(calls.read_text().splitlines(), ["pidof", "getprop"])
+        self.assertEqual(result.stdout.splitlines(), ["system_server=579", "online_cpu=0-1", "MemTotal=2621440 kB"] + allowed)
+        self.assertNotIn("secret", result.stdout)
+        self.assertNotIn("PrivateData", result.stdout)
+        (sdk / "pidof").write_text("#!" + sys.executable + "\nimport sys; sys.exit(1)\n")
+        with patch.dict(os.environ, {"PATH": str(sdk) + os.pathsep + os.environ["PATH"]}):
+            missing = subprocess.run(["/bin/sh", "-c", script], check=True, capture_output=True, text=True, timeout=5)
+        self.assertEqual(missing.stdout.splitlines()[:3], ["system_server=", "online_cpu=0-1", "MemTotal=2621440 kB"])
+
+    def test_late_pressure_once_with_no_probes_after_stop(self):
+        clock = [0.0]
+        calls = []
+        def pressure(cancel, deadline):
+            self.assertFalse(cancel())
+            calls.append(clock[0])
+            if clock[0] >= 300:
+                D.write_json(self.directory / "stop.json", {"token": "offline-token"})
+            return {"fixture": True}
+        def inventory(cancel, deadline):
+            return {"pressure": pressure(cancel, deadline)}
+        with patch.object(D.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(D.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + 50)):
+            self.assertEqual(D.observe(self.directory, self.control(), inventory=inventory, commands=lambda: [], cadence=100, pressure=pressure), 0)
+        self.assertEqual(calls, [0, 100, 300])
+        report = json.loads((self.directory / "report.json").read_text())
+        self.assertEqual(report["status"], "stopped")
+        self.assertEqual([s["elapsedSeconds"] for s in report["snapshots"] if "hostPressure" in s], [100, 300])
+        self.assertEqual(report["snapshots"][-1]["elapsedSeconds"], 300)
+
+    def test_late_pressure_is_not_repeated_on_later_snapshots(self):
+        clock = [0.0]
+        calls = []
+        def pressure(*_):
+            calls.append(clock[0])
+            return {}
+        with patch.object(D.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(D.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + min(50, 548 - clock[0]))):
+            self.assertEqual(D.observe(self.directory, self.control(), inventory=lambda *_: {}, commands=lambda: [],
+                                       duration=550, cadence=100, pressure=pressure), 0)
+        self.assertEqual(calls, [100, 300])
+        report = json.loads((self.directory / "report.json").read_text())
+        self.assertEqual(report["snapshots"][-1]["elapsedSeconds"], 500)
+
     def test_host_command_failures_are_reported(self):
         self.assertEqual(D.failures({"memory": {"exit": 1, "outcome": "completed"}, "swap": {"exit": -15, "outcome": "timeout"}}), 2)
 

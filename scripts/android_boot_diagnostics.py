@@ -19,7 +19,8 @@ MAX_STREAM = 2048
 SERIAL = "emulator-5554"
 AVD = "test"
 KEYS = ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "GITHUB_SHA", "VERITY_BOOT_CANDIDATE_SHA")
-PROPERTIES = ("ro.boot.bootreason", "init.svc.zygote", "init.svc.bootanim", "init.svc.surfaceflinger", "sys.boot_completed")
+PROPERTIES = ("ro.boot.bootreason", "init.svc.zygote", "init.svc.bootanim", "init.svc.surfaceflinger", "sys.boot_completed",
+              "dalvik.vm.heapsize", "dalvik.vm.heapgrowthlimit")
 
 
 def binding():
@@ -152,8 +153,11 @@ def host_pressure(cancel, deadline):
 
 
 def guest_commands():
-    script = "cat /sys/devices/system/cpu/online; " + "; ".join("echo " + prop + "; getprop " + prop for prop in PROPERTIES)
-    script += "; echo system_server; pidof system_server"
+    properties = "|".join(prop.replace(".", r"\.") for prop in PROPERTIES)
+    script = "printf 'system_server='; pidof system_server || printf '\n'; "
+    script += "IFS= read -r cpu < /sys/devices/system/cpu/online; printf 'online_cpu=%s\\n' \"$cpu\"; "
+    script += "while read -r key value unit; do case \"$key\" in MemTotal:) printf 'MemTotal=%s %s\\n' \"$value\" \"$unit\"; break;; esac; done < /proc/meminfo; "
+    script += "getprop | grep -E '^\\[(" + properties + ")\\]: \\['"
     adb = str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb")
     prefix = [adb, "-s", SERIAL]
     return [("state", prefix + ["shell", script]),
@@ -197,8 +201,10 @@ def observe(directory, control, inventory=static_inventory, commands=guest_comma
         if not cancel():
             report["host"] = inventory(cancel, deadline)
             report["diagnosticFailures"] += failures(report["host"])
+        late_pressure_sampled = False
         while not cancel() and time.monotonic() < deadline:
-            snapshot = {"elapsedSeconds": round(time.monotonic() - started, 3), "commands": {}}
+            elapsed = time.monotonic() - started
+            snapshot = {"elapsedSeconds": round(elapsed, 3), "commands": {}}
             for name, argv in commands():
                 if cancel() or time.monotonic() >= deadline:
                     break
@@ -206,8 +212,10 @@ def observe(directory, control, inventory=static_inventory, commands=guest_comma
                 snapshot["commands"][name] = result
                 report["diagnosticFailures"] += int(result["exit"] != 0 or result["outcome"] != "completed")
                 report["truncated"] |= result["truncated"]
-            if len(report["snapshots"]) == 1 and not cancel() and time.monotonic() < deadline:
+            late_pressure = elapsed >= 300 and not late_pressure_sampled
+            if (len(report["snapshots"]) == 1 or late_pressure) and not cancel() and time.monotonic() < deadline:
                 snapshot["hostPressure"] = pressure(cancel, deadline)
+                late_pressure_sampled |= late_pressure
                 report["diagnosticFailures"] += failures(snapshot["hostPressure"])
             report["snapshots"].append(snapshot)
             retain_report(directory / "report.json", report)
