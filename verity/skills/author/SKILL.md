@@ -1,99 +1,53 @@
 # Verity Author
 
-Collaboratively create a new journey file by exploring a live device.
+Collaboratively create a journey by exploring a live device, reviewing each proposed step before adding or executing it.
 
-## Prerequisites
+## Resolve Identity
 
-Follow the shared prerequisites from `procedures.md`:
-1. Device precheck
-2. Open session with `open_session(platform, disable_animations: true)`
-3. Optionally load app-specific context with `get_context` (defaults are already bundled)
+Resolve the journey name, app ID and platform (`android-tv`, `android` or `ios`) before device precheck, opening or capture. Use context for suggested defaults and confirm them; ask for missing values. Keep the display name separate from the goal and filename slug. A later goal does not replace the agreed name.
 
-## Workflow
+Resolve the output directory from the selected/configured journey location. If none is established, propose `verity/journeys/<slug>.journey.yaml` as a repository convention and confirm the path. No MCP tool saves a journey automatically.
 
-### 1. Resolve Journey Name
+Follow shared [Prerequisites](../context/procedures.md#prerequisites) after the user agrees to explore. All exits after a successful open follow [Session Cleanup](../context/procedures.md#session-cleanup).
 
-Ask the user for a journey name. The file will be saved as:
-`verity/journeys/<name>.journey.yaml`
+## Capture the Starting State
 
-### 2. Resolve App ID
+Call `capture_screenshot(session_id)` and show the image, then `capture_hierarchy(session_id)` to describe the accessible state. Ask whether this is the intended starting point. Use [Screenshot Evidence](../context/procedures.md#screenshot-evidence) for a retained reference PNG; it survives session closure and the caller owns eventual deletion.
 
-If the context specifies an app ID, confirm it. Otherwise ask the user.
+Ask what the journey should test. Retain that goal as authoring context while keeping the resolved name.
 
-### 3. Opening Snapshot
+## Review Steps Together
 
-- Call `capture_screenshot(session_id)` — show the screenshot
-- To retain a PNG for reference or debugging, follow the shared [screenshot evidence procedure](../context/procedures.md#screenshot-evidence): pass `save_to_file` and record the returned absolute path. Choose an unused path with an existing writable parent. The caller owns the file and eventually deletes it after use; it remains after `close_session`.
-- Call `capture_hierarchy(session_id)` — describe what's visible
-- Ask: "Is this the right starting point? [yes/no]"
+Repeat until the user finishes:
 
-### 4. Get Journey Goal
+1. Propose a plain-English action based on the current state and platform: D-pad movement may suit TV, while taps/swipes suit mobile or iOS. Offer accept, edit or skip. Redisplay an edited proposal and obtain acceptance before executing it or adding it.
+2. Generate the accepted action's flow through shared [Flow Generation](../context/procedures.md#flow-generation). Execute only after review; capture updated state before the next proposal. Report failed execution honestly and let the user retry, revise, retain an explicitly unverified step or skip it; never represent a failed action as successfully exercised. Skipped proposals are not added.
+3. Propose the cheapest useful assertion through [Assertion Evaluation](../context/procedures.md#assertion-evaluation): pin `[?visible]` for literal text, `[?focused]` for focus, `[?tree]` for relationships and `[?visual]` for appearance. Explain the mode choice, then offer accept, edit or skip before adding/checking it. Generic `[?]` uses parser heuristics; it does not automatically choose FOCUSED.
+4. Offer another action, a loop, a reference screenshot or finish. For a loop, review/edit the complete ordered body, condition and explicit maximum before adding or executing it. Use shared [Loop Execution](../context/procedures.md#loop-execution) and current scalar grammar: semicolon-separated nonempty instructions followed by `until` and an anchored `up to N times` limit. A zero bound checks once without a body. Show any replacement body before executing it.
 
-Ask: "What should this journey test? (one sentence)"
+Maintain a reviewed draft and distinguish steps actually exercised from unverified edits. After an edit or failed flow, follow the shared evidence-freshness rule.
 
-Use this as the journey `name` field.
+## Review and Save
 
-### 5. Step Authoring Loop
-
-Repeat until the user says "finish":
-
-#### Suggest Next Step
-
-Based on the current screen state (screenshot + hierarchy):
-- Suggest a plain-English step (e.g., "Press D-pad down to navigate to Movies row")
-- Show the suggestion and ask: "Accept, edit, or skip?"
-
-#### Ask About Assertions
-
-After each navigation action, suggest an assertion:
-- Prefer the cheapest type that works:
-  - If the expected text is short and specific → suggest `[?] Text` (will infer VISIBLE)
-  - If the check requires understanding structure → suggest `[?tree] description`
-  - Only suggest `[?visual]` if the check involves images, colors, or visual layout
-- Ask: "Add this assertion? [yes/edit/skip]"
-
-#### What Next?
-
-Ask: "What would you like to do?"
-- **Describe an action** — user types a step, you generate and execute it
-- **Add a loop** — user describes what to navigate to, you create a loop step
-- **Take a screenshot** — capture current state for reference; use the shared [screenshot evidence procedure](../context/procedures.md#screenshot-evidence) when saving a PNG for later use
-- **Finish** — done authoring
-
-### 6. Review
-
-Show the complete journey YAML:
+Show final YAML and the exact proposed output path. Current journeys have `name`, `app`, `platform` and string `steps`; action/assertion/loop mappings are not the schema. Quote assertion prefixes and ambiguous scalar strings. For example:
 
 ```yaml
-name: <journey goal>
-app: <app id>
-platform: <platform>
-
+name: Open account settings
+app: com.example.demo
+platform: android
 steps:
-  - <step 1>
-  - <step 2>
-  - ...
+  - Tap Settings
+  - "[?visible] Settings"
+  - "[?focused] Account"
+  - "Scroll down; tap Account until account page is ready up to 2 times"
+  - "[?tree] The account page contains a profile section"
+  - "[?visual] The profile picture is visible"
 ```
 
-Ask: "Any edits? [looks good/edit]"
+Apply requested edits and redisplay the final draft for approval before writing with the host's file tools. Validate YAML syntax and current [journey schema](../../../docs/architecture.md#journey-format): nonempty identity, supported platform and scalar steps; reject object-form steps, unquoted prefixes or empty loop components. `load_journey(path)` can parse the saved file without opening a new session and should return the agreed identity and expected Action/Assert/Loop classifications. If this check is unavailable, report syntax/schema review and the unrun parser check separately. A write or parse failure is reported and still reaches cleanup.
 
-If editing, apply changes and show updated YAML.
+After a verified save, point to the [run skill](../run/SKILL.md) or [debug skill](../debug/SKILL.md) with the saved path. These are repository files; adding a directory does not establish registered slash commands in the host.
 
-### 7. Save
+## Close
 
-Write the journey file to `verity/journeys/<name>.journey.yaml`.
-
-### 8. Next Steps
-
-Offer: "Journey saved! You can run it with `/verity-run <path>` or step through it with `/verity-debug <path>` (when available)."
-
-## Assertion Cost Awareness
-
-Always suggest the cheapest assertion mode that would work:
-
-1. **VISIBLE** (`[?] short text`): For checking specific text exists on screen. Free.
-2. **FOCUSED** (`[?focused] text`): For checking what's currently focused. Free.
-3. **TREE** (`[?tree] description`): For checking structure, relationships, or content meaning. Uses LLM.
-4. **VISUAL** (`[?visual] description`): For checking images, colors, layout. Uses LLM + vision. Last resort.
-
-When in doubt, default to VISIBLE for short checks and TREE for complex ones.
+Follow shared [Session Cleanup](../context/procedures.md#session-cleanup) on completion, early exit and every failure. State which Android animation settings were restored only when closure succeeded; closure does not undo app navigation/data, saved journeys or screenshot evidence.
