@@ -21,6 +21,8 @@ For each segment, show its index, original source, planned actions/assertion and
 
 An assertion-only segment offers execute-check, skip or stop. For a loop, preview its complete body, condition and maximum, then apply shared [Loop Execution](../context/procedures.md#loop-execution). Check initially; a satisfied condition performs no body. Each newly generated or edited complete body requires its own preview and execution choice. Count only successful complete bodies; honour the maximum. Do not hide debugger choices inside `run_loop`.
 
+A wait segment has no action flow. Show its condition and parsed time limit, explain that semantic execution requires CLI `verity run`, and leave it unexecuted through MCP before session cleanup. Do not claim a wait pass from a single exploratory capture or translate it to the key-loop tool.
+
 ## Capture and Explain
 
 Interpret returned `SUCCESS`/`FAILED: ...` text separately from MCP error flags. After an actual action flow, capture a current screenshot and/or hierarchy even on reported execution failure if the session still responds. Retain returned content, snapshot ID or the actual saved absolute path using [Screenshot Evidence](../context/procedures.md#screenshot-evidence). Capture failure is explicit unavailable evidence.

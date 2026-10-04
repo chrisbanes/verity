@@ -17,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.containsText
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
@@ -259,6 +260,99 @@ class ConditionWaiterTest {
         assertThat(assertFailsWith<CancellationException> { waiter.await("semantic") }.message).isEqualTo("foreign model")
       }
     }
+  }
+
+  @Test fun `visual writer and temporary cleanup join before timeout outcome`() = runTest {
+    val session = Session()
+    val events = mutableListOf<String>()
+    session.screenshot = {
+      try {
+        awaitCancellation()
+      } finally {
+        withContext(NonCancellable) {
+          delay(100)
+          events += "writer joined"
+        }
+      }
+    }
+    val inspector = InspectorAgent({ _, _, _ -> error("tree") }, { _, _, _, _ -> error("late model") })
+    val evaluator = ConditionEvaluator(
+      session,
+      inspector,
+      temporaryScreenshot = { inspect ->
+        try {
+          inspect(Path.of("owned.png"))
+        } finally {
+          events += "temporary deleted"
+        }
+      },
+      verifyScreenshot = {},
+    )
+    val result = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }.await("visually ready", 2.seconds)
+    events += "outcome"
+    assertThat(result.satisfied).isEqualTo(false)
+    assertThat(result.elapsedMs).isEqualTo(2100)
+    assertThat(events).isEqualTo(listOf("writer joined", "temporary deleted", "outcome"))
+  }
+
+  @Test fun `image verification expiry prevents inspection and late model true never completes a check`() = runTest {
+    for (stage in listOf("verification", "model")) {
+      val session = Session()
+      var inspected = false
+      val inspector = InspectorAgent({ _, _, _ -> error("tree") }, { _, _, _, _ ->
+        inspected = true
+        withContext(NonCancellable) { delay(3.seconds) }
+        inspectionReply("""{"passed":true,"reasoning":"too late"}""")
+      })
+      val evaluator = ConditionEvaluator(
+        session,
+        inspector,
+        temporaryScreenshot = { it(Path.of("virtual.png")) },
+        verifyScreenshot = { if (stage == "verification") delay(3.seconds) },
+      )
+      val result = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }.await("visually ready", 3.seconds)
+      assertThat(result.satisfied).isEqualTo(false)
+      assertThat(result.checks).isEqualTo(0)
+      assertThat(inspected).isEqualTo(stage == "model")
+    }
+  }
+
+  @Test fun `shared deadline checkpoints interrupt literal focus and rendered content inner work`() = runTest {
+    val wide = HierarchyNode((0 until 1000).associate { "text$it" to "value$it" })
+    val focus = HierarchyNode(
+      children = (0 until 50).map { index ->
+        HierarchyNode(children = listOf(HierarchyNode(mapOf("text" to if (index % 2 == 0) "needle" else "other"), if (index % 2 != 0) setOf("focused") else emptySet())))
+      },
+    )
+    for ((threshold, work) in listOf<Pair<Int, (() -> Unit) -> Unit>>(
+      50 to { checkpoint -> wide.containsText("absent", checkpoint = checkpoint) },
+      400 to { checkpoint -> me.chrisbanes.verity.core.hierarchy.FocusDetector.containsFocused(focus, "needle", checkpoint) },
+      50 to { checkpoint -> me.chrisbanes.verity.core.hierarchy.HierarchyRenderer.render(wide, me.chrisbanes.verity.core.hierarchy.HierarchyFilter.CONTENT, checkpoint) },
+    )) {
+      var sampled = 0
+      val deadline = EvaluationDeadline(
+        kotlinx.coroutines.currentCoroutineContext(),
+        0L,
+        3.seconds,
+        { if (++sampled >= threshold) 3_000_000_000 else 0L },
+        {},
+      )
+      assertFailsWith<WaitDeadlineExceeded> { work(deadline::checkpoint) }
+      assertThat(sampled).isEqualTo(threshold)
+    }
+  }
+
+  @Test fun `model error first observed exactly at deadline is wait timeout`() = runTest {
+    var now = 0L
+    val session = Session()
+    val inspector = InspectorAgent({ _, _, _ ->
+      now = 3_000_000_000
+      error("late callback")
+    }, { _, _, _, _ -> error("visual") })
+    val result = ConditionWaiter(ConditionEvaluator(session, inspector)) { now }.await("semantic", 3.seconds)
+    assertThat(result.satisfied).isEqualTo(false)
+    assertThat(result.checks).isEqualTo(0)
+    assertThat(result.elapsedMs).isEqualTo(3000)
   }
 
   private fun evaluator(session: Session, treePassed: Boolean = true, rejectInspector: Boolean = false) = ConditionEvaluator(

@@ -30,7 +30,7 @@ class ConditionEvaluator(
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext()): ConditionEvaluation {
     VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
       val description = condition.trim().substring(prefix.range.last + 1).trim()
-      val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex).visual(description, context)
+      val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot).visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
     if (session.containsText(condition)) {
@@ -43,7 +43,7 @@ class ConditionEvaluator(
         ConditionTier.FOCUS,
       )
     }
-    val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex).tree(condition, context)
+    val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot).tree(condition, context)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {

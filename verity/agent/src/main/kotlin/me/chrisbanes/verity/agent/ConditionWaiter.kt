@@ -58,7 +58,8 @@ class ConditionWaiter(
       }
     } catch (failure: ModelFailureException) {
       parent.ensureActive()
-      throw failure
+      if (elapsed() < timeout) throw modelFailure.get() ?: failure
+      // A callback failure first observed at/after expiry cannot replace wait timeout.
     } catch (cancellation: CancellationException) {
       parent.ensureActive()
       throw cancellation

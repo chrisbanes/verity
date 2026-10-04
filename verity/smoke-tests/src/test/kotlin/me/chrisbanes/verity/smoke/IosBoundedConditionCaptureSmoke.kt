@@ -78,6 +78,11 @@ class IosBoundedConditionCaptureSmoke {
   }
 
   @Test
+  fun `integrated waits capture native state without actions and join before reuse`() = runBlocking {
+    qualifyConditionWaits(session, "com.apple.Preferences", "IosBoundedConditionCaptureSmoke")
+  }
+
+  @Test
   fun `factory screenshots join observed production cancellation before bounded and noarg reuse`() = runBlocking {
     val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-native-screenshot") }
     val output = directory.resolve("capture.png")

@@ -3,6 +3,7 @@ package me.chrisbanes.verity.agent
 import ai.koog.prompt.message.Message
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -53,6 +54,7 @@ internal suspend fun requestModelText(
     } catch (error: CancellationException) {
       throw error
     } catch (failure: ModelFailureException) {
+      if (onFailure == null) throw ModelFailureException(stage, ModelFailureKind.REQUEST)
       throw failure
     } catch (_: Exception) {
       throw ModelFailureException(stage, ModelFailureKind.REQUEST)
@@ -77,13 +79,14 @@ private suspend fun observedRequest(
   onFailure: (ModelFailureException) -> Unit,
   execute: suspend () -> Message.Assistant,
 ): Message.Assistant = supervisorScope {
-  val request = async { execute() }
+  val request = async(start = CoroutineStart.LAZY) { execute() }
   val failure = ModelFailureException(stage, ModelFailureKind.TIMEOUT)
-  val timer = launch {
+  val timer = launch(start = CoroutineStart.UNDISPATCHED) {
     delay(30.seconds)
     onFailure(failure)
     request.cancel(OwnedModelTimeout())
   }
+  request.start()
   try {
     request.await()
   } catch (owned: OwnedModelTimeout) {

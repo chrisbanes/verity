@@ -23,13 +23,13 @@ Repeat until the user finishes:
 1. Propose a plain-English action based on the current state and platform: D-pad movement may suit TV, while taps/swipes suit mobile or iOS. Offer accept, edit or skip. Redisplay an edited proposal and obtain acceptance before executing it or adding it.
 2. Generate the accepted action's flow through shared [Flow Generation](../context/procedures.md#flow-generation). Execute only after review; capture updated state before the next proposal. Report failed execution honestly and let the user retry, revise, retain an explicitly unverified step or skip it; never represent a failed action as successfully exercised. Skipped proposals are not added.
 3. Propose the cheapest useful assertion through [Assertion Evaluation](../context/procedures.md#assertion-evaluation): pin `[?visible]` for literal text, `[?focused]` for focus, `[?tree]` for relationships and `[?visual]` for appearance. Explain the mode choice, then offer accept, edit or skip before adding/checking it. Generic `[?]` uses parser heuristics; it does not automatically choose FOCUSED.
-4. Offer another action, a loop, a reference screenshot or finish. For a loop, review/edit the complete ordered body, condition and explicit maximum before adding or executing it. Use shared [Loop Execution](../context/procedures.md#loop-execution) and current scalar grammar: semicolon-separated nonempty instructions followed by `until` and an anchored `up to N times` limit. A zero bound checks once without a body. Show any replacement body before executing it.
+4. Offer another action, a loop, a wait, a reference screenshot or finish. For a wait, review its condition and positive whole-second limit; use `Wait until <condition> up to N seconds`, defaulting to 20 seconds when omitted. Semantic waits are executed by the CLI, so mark an authored wait unverified during MCP exploration. For a loop, review/edit the complete ordered body, condition and explicit maximum before adding or executing it. Use shared [Loop Execution](../context/procedures.md#loop-execution) and current scalar grammar: semicolon-separated nonempty instructions followed by `until` and an anchored `up to N times` limit. A zero bound checks once without a body. Show any replacement body before executing it.
 
 Maintain a reviewed draft and distinguish steps actually exercised from unverified edits. After an edit or failed flow, follow the shared evidence-freshness rule.
 
 ## Review and Save
 
-Show final YAML and the exact proposed output path. Current journeys have `name`, `app`, `platform` and string `steps`; action/assertion/loop mappings are not the schema. Quote assertion prefixes and ambiguous scalar strings. For example:
+Show final YAML and the exact proposed output path. Current journeys have `name`, `app`, `platform` and string `steps`; action/assertion/loop/wait mappings are not the schema. Quote assertion prefixes and ambiguous scalar strings. For example:
 
 ```yaml
 name: Open account settings
@@ -44,7 +44,7 @@ steps:
   - "[?visual] The profile picture is visible"
 ```
 
-Apply requested edits and redisplay the final draft for approval before writing with the host's file tools. Validate YAML syntax and current [journey schema](../../../docs/architecture.md#journey-format): nonempty identity, supported platform and scalar steps; reject object-form steps, unquoted prefixes or empty loop components. `load_journey(path)` can parse the saved file without opening a new session and should return the agreed identity and expected Action/Assert/Loop classifications. If this check is unavailable, report syntax/schema review and the unrun parser check separately. A write or parse failure is reported and still reaches cleanup.
+Apply requested edits and redisplay the final draft for approval before writing with the host's file tools. Validate YAML syntax and current [journey schema](../../../docs/architecture.md#journey-format): nonempty identity, supported platform and scalar steps; reject object-form steps, unquoted prefixes or empty loop components. `load_journey(path)` can parse the saved file without opening a new session and should return the agreed identity and expected Action/Assert/Loop/Wait classifications. If this check is unavailable, report syntax/schema review and the unrun parser check separately. A write or parse failure is reported and still reaches cleanup.
 
 After a verified save, point to the [run skill](../run/SKILL.md) or [debug skill](../debug/SKILL.md) with the saved path. These are repository files; adding a directory does not establish registered slash commands in the host.
 
