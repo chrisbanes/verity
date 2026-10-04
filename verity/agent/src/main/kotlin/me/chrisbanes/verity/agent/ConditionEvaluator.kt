@@ -133,9 +133,11 @@ internal class ScreenInspection(
         true
       } catch (e: CancellationException) {
         throw e
-      } catch (_: IOException) {
+      } catch (e: IOException) {
+        if (deadline != null) throw e
         false
-      } catch (_: SecurityException) {
+      } catch (e: SecurityException) {
+        if (deadline != null) throw e
         false
       }
       if (captured) {

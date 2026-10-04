@@ -120,6 +120,50 @@ class ConditionWaiterTest {
     assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> { waiter.await("Settings") }
   }
 
+  @Test fun `bounded visual capture failure propagates without temporary retry or inspector`() = runTest {
+    for (failure in listOf(IOException("capture failed"), SecurityException("capture denied"))) {
+      val session = Session()
+      var captures = 0
+      var temporaryScreenshots = 0
+      var inspectorCalls = 0
+      session.screenshot = {
+        captures++
+        // A forbidden second capture would succeed and could incorrectly pass the wait.
+        if (captures == 1) throw failure
+      }
+      val recorder = object : JourneyArtifactRecorder {
+        override suspend fun screenshotPath(segmentIndex: Int) = JourneyScreenshotArtifact(Path.of("artifact.png"), "artifact.png")
+      }
+      val inspector = InspectorAgent(
+        { _, _, _ -> error("unexpected tree inspector") },
+        { _, _, _, _ ->
+          inspectorCalls++
+          inspectionReply("""{"passed":true,"reasoning":"second capture passed"}""")
+        },
+      )
+      val evaluator = ConditionEvaluator(
+        session,
+        inspector,
+        recorder,
+        temporaryScreenshot = {
+          temporaryScreenshots++
+          it(Path.of("temporary.png"))
+        },
+        verifyScreenshot = {},
+      )
+      val waiter = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }
+      val observed = assertFailsWith<Exception> { waiter.await("visually ready", 3.seconds) }
+      assertThat(observed.javaClass).isEqualTo(failure.javaClass)
+      assertThat(observed.message).isEqualTo(failure.message)
+      // Coroutine stack recovery can copy an exception while retaining its original cause.
+      assertThat(generateSequence(observed as Throwable) { it.cause }.any { it === failure }).isEqualTo(true)
+      assertThat(captures).isEqualTo(1)
+      assertThat(session.screenshotBudgets).isEqualTo(listOf(3.seconds))
+      assertThat(temporaryScreenshots).isEqualTo(0)
+      assertThat(inspectorCalls).isEqualTo(0)
+    }
+  }
+
   @Test fun `typed capture expiry at shared deadline is timeout`() = runTest {
     var now = 0L
     val session = Session()
