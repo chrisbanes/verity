@@ -34,6 +34,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.asSink
@@ -45,6 +46,18 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.chrisbanes.verity.agent.InspectorAgent
+import me.chrisbanes.verity.agent.NavigatorAgent
+import me.chrisbanes.verity.agent.Orchestrator
+import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.containsText
+import me.chrisbanes.verity.core.interaction.Direction
+import me.chrisbanes.verity.core.interaction.Interaction
+import me.chrisbanes.verity.core.journey.JourneyLoader
+import me.chrisbanes.verity.core.model.ActionFlow
+import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FakeDeviceSession
 import org.junit.jupiter.api.Tag
 
 /** Runs production exclusively from java -jar or fat-JAR + fixture-JAR child classpaths. */
@@ -103,15 +116,7 @@ class PackagedCliSmoke {
         val output = File(directory, "results")
         withContext(Dispatchers.IO) {
           fixtures.mkdirs()
-          File(fixtures, "settings.journey.yaml").writeText(
-            """
-              name: Packaged Settings visible
-              app: com.android.settings
-              platform: android
-              steps:
-                - "[?visible] Network & internet"
-            """.trimIndent() + "\n",
-          )
+          File(fixtures, "settings.journey.yaml").writeText(PACKAGED_ANDROID_JOURNEY)
         }
         val options = listOf("-jar", jar.absolutePath, "--provider", "ollama", "--api-key", endpoint, "--device", serial, "--output-path", output.path)
         val listing = start(directory, "list", options + listOf("list", "--path", fixtures.path)).also { owned += it }
@@ -343,5 +348,67 @@ class PackagedChildLifecycleTest {
         directory.deleteRecursively()
       }
     }
+  }
+}
+
+// Reuse the non-target action + visible condition from the existing Settings smoke.
+// The native action invokes normal animation synchronization; no model search is used.
+private val PACKAGED_ANDROID_JOURNEY = """
+  name: Packaged Settings visible
+  app: com.android.settings
+  platform: android
+  steps:
+    - Scroll down
+    - "[?visible] System"
+""".trimIndent() + "\n"
+
+/** Offline route sensitivity only: real Settings visibility remains a required CI assertion. */
+class PackagedJourneyFixtureTest {
+  @Test
+  fun `fixture executes native action and animation wait before real visible assertion without models`() = runTest {
+    val result = executeFixture(systemVisible = true)
+    assertThat(result.passed).isTrue()
+  }
+
+  @Test
+  fun `fixture fails when target is absent without using a model or inventing a pass`() = runTest {
+    val result = executeFixture(systemVisible = false)
+    assertThat(result.passed).isFalse()
+  }
+
+  private suspend fun executeFixture(systemVisible: Boolean): me.chrisbanes.verity.agent.JourneyResult {
+    val fake = FakeDeviceSession(platform = Platform.ANDROID_MOBILE)
+    val events = mutableListOf<String>()
+    val scroll = Interaction.Scroll(Direction.DOWN)
+    val session = object : DeviceSession by fake {
+      override suspend fun executeActions(flow: ActionFlow) = fake.executeActions(flow).also {
+        events += if (flow.actions.contains(scroll)) "scroll" else "launch"
+      }
+      override suspend fun waitForAnimationToEnd() {
+        events += "animation-wait"
+      }
+      override suspend fun containsText(text: String, ignoreCase: Boolean) = captureHierarchyTree().containsText(text, ignoreCase)
+      override suspend fun captureHierarchyTree(): HierarchyNode {
+        events += "capture"
+        return HierarchyNode(attributes = if (systemVisible) mapOf("text" to "System") else emptyMap())
+      }
+    }
+    val journey = JourneyLoader.fromYaml(PACKAGED_ANDROID_JOURNEY)
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> error("Fixture must not call navigator model") } },
+      inspectorFactory = {
+        InspectorAgent(
+          evaluateTreeContent = { _, _, _ -> error("VISIBLE fixture must not call inspector model") },
+          evaluateVisualContent = { _, _, _, _ -> error("VISIBLE fixture must not call visual model") },
+        )
+      },
+    )
+    val result = orchestrator.run(journey)
+    assertThat(events).isEqualTo(listOf("launch", "scroll", "animation-wait", "capture"))
+    assertThat(fake.executedActionFlows.flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp(), scroll))
+    assertThat(result.segments.single().actions).isEqualTo(listOf("Scroll down"))
+    assertThat(result.segments.single().assertionDescription).isEqualTo("System")
+    return result
   }
 }
