@@ -93,13 +93,13 @@ platform: android-tv
 
 steps:
   - Launch the app
-  - [?] Home
+  - "[?] Home"
   - Navigate down until TV Shows row
   - Press select
-  - [?] Detail page shows title
-  - [?visual] Backdrop image loads
-  - [?focused] Settings menu item
-  - [?tree] Synopsis contains at least 2 sentences
+  - "[?] Detail page shows title"
+  - "[?visual] Backdrop image loads"
+  - "[?focused] Settings menu item"
+  - "[?tree] Synopsis contains at least 2 sentences"
 ```
 
 ### Assertion Syntax
@@ -419,6 +419,14 @@ Saved files survive `close_session`, and callers eventually delete them after us
 Both action tools validate focus options before device work. With waiting enabled, one session mutex spans bounded baseline, exactly one action and serial observation. The post-action deadline defaults to 2,000 ms; baseline has its own equal budget. Awaited key presses skip their generic animation wait, and flows retain any explicitly supplied animation commands. Failure prevents post-wait; cancellation remains cancellation even when the SDK wraps an interrupted operation as an ordinary exception.
 
 Awaited JSON separates `action{status,output}` from `focus_changed`, `timed_out`, actual `elapsed_ms`, nullable `focus_before/focus_after` focused lists and nullable `focus_error{code,message}`. Empty focus is `[]`; unknown is null. Baseline failures prevent the action and use distinct error codes. Normal unchanged timeout is a successful tool result, while action/capture errors set `isError`. No full hierarchy snapshots are persisted by waiting. The same registrations serve stdio and HTTP; there are no separate UI, deep-link or notification action entry points. See the [result contract](specs/focus-change-waiting.md#result).
+
+### MCP skill workflows
+
+The repository's [run](../verity/skills/run/SKILL.md), [author](../verity/skills/author/SKILL.md) and [debug](../verity/skills/debug/SKILL.md) files guide an external agent connected through stdio or HTTP. They use the same registered tools and [shared procedures](../verity/skills/context/procedures.md); no host command registration or skill packaging is implied.
+
+`load_journey` parses identity and typed steps. The caller derives segments, generates Maestro YAML and evaluates semantic assertions against current captures. Run retains confirmation and assertion checkpoints; author reviews editable suggestions before saving current-schema YAML; debug previews every action flow, including setup, before execute/skip/edit choices. Debug reports keep editing separate from passed/failed/skipped outcomes and identify unexecuted segments.
+
+Opened sessions close on completion, stop and failure. Closure attempts saved Android animation-scale restoration when disabling was requested; iOS ignores disabling. App navigation/data and caller-owned saved journeys/screenshots are not restored or removed. Captured evidence references remain distinct from CLI-required result artifacts. See the [MCP skill workflow spec](specs/mcp-skills.md) for the complete caller and cleanup boundary.
 
 ### Focused hierarchy capture
 
