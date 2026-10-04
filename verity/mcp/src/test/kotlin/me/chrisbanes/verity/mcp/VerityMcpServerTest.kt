@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.time.Duration
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -77,6 +78,151 @@ class VerityMcpServerTest {
   fun `tool count is exactly 14`() {
     val server = VerityMcpServer().create()
     assertThat(server.tools.size).isEqualTo(14)
+  }
+
+  @Test
+  fun `press key schema exposes alternative selectors and optional hold without removing focus options`() {
+    val schema = VerityMcpServer().create().tools.getValue("press_key").tool.inputSchema
+    assertThat(schema.required).isEqualTo(listOf("session_id"))
+    for ((name, type) in mapOf("key" to "string", "keycode" to "integer", "long_press" to "boolean", "await_focus_change" to "boolean", "focus_timeout_ms" to "integer")) {
+      assertThat(schema.properties!!.getValue(name).jsonObject.getValue("type").jsonPrimitive.content).isEqualTo(type)
+    }
+  }
+
+  @Test
+  fun `press key validates selectors and exact types before looking up any session`() = runTest {
+    val invalid = mutableListOf<JsonObject>(
+      buildJsonObject {},
+      buildJsonObject {
+        put("key", "BACK")
+        put("keycode", 174)
+      },
+    )
+    for (value in listOf("174", "true", "null", "{}", "[]")) {
+      invalid += buildJsonObject { put("key", Json.parseToJsonElement(value)) }
+    }
+    for (value in listOf("\"174\"", "null", "true", "1.5", "2147483648", "-1", "{}", "[]")) {
+      invalid += buildJsonObject { put("keycode", Json.parseToJsonElement(value)) }
+    }
+    for (value in listOf("\"true\"", "null", "1", "{}", "[]")) {
+      invalid += buildJsonObject {
+        put("key", "BACK")
+        put("long_press", Json.parseToJsonElement(value))
+      }
+    }
+    val server = VerityMcpServer().create()
+    for (args in invalid) {
+      val result = server.tools.getValue("press_key").handler.invoke(
+        StubClientConnection(),
+        CallToolRequest(CallToolRequestParams("press_key", JsonObject(args + ("session_id" to JsonPrimitive("not-a-uuid"))))),
+      )
+      assertThat(result.isError).isEqualTo(true)
+      val text = (result.content.single() as TextContent).text
+      assertThat(text).contains("IllegalArgumentException")
+      assertThat(text.contains("UUID")).isFalse()
+    }
+  }
+
+  @Test
+  fun `all supported key selectors preserve default animation and awaited focus ordering`() = runTest {
+    for (raw in listOf(false, true)) {
+      for (hold in listOf(false, true)) {
+        for (awaitFocus in listOf(false, true)) {
+          val events = mutableListOf<String>()
+          val fake = FakeDeviceSession()
+          val session = object : DeviceSession by fake {
+            override suspend fun pressKey(keyName: String) {
+              events += "key:$keyName:false"
+            }
+            override suspend fun pressKey(keyName: String, longPress: Boolean) {
+              events += "key:$keyName:$longPress"
+            }
+            override suspend fun pressKey(keycode: Int, longPress: Boolean) {
+              events += "code:$keycode:$longPress"
+            }
+            override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+              events += "capture"
+              return HierarchyNode(attributes = mapOf("resource-id" to events.size.toString()), states = setOf("focused"))
+            }
+            override suspend fun waitForAnimationToEnd() {
+              events += "animation"
+            }
+          }
+          val manager = McpDeviceSessionManager { _, _, _ -> session }
+          val handle = manager.open(Platform.ANDROID_TV)
+          try {
+            val server = VerityMcpServer(sessionManager = manager, focusObserver = FocusChangeObserver { testScheduler.currentTime * 1_000_000 }).create()
+            val result = server.tools.getValue("press_key").handler.invoke(
+              StubClientConnection(),
+              CallToolRequest(
+                CallToolRequestParams(
+                  "press_key",
+                  buildJsonObject {
+                    put("session_id", handle.sessionId.toString())
+                    if (raw) put("keycode", 174) else put("key", "Remote Dpad Up")
+                    if (hold) put("long_press", true)
+                    put("await_focus_change", awaitFocus)
+                  },
+                ),
+              ),
+            )
+            assertThat(result.isError).isIn(null, false)
+            val action = if (raw) "code:174:$hold" else "key:Remote Dpad Up:$hold"
+            assertThat(events).isEqualTo(if (awaitFocus) listOf("capture", action, "capture") else listOf(action, "animation"))
+            val text = (result.content.single() as TextContent).text
+            if (awaitFocus) assertThat(Json.parseToJsonElement(text).jsonObject.getValue("action").jsonObject.getValue("status").jsonPrimitive.content).isEqualTo("succeeded")
+          } finally {
+            manager.close(handle.sessionId)
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  fun `iOS raw and hold requests reject before awaited capture input or animation`() = runTest {
+    for (raw in listOf(false, true)) {
+      for (awaitFocus in listOf(false, true)) {
+        val fake = FakeDeviceSession(platform = Platform.IOS)
+        val events = mutableListOf<String>()
+        val session = object : DeviceSession by fake {
+          override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+            events += "capture"
+            error("unsupported before capture")
+          }
+          override suspend fun waitForAnimationToEnd() {
+            events += "animation"
+          }
+        }
+        val manager = McpDeviceSessionManager { _, _, _ -> session }
+        val handle = manager.open(Platform.IOS)
+        try {
+          val server = VerityMcpServer(sessionManager = manager).create()
+          val result = server.tools.getValue("press_key").handler.invoke(
+            StubClientConnection(),
+            CallToolRequest(
+              CallToolRequestParams(
+                "press_key",
+                buildJsonObject {
+                  put("session_id", handle.sessionId.toString())
+                  if (raw) put("keycode", 174) else put("key", "return")
+                  put("long_press", !raw)
+                  put("await_focus_change", awaitFocus)
+                },
+              ),
+            ),
+          )
+          assertThat(result.isError).isEqualTo(true)
+          assertThat((result.content.single() as TextContent).text).contains("not supported on iOS")
+          assertThat(events).isEqualTo(emptyList())
+          assertThat(fake.pressedKeys).isEqualTo(emptyList())
+          assertThat(fake.longPressedKeys).isEqualTo(emptyList())
+          assertThat(fake.pressedKeycodes).isEqualTo(emptyList())
+        } finally {
+          manager.close(handle.sessionId)
+        }
+      }
+    }
   }
 
   @Test

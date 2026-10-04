@@ -51,6 +51,15 @@ interface DeviceSession : AutoCloseable {
   /** Press a single key by its platform key name. */
   suspend fun pressKey(keyName: String)
 
+  /** Preserve named short presses; long presses require platform support. */
+  suspend fun pressKey(keyName: String, longPress: Boolean) {
+    if (longPress) throw UnsupportedOperationException("Long key presses are not supported on $platform")
+    pressKey(keyName)
+  }
+
+  /** Press a raw Android keycode; unsupported by default on other sessions. */
+  suspend fun pressKey(keycode: Int, longPress: Boolean): Unit = throw UnsupportedOperationException("Raw Android keycodes are not supported on $platform")
+
   /** Capture the accessibility tree as a [HierarchyNode]. */
   suspend fun captureHierarchyTree(): HierarchyNode
 

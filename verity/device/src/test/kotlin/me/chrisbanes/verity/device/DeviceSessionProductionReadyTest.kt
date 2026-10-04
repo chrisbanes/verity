@@ -41,6 +41,69 @@ import me.chrisbanes.verity.device.ios.IosDeviceSession
 class DeviceSessionProductionReadyTest {
 
   @Test
+  fun `Android raw and long presses use validated integer shell commands`() = runTest {
+    val commands = mutableListOf<String>()
+    val driver = RecordingDriver()
+    val session = AndroidDeviceSession(Maestro(driver), Platform.ANDROID_TV) {
+      commands += it
+      ""
+    }
+    session.pressKey(174, false)
+    session.pressKey(174, true)
+    session.pressKey("Remote Dpad Up", true)
+    session.pressKey("Remote Dpad Up", false)
+    assertThat(commands).isEqualTo(listOf("input keyevent 174", "input keyevent --longpress 174", "input keyevent --longpress 19"))
+    assertThat(driver.pressedKeys).isEqualTo(listOf(KeyCode.REMOTE_UP))
+    assertFailure { session.pressKey(-1, false) }.messageContains("non-negative")
+    assertFailure { session.pressKey("19; unwanted", true) }.messageContains("Unknown key name")
+    assertThat(commands.size).isEqualTo(3)
+  }
+
+  @Test
+  fun `named long press table preserves all thirty Maestro Android key mappings`() = runTest {
+    // Maestro 2.11.0 AndroidDriver numeric lowering, independently pinned from its bytecode.
+    val expected = mapOf(
+      KeyCode.ENTER to 66, KeyCode.BACKSPACE to 67, KeyCode.BACK to 4,
+      KeyCode.HOME to 3, KeyCode.LOCK to 276, KeyCode.VOLUME_UP to 24, KeyCode.VOLUME_DOWN to 25,
+      KeyCode.REMOTE_UP to 19, KeyCode.REMOTE_DOWN to 20, KeyCode.REMOTE_LEFT to 21,
+      KeyCode.REMOTE_RIGHT to 22, KeyCode.REMOTE_CENTER to 23, KeyCode.REMOTE_PLAY_PAUSE to 85,
+      KeyCode.REMOTE_STOP to 86, KeyCode.REMOTE_NEXT to 87, KeyCode.REMOTE_PREVIOUS to 88,
+      KeyCode.REMOTE_REWIND to 89, KeyCode.REMOTE_FAST_FORWARD to 90, KeyCode.ESCAPE to 111,
+      KeyCode.POWER to 26, KeyCode.TAB to 62, KeyCode.REMOTE_SYSTEM_NAVIGATION_UP to 280,
+      KeyCode.REMOTE_SYSTEM_NAVIGATION_DOWN to 281, KeyCode.REMOTE_BUTTON_A to 96,
+      KeyCode.REMOTE_BUTTON_B to 97, KeyCode.REMOTE_MENU to 82, KeyCode.TV_INPUT to 178,
+      KeyCode.TV_INPUT_HDMI_1 to 243, KeyCode.TV_INPUT_HDMI_2 to 244, KeyCode.TV_INPUT_HDMI_3 to 245,
+    )
+    assertThat(expected.keys).isEqualTo(KeyCode.entries.toSet())
+    val commands = mutableListOf<String>()
+    val session = AndroidDeviceSession(Maestro(RecordingDriver()), Platform.ANDROID_TV) {
+      commands += it
+      ""
+    }
+    for ((key, code) in expected) {
+      session.pressKey(key.description, true)
+      assertThat(commands.last()).isEqualTo("input keyevent --longpress $code")
+    }
+  }
+
+  @Test
+  fun `raw and named long presses propagate shell cancellation without later input`() = runTest {
+    for (raw in listOf(false, true)) {
+      val cancellation = CancellationException("shell caller cancelled")
+      var calls = 0
+      val session = AndroidDeviceSession(Maestro(RecordingDriver()), Platform.ANDROID_TV) {
+        calls++
+        throw cancellation
+      }
+      val observed = assertFailsWith<CancellationException> {
+        if (raw) session.pressKey(174, true) else session.pressKey("Remote Dpad Up", true)
+      }
+      assertThat(observed === cancellation || observed.cause === cancellation).isEqualTo(true)
+      assertThat(calls).isEqualTo(1)
+    }
+  }
+
+  @Test
   fun `both routes report actual SDK command indices before driver admission on both adapters`() = runTest {
     for (ios in listOf(false, true)) {
       for (typed in listOf(false, true)) {
