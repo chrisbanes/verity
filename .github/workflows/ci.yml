@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  VERITY_PACKAGED_CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
   ORG_GRADLE_PROJECT_remoteBuildCacheUrl: ${{ secrets.GRADLE_REMOTE_CACHE_URL }}
   ORG_GRADLE_PROJECT_remoteBuildCacheUsername: ${{ secrets.GRADLE_REMOTE_CACHE_USERNAME }}
   ORG_GRADLE_PROJECT_remoteBuildCachePassword: ${{ secrets.GRADLE_REMOTE_CACHE_PASSWORD }}
@@ -50,6 +51,13 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
+      - name: Verify Linux packaged inputs
+        run: |
+          uname -s
+          uname -m
+          python3 -c 'import platform; assert platform.system() == "Linux" and platform.machine() == "x86_64"'
+          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -70,7 +78,13 @@ jobs:
             assert len(online) == 1 and online[0].startswith("emulator-"), "Expected exactly one online job-owned emulator";
             assert platform.system() == "Linux" and platform.machine() == "x86_64", "Expected Linux x86-64";
             os.environ["VERITY_PACKAGED_ANDROID_SERIAL"] = online[0];
-            subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=universal", "--rerun-tasks", "--no-scan"], check=True);
+            from pathlib import Path;
+            import json;
+            receipt = Path("verity/smoke-tests/build/reports/packaged-targets/android.json");
+            receipt.parent.mkdir(parents=True, exist_ok=True);
+            receipt.write_text(json.dumps(dict(target=online[0], kind="android", host=platform.system(), arch=platform.machine(), run=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"], job=os.environ["GITHUB_JOB"], head=os.environ["GITHUB_SHA"])));
+            os.environ["VERITY_PACKAGED_TARGET_RECEIPT"] = str(receipt.resolve());
+            subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=linux-x86_64,universal", "--rerun-tasks", "--no-scan"], check=True);
             raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:test", "-Pinclude.tags=android", "--rerun-tasks", "--no-scan"]).returncode)'
 
       - name: Retain Android smoke results
@@ -84,6 +98,8 @@ jobs:
             verity/smoke-tests/build/reports/packaged/
             verity/smoke-tests/build/reports/smoke-grpc.txt
             verity/cli/build/reports/packaged-grpc.txt
+            verity/cli/build/reports/host-packaging.tsv
+            verity/smoke-tests/build/reports/packaged-targets/
           if-no-files-found: error
 
   smoke-ios:
@@ -101,17 +117,143 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
+      - name: Verify macOS packaged inputs
+        run: |
+          uname -s
+          uname -m
+          python3 -c 'import platform; assert platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")'
+          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan
+
+      - name: Set up Android SDK on macOS
+        uses: android-actions/setup-android@v3
+        with:
+          log-accepted-android-sdk-licenses: false
+
+      - name: Verify Android SDK tools
+        run: sdkmanager --version
+
+      - name: macOS packaged Android smoke tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: arm64-v8a
+          disable-animations: true
+          script: >-
+            python3 -c 'import os, platform, subprocess, json;
+            from pathlib import Path;
+            assert platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64");
+            devices = subprocess.run(["adb", "devices"], check=True, capture_output=True, text=True);
+            online = [row.split()[0] for row in devices.stdout.splitlines()[1:] if len(row.split()) >= 2 and row.split()[1] == "device"];
+            assert len(online) == 1 and online[0].startswith("emulator-"), "Expected exactly one job-owned emulator";
+            os.environ["VERITY_PACKAGED_ANDROID_SERIAL"] = online[0];
+            receipt = Path("verity/smoke-tests/build/reports/packaged-targets/android.json");
+            receipt.parent.mkdir(parents=True, exist_ok=True);
+            receipt.write_text(json.dumps(dict(target=online[0], kind="android", host=platform.system(), arch=platform.machine(), run=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"], job=os.environ["GITHUB_JOB"], head=os.environ["GITHUB_SHA"])));
+            os.environ["VERITY_PACKAGED_TARGET_RECEIPT"] = str(receipt.resolve());
+            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:packagedAndroidTest", "-PpackagedVariant=macos-aarch64,universal", "--rerun-tasks", "--no-scan"]).returncode)'
+
+      - name: Create job-owned iOS simulator
+        run: |
+          python3 - <<'PY'
+          import json, os, platform, socket, subprocess
+          from pathlib import Path
+          assert platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")
+          def simctl(*args):
+              return subprocess.run(["xcrun", "simctl", *args], check=True, capture_output=True, text=True, timeout=360).stdout
+          devices = json.loads(simctl("list", "devices", "booted", "-j"))["devices"]
+          assert not any(devices.values()), "Refuse to reuse an already booted simulator"
+          with socket.socket() as port:
+              port.bind(("127.0.0.1", 22087))
+          runtimes = [r for r in json.loads(simctl("list", "runtimes", "-j"))["runtimes"] if r.get("isAvailable") and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-27")]
+          assert runtimes, "Expected configured iOS 27 runtime"
+          runtime = sorted(runtimes, key=lambda r: tuple(map(int, r["version"].split("."))))[-1]["identifier"]
+          types = [d for d in json.loads(simctl("list", "devicetypes", "-j"))["devicetypes"] if d["name"] == "iPhone 17"]
+          assert len(types) == 1, "Expected configured iPhone 17 type"
+          name = "Verity-packaged-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"]
+          udid = simctl("create", name, types[0]["identifier"], runtime).strip()
+          receipt = Path("verity/smoke-tests/build/reports/packaged-targets/ios.json")
+          binding = dict(target=udid, kind="ios", name=name, runtime=runtime, model="iPhone 17", host=platform.system(), arch=platform.machine(), run=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"], job=os.environ["GITHUB_JOB"], head=os.environ["GITHUB_SHA"])
+          try:
+              receipt.parent.mkdir(parents=True, exist_ok=True)
+              receipt.write_text(json.dumps(binding))
+              with open(os.environ["GITHUB_ENV"], "a") as env:
+                  env.write("VERITY_PACKAGED_IOS_UDID=" + udid + "\nVERITY_PACKAGED_TARGET_RECEIPT=" + str(receipt.resolve()) + "\n")
+              simctl("boot", udid)
+              simctl("bootstatus", udid, "-b")
+          except BaseException as setup_failure:
+              cleanup_failures = []
+              try:
+                  devices = json.loads(subprocess.run(["xcrun", "simctl", "list", "devices", "-j"], check=True, capture_output=True, text=True, timeout=60).stdout)["devices"]
+                  owned = [d for group in devices.values() for d in group if d["udid"] == udid]
+                  if owned and owned[0]["state"] == "Booted":
+                      subprocess.run(["xcrun", "simctl", "shutdown", udid], check=True, capture_output=True, text=True, timeout=60)
+              except BaseException as failure:
+                  cleanup_failures.append(repr(failure))
+              try:
+                  subprocess.run(["xcrun", "simctl", "delete", udid], check=True, capture_output=True, text=True, timeout=60)
+              except BaseException as failure:
+                  cleanup_failures.append(repr(failure))
+              if not cleanup_failures and receipt.exists():
+                  try:
+                      binding["cleanup"] = "shutdown-and-delete-completed"
+                      receipt.write_text(json.dumps(binding))
+                  except BaseException as failure:
+                      cleanup_failures.append(repr(failure))
+              if cleanup_failures:
+                  raise RuntimeError("Owned simulator setup failed; rollback failures: " + "; ".join(cleanup_failures)) from setup_failure
+              raise
+          PY
+
       - name: iOS smoke tests
         env:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
           VERITY_SMOKE_IOS_MODEL: iPhone 17
           VERITY_SMOKE_IOS_RUNTIME: "27"
-        run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan
+        run: |
+          ./gradlew :verity:smoke-tests:packagedIosTest -PpackagedVariant=macos-aarch64,universal --rerun-tasks --no-scan
+          ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan
+
+      - name: Clean up job-owned iOS simulator
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          udid = os.environ.get("VERITY_PACKAGED_IOS_UDID")
+          if udid:
+              path = Path(os.environ.get("VERITY_PACKAGED_TARGET_RECEIPT", "verity/smoke-tests/build/reports/packaged-targets/ios.json"))
+              receipt = json.loads(path.read_text())
+              assert receipt["target"] == udid and all(receipt[key] == os.environ[env] for key, env in (("run", "GITHUB_RUN_ID"), ("attempt", "GITHUB_RUN_ATTEMPT"), ("job", "GITHUB_JOB"), ("head", "GITHUB_SHA")))
+              def simctl(*args):
+                  return subprocess.run(["xcrun", "simctl", *args], check=True, capture_output=True, text=True, timeout=60).stdout
+              devices = json.loads(simctl("list", "devices", "-j"))["devices"]
+              device = [d for group in devices.values() for d in group if d["udid"] == udid]
+              if receipt.get("cleanup") == "shutdown-and-delete-completed":
+                  assert not device, "Rolled-back owned target still exists"
+              else:
+                  assert len(device) == 1, "Owned target disappeared before cleanup"
+                  try:
+                      if device[0]["state"] == "Booted":
+                          simctl("shutdown", udid)
+                  finally:
+                      simctl("delete", udid)
+                  receipt["cleanup"] = "shutdown-and-delete-completed"
+                  path.write_text(json.dumps(receipt))
+          PY
 
       - name: Retain iOS smoke results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: smoke-ios-test-results
-          path: verity/smoke-tests/build/test-results/test/*.xml
+          path: |
+            verity/smoke-tests/build/test-results/test/*.xml
+            verity/smoke-tests/build/test-results/packagedAndroidTest/*.xml
+            verity/smoke-tests/build/test-results/packagedIosTest/*.xml
+            verity/smoke-tests/build/reports/packaged/
+            verity/smoke-tests/build/reports/packaged-targets/
+            verity/smoke-tests/build/reports/smoke-grpc.txt
+            verity/cli/build/reports/packaged-grpc.txt
+            verity/cli/build/reports/host-packaging.tsv
           if-no-files-found: error

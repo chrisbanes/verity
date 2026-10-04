@@ -31,7 +31,19 @@ object PackagedRuntimeProbe {
     }
     when (args.first()) {
       "grpc" -> verifyGrpc()
-      "android" -> verifyAndroid(args[1])
+
+      "android" -> {
+        check(System.getenv("GITHUB_ACTIONS") == "true") { "Native probe requires configured job-owned CI" }
+        check(args[1].startsWith("emulator-"))
+        for (platform in listOf(Platform.ANDROID_MOBILE, Platform.ANDROID_TV)) verifyDevice(platform, args[1])
+      }
+
+      "ios" -> {
+        check(System.getenv("GITHUB_ACTIONS") == "true") { "Native probe requires configured job-owned CI" }
+        java.util.UUID.fromString(args[1])
+        verifyDevice(Platform.IOS, args[1])
+      }
+
       else -> error("Unknown probe mode")
     }
   }
@@ -62,17 +74,17 @@ object PackagedRuntimeProbe {
     }
   }
 
-  private suspend fun verifyAndroid(serial: String) = kotlinx.coroutines.coroutineScope {
-    check(serial.startsWith("emulator-")) { "Require exact CI-owned emulator serial" }
-    println("PACKAGED_FACTORY_START serial=$serial")
-    val session = DeviceSessionFactory.connect(Platform.ANDROID_MOBILE, serial)
-    println("PACKAGED_FACTORY_CONNECTED")
+  private suspend fun verifyDevice(platform: Platform, target: String) = kotlinx.coroutines.coroutineScope {
+    println("PACKAGED_FACTORY_START platform=$platform target=$target")
+    val session = withTimeout(600.seconds) { DeviceSessionFactory.connect(platform, target) }
     try {
+      check(session.platform == platform) { "Factory changed requested platform mapping" }
+      println("PACKAGED_FACTORY_CONNECTED platform=$platform")
       withTimeout(120.seconds) {
         fun nonempty(tree: HierarchyNode): Boolean = tree.attributes.isNotEmpty() || tree.states.isNotEmpty() || tree.children.any(::nonempty)
         check(nonempty(session.captureHierarchyTree()))
         check(nonempty(session.captureHierarchyTree(2000.milliseconds)))
-        session.pressKey("BACK")
+        session.pressKey(if (platform == Platform.IOS) "return" else "BACK")
         check(nonempty(session.captureHierarchyTree()))
         val bodyFailure = CompletableDeferred<Throwable?>()
         val capture = async(start = CoroutineStart.UNDISPATCHED) {
@@ -88,8 +100,12 @@ object PackagedRuntimeProbe {
             while (true) {
               val entered = withContext(Dispatchers.IO) {
                 Thread.getAllStackTraces().values.any { frames ->
-                  frames.any { it.className.startsWith("maestro.") } &&
-                    frames.any { it.className.startsWith("me.chrisbanes.verity.device.android.AndroidDeviceSession") }
+                  if (platform == Platform.IOS) {
+                    frames.any { it.className.startsWith("me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture") }
+                  } else {
+                    frames.any { it.className.startsWith("maestro.") } &&
+                      frames.any { it.className.startsWith("me.chrisbanes.verity.device.android.AndroidDeviceSession") }
+                  }
                 }
               }
               if (entered) break
@@ -105,14 +121,14 @@ object PackagedRuntimeProbe {
             "Expected explicit caller cancellation after entered capture: $observed"
           }
           check(nonempty(session.captureHierarchyTree()))
-          println("PACKAGED_FACTORY_CAPTURE_BOUNDED_BACK_CALLER_JOIN_REUSE_OK")
+          println("PACKAGED_FACTORY_CAPTURE_BOUNDED_KEY_CALLER_JOIN_REUSE_OK platform=$platform")
         } finally {
           withContext(NonCancellable) { capture.cancelAndJoin() }
         }
       }
     } finally {
       withContext(NonCancellable + Dispatchers.IO) { session.close() }
-      println("PACKAGED_FACTORY_CLOSE_COMPLETED")
+      println("PACKAGED_FACTORY_CLOSE_COMPLETED platform=$platform")
     }
   }
 }

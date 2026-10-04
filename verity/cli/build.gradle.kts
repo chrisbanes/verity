@@ -81,6 +81,17 @@ val packagedUniversal = configurations.create("packagedUniversal") {
   isCanBeResolved = false
 }
 artifacts.add(packagedUniversal.name, tasks.shadowJar)
+// Host artifacts use the same isolated-project boundary as the universal archive.
+val packagedMacosArm64 = configurations.create("packagedMacosArm64") {
+  isCanBeConsumed = true
+  isCanBeResolved = false
+}
+val packagedLinuxX64 = configurations.create("packagedLinuxX64") {
+  isCanBeConsumed = true
+  isCanBeResolved = false
+}
+artifacts.add(packagedMacosArm64.name, macosArm64Jar)
+artifacts.add(packagedLinuxX64.name, linuxX64Jar)
 val runtime = configurations.runtimeClasspath
 val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc") {
   dependsOn(tasks.shadowJar, ":verity:smoke-tests:verifySmokeGrpc")

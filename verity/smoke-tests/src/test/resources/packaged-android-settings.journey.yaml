@@ -1,0 +1,6 @@
+name: Packaged Settings visible
+app: com.android.settings
+platform: android
+steps:
+  - Scroll down
+  - "[?visible] System"

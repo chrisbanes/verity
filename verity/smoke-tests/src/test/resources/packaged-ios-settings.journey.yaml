@@ -1,0 +1,5 @@
+name: Packaged iOS Settings visible
+app: com.apple.Preferences
+platform: ios
+steps:
+  - "[?visible] General"
