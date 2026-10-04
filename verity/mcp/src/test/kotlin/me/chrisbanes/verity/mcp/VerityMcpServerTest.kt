@@ -13,9 +13,13 @@ import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.io.File
 import kotlin.test.Test
+import kotlin.time.Duration
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.ActionFlow
@@ -27,8 +31,10 @@ import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.core.preflight.PreflightSeverity
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
+import me.chrisbanes.verity.device.FocusChangeObserver
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class VerityMcpServerTest {
 
   @Test
@@ -96,6 +102,10 @@ class VerityMcpServerTest {
         val events = mutableListOf<String>()
         val fake = FakeDeviceSession()
         val session = object : DeviceSession by fake {
+          override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+            events += "capture"
+            return HierarchyNode(attributes = mapOf("resource-id" to events.count { it == "capture" }.toString()), states = setOf("focused"))
+          }
           override suspend fun executeActions(flow: ActionFlow): FlowResult = error("MCP must retain supplied YAML")
           override suspend fun executeFlow(yaml: String): FlowResult {
             assertThat(yaml).isEqualTo(suppliedYaml)
@@ -110,7 +120,7 @@ class VerityMcpServerTest {
         val manager = McpDeviceSessionManager { _, _, _ -> session }
         val handle = manager.open(Platform.ANDROID_TV, "fixture")
         try {
-          val server = VerityMcpServer(sessionManager = manager).create()
+          val server = VerityMcpServer(sessionManager = manager, focusObserver = FocusChangeObserver { testScheduler.currentTime * 1_000_000 }).create()
           val result = server.tools.getValue("run_flow").handler.invoke(
             StubClientConnection(),
             CallToolRequest(
@@ -124,10 +134,18 @@ class VerityMcpServerTest {
               ),
             ),
           )
-          assertThat(result.isError).isIn(null, false)
-          assertThat((result.content.single() as TextContent).text).isEqualTo(if (suppliedYaml == invalid) "FAILED: syntax failure" else "SUCCESS")
+          val text = (result.content.single() as TextContent).text
+          if (awaitFocus) {
+            val json = Json.parseToJsonElement(text).jsonObject
+            assertThat(result.isError).isEqualTo(suppliedYaml == invalid)
+            assertThat(json.getValue("action").jsonObject.getValue("output").jsonPrimitive.content).isEqualTo("syntax failure")
+            assertThat(events).isEqualTo(if (suppliedYaml == invalid) listOf("capture", "flow") else listOf("capture", "flow", "capture"))
+          } else {
+            assertThat(result.isError).isIn(null, false)
+            assertThat(text).isEqualTo(if (suppliedYaml == invalid) "FAILED: syntax failure" else "SUCCESS")
+            assertThat(events).isEqualTo(listOf("flow"))
+          }
           assertThat(fake.executedFlows).isEqualTo(listOf(suppliedYaml))
-          assertThat(events).isEqualTo(if (awaitFocus) listOf("flow", "animation") else listOf("flow"))
         } finally {
           manager.close(handle.sessionId)
         }
