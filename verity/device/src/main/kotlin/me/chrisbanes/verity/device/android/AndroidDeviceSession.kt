@@ -45,6 +45,56 @@ class AndroidDeviceSession(
     maestro.pressKey(keyCode)
   }
 
+  override suspend fun pressKey(keyName: String, longPress: Boolean) {
+    if (!longPress) {
+      pressKey(keyName)
+      return
+    }
+    val key = checkNotNull(KeyCode.Companion.getByName(keyName)) { "Unknown key name: '$keyName'" }
+    pressKey(androidKeycode(key), true)
+  }
+
+  override suspend fun pressKey(keycode: Int, longPress: Boolean) {
+    require(keycode >= 0) { "Android keycode must be non-negative" }
+    withContext(Dispatchers.IO) {
+      executeShell("input keyevent ${if (longPress) "--longpress " else ""}$keycode")
+    }
+  }
+
+  // Preserve Maestro 2.11.0 AndroidDriver's closed mapping for named holds.
+  private fun androidKeycode(key: KeyCode): Int = when (key) {
+    KeyCode.ENTER -> 66
+    KeyCode.BACKSPACE -> 67
+    KeyCode.BACK -> 4
+    KeyCode.HOME -> 3
+    KeyCode.LOCK -> 276
+    KeyCode.VOLUME_UP -> 24
+    KeyCode.VOLUME_DOWN -> 25
+    KeyCode.REMOTE_UP -> 19
+    KeyCode.REMOTE_DOWN -> 20
+    KeyCode.REMOTE_LEFT -> 21
+    KeyCode.REMOTE_RIGHT -> 22
+    KeyCode.REMOTE_CENTER -> 23
+    KeyCode.REMOTE_PLAY_PAUSE -> 85
+    KeyCode.REMOTE_STOP -> 86
+    KeyCode.REMOTE_NEXT -> 87
+    KeyCode.REMOTE_PREVIOUS -> 88
+    KeyCode.REMOTE_REWIND -> 89
+    KeyCode.REMOTE_FAST_FORWARD -> 90
+    KeyCode.ESCAPE -> 111
+    KeyCode.POWER -> 26
+    KeyCode.TAB -> 62
+    KeyCode.REMOTE_SYSTEM_NAVIGATION_UP -> 280
+    KeyCode.REMOTE_SYSTEM_NAVIGATION_DOWN -> 281
+    KeyCode.REMOTE_BUTTON_A -> 96
+    KeyCode.REMOTE_BUTTON_B -> 97
+    KeyCode.REMOTE_MENU -> 82
+    KeyCode.TV_INPUT -> 178
+    KeyCode.TV_INPUT_HDMI_1 -> 243
+    KeyCode.TV_INPUT_HDMI_2 -> 244
+    KeyCode.TV_INPUT_HDMI_3 -> 245
+  }
+
   override suspend fun captureHierarchyTree(): HierarchyNode = withContext(Dispatchers.IO) {
     val hierarchy = maestro.viewHierarchy(false)
     MaestroTreeConverter.convert(hierarchy.root)

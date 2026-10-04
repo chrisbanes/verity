@@ -17,6 +17,8 @@ class FakeDeviceSession(
   var closed = false
   val executedFlows = mutableListOf<String>()
   val pressedKeys = mutableListOf<String>()
+  val longPressedKeys = mutableListOf<String>()
+  val pressedKeycodes = mutableListOf<Pair<Int, Boolean>>()
 
   val executedActionFlows = mutableListOf<ActionFlow>()
   override suspend fun executeActions(flow: ActionFlow): FlowResult {
@@ -31,6 +33,25 @@ class FakeDeviceSession(
 
   override suspend fun pressKey(keyName: String) {
     pressedKeys += keyName
+  }
+
+  override suspend fun pressKey(keyName: String, longPress: Boolean) {
+    if (platform == Platform.IOS) {
+      super.pressKey(keyName, longPress)
+    } else if (longPress) {
+      longPressedKeys += keyName
+    } else {
+      pressKey(keyName)
+    }
+  }
+
+  override suspend fun pressKey(keycode: Int, longPress: Boolean) {
+    if (platform == Platform.IOS) {
+      super.pressKey(keycode, longPress)
+    } else {
+      require(keycode >= 0) { "Android keycode must be non-negative" }
+      pressedKeycodes += keycode to longPress
+    }
   }
 
   override suspend fun captureHierarchyTree(): HierarchyNode = hierarchyNode

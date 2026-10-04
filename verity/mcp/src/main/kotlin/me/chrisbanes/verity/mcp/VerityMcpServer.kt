@@ -450,7 +450,7 @@ class VerityMcpServer(
   private fun registerPressKey(server: Server) {
     server.addSafeTool(
       name = "press_key",
-      description = "Press a device key, optionally waiting for focus to change",
+      description = "Press a named key or raw Android keycode, optionally holding it or waiting for focus to change",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
           putJsonObject("session_id") {
@@ -461,24 +461,73 @@ class VerityMcpServer(
             put("type", "string")
             put("description", "Key name to press (e.g., DPAD_UP, DPAD_CENTER, BACK)")
           }
+          putJsonObject("keycode") {
+            put("type", "integer")
+            put("minimum", 0)
+            put("maximum", Int.MAX_VALUE)
+            put("description", "Raw Android keycode; supply exactly one of key and keycode")
+          }
+          putJsonObject("long_press") {
+            put("type", "boolean")
+            put("default", false)
+            put("description", "Hold the key using Android input keyevent --longpress; unsupported on iOS")
+          }
           focusWaitSchema()
         },
       ),
-      required = listOf("session_id", "key"),
+      required = listOf("session_id"),
     ) { args ->
       val options = args.focusWaitOptions()
+      val hasKey = args?.containsKey("key") == true
+      val hasKeycode = args?.containsKey("keycode") == true
+      require(hasKey != hasKeycode) { "Supply exactly one of key or keycode" }
+      val key = if (hasKey) {
+        val value = args.get("key") as? JsonPrimitive
+        require(value != null && value.isString) { "key must be a JSON string" }
+        value.content
+      } else {
+        null
+      }
+      val keycode = if (hasKeycode) {
+        val value = args.get("keycode") as? JsonPrimitive
+        val code = value?.takeUnless { it.isString }?.intOrNull
+        require(code != null && code >= 0) { "keycode must be a non-negative integer JSON number within Int range" }
+        code
+      } else {
+        null
+      }
+      val longPress = if (args?.containsKey("long_press") == true) {
+        val value = args["long_press"] as? JsonPrimitive
+        require(value != null && !value.isString && value.booleanOrNull != null) { "long_press must be a JSON Boolean" }
+        value.booleanOrNull!!
+      } else {
+        false
+      }
       val sessionId = UUID.fromString(args.requireString("session_id"))
-      val key = args.requireString("key")
       sessionManager.withSession(sessionId) { session ->
+        if (session.platform == Platform.IOS && (keycode != null || longPress)) {
+          throw UnsupportedOperationException("Raw Android keycodes and long key presses are not supported on iOS")
+        }
+        val output = "Pressed ${if (keycode != null) "keycode: $keycode" else "key: $key"}${if (longPress) " (long press)" else ""}"
+        suspend fun press() {
+          if (keycode != null) {
+            session.pressKey(keycode, longPress)
+          } else if (longPress) {
+            session.pressKey(checkNotNull(key), true)
+          } else {
+            // Keep the legacy dispatch for existing implementations and delegated sessions.
+            session.pressKey(checkNotNull(key))
+          }
+        }
         if (options.await) {
           awaitFocusAction(session, options) {
-            session.pressKey(key)
-            FocusAction(true, "Pressed key: $key")
+            press()
+            FocusAction(true, output)
           }
         } else {
-          session.pressKey(key)
+          press()
           session.waitForAnimationToEnd()
-          success("Pressed key: $key")
+          success(output)
         }
       }
     }
