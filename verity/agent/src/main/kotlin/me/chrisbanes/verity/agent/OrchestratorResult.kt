@@ -6,6 +6,7 @@ import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
+import me.chrisbanes.verity.core.result.WaitArtifact
 
 data class SegmentResult(
   val index: Int,
@@ -19,6 +20,7 @@ data class SegmentResult(
   val evidence: List<EvidenceArtifact> = emptyList(),
   val error: ArtifactError? = null,
   val loop: LoopArtifact? = null,
+  val wait: WaitArtifact? = null,
 )
 
 data class JourneyResult(

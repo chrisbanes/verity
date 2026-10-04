@@ -1118,6 +1118,106 @@ class OrchestratorTest {
     }
   }
 
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  @Test
+  fun `waits poll without navigation and success continues later actions`() = runTest {
+    for (delayed in listOf(false, true)) {
+      val actions = FakeDeviceSession()
+      var captures = 0
+      val session = object : DeviceSession by actions {
+        override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+          captures++
+          return HierarchyNode(mapOf("text" to if (!delayed || captures == 2) "Ready" else "Other"))
+        }
+      }
+      val orchestrator = Orchestrator(
+        session,
+        { NavigatorAgent("unused") { _, _ -> error("wait must not navigate") } },
+        { InspectorAgent({ _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") }, { _, _, _, _ -> error("visual") }) },
+        nowNanos = { testScheduler.currentTime * 1_000_000 },
+      )
+      val result = orchestrator.run(Journey("wait", APP_ID, Platform.ANDROID_MOBILE, listOf(JourneyStep.Wait("Ready", 3), JourneyStep.Action("Scroll down"))))
+      val wait = result.segments.first()
+      assertThat(result.passed).isTrue()
+      assertThat(wait.executionMode).isEqualTo(SegmentExecutionMode.WAIT)
+      assertThat(wait.actions).isEmpty()
+      assertThat(wait.generatedFlows).isEmpty()
+      assertThat(wait.wait?.condition).isEqualTo("Ready")
+      assertThat(wait.wait?.timeoutSeconds).isEqualTo(3)
+      assertThat(wait.wait?.checks).isEqualTo(if (delayed) 2 else 1)
+      assertThat(wait.wait?.elapsedMs).isEqualTo(if (delayed) 1000L else 0L)
+      assertThat(actions.executedActionFlows.size).isEqualTo(2)
+      assertThat(actions.executedActionFlows.first().actions).containsExactly(Interaction.LaunchApp())
+    }
+  }
+
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  @Test
+  fun `wait timeout stops later actions retaining only completed reasoning and evidence`() = runTest {
+    val actions = FakeDeviceSession()
+    var captures = 0
+    val session = object : DeviceSession by actions {
+      override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+        if (++captures == 2) kotlinx.coroutines.awaitCancellation()
+        return HierarchyNode(mapOf("text" to "Other"))
+      }
+    }
+    val orchestrator = Orchestrator(
+      session,
+      { NavigatorAgent("unused") { _, _ -> error("navigate") } },
+      { InspectorAgent({ _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"still loading"}""") }, { _, _, _, _ -> error("visual") }) },
+      artifactRecorder = RecordingArtifactRecorder(),
+      nowNanos = { testScheduler.currentTime * 1_000_000 },
+    )
+    val result = orchestrator.run(Journey("wait", APP_ID, Platform.ANDROID_MOBILE, listOf(JourneyStep.Wait("Ready", 3), JourneyStep.Action("Press back"))))
+    val segment = result.segments.single()
+    assertThat(result.passed).isFalse()
+    assertThat(segment.reasoning).isEqualTo("Wait timed out after 3 seconds: Ready")
+    assertThat(segment.wait?.checks).isEqualTo(1)
+    assertThat(segment.wait?.elapsedMs).isEqualTo(3000L)
+    assertThat(segment.wait?.tier).isEqualTo(me.chrisbanes.verity.core.result.ConditionTier.TREE)
+    assertThat(segment.wait?.reasoning).isEqualTo("still loading")
+    assertThat(segment.evidence.single().type).isEqualTo(EvidenceType.HIERARCHY)
+    assertThat(actions.executedActionFlows.size).isEqualTo(1)
+  }
+
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+  @Test
+  fun `wait expiry before first check has nullable tier and cancellations have no completed result`() = runTest {
+    for (failure in listOf("expiry", "foreign", "model", "parent")) {
+      val actions = FakeDeviceSession()
+      val session = object : DeviceSession by actions {
+        override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+          if (failure == "foreign") throw kotlin.coroutines.cancellation.CancellationException("foreign wait")
+          if (failure != "model") kotlinx.coroutines.awaitCancellation()
+          return HierarchyNode(mapOf("text" to "Other"))
+        }
+      }
+      val orchestrator = Orchestrator(
+        session,
+        { NavigatorAgent("unused") { _, _ -> error("navigate") } },
+        { InspectorAgent({ _, _, _ -> error("model unavailable") }, { _, _, _, _ -> error("visual") }) },
+        nowNanos = { testScheduler.currentTime * 1_000_000 },
+      )
+      val journey = Journey("wait", APP_ID, Platform.ANDROID_MOBILE, listOf(JourneyStep.Wait("Ready", 3), JourneyStep.Action("Press back")))
+      when (failure) {
+        "expiry" -> {
+          val segment = orchestrator.run(journey).segments.single()
+          assertThat(segment.wait?.checks).isEqualTo(0)
+          assertThat(segment.wait?.tier).isNull()
+          assertThat(segment.evidence).isEmpty()
+        }
+
+        "foreign" -> assertThat(assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { orchestrator.run(journey) }.message).isEqualTo("foreign wait")
+
+        "model" -> assertFailsWith<ModelFailureException> { orchestrator.run(journey) }
+
+        else -> assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> { kotlinx.coroutines.withTimeout(100) { orchestrator.run(journey) } }
+      }
+      assertThat(actions.executedActionFlows.size).isEqualTo(1)
+    }
+  }
+
   private fun loopJourney(body: String, max: Int, platform: Platform) = Journey(
     name = "loop-contract",
     app = APP_ID,

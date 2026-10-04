@@ -38,7 +38,7 @@ class ConditionWaiter(
         val deadline = EvaluationDeadline(currentCoroutineContext(), started, timeout, nowNanos, observeFailure)
         while (true) {
           deadline.checkpoint()
-          val evaluation = evaluator.evaluate(condition, context, deadline)
+          val evaluation = evaluator.evaluate(condition, context, deadline, checks)
           deadline.checkpoint()
           last = evaluation
           checks++

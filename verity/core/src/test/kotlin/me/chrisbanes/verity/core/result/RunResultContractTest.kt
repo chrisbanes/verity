@@ -16,6 +16,18 @@ class RunResultContractTest {
     explicitNulls = false
   }
 
+  @Test fun `wait fields are additive nullable before first check and omitted for nonwait segments`() {
+    val wait = SegmentArtifactResult(0, false, SegmentExecutionMode.WAIT, wait = WaitArtifact("Ready", 3, 3000, 0))
+    val encoded = json.encodeToString(wait)
+    assertThat(encoded).contains("\"executionMode\":\"wait\"")
+    assertThat(encoded).contains("\"timeoutSeconds\":3")
+    assertThat(encoded).contains("\"elapsedMs\":3000")
+    assertThat(encoded).doesNotContain("\"tier\"")
+    assertThat(json.decodeFromString<SegmentArtifactResult>(encoded)).isEqualTo(wait)
+    val ordinary = json.encodeToString(SegmentArtifactResult(0, true, SegmentExecutionMode.FAST))
+    assertThat(ordinary).doesNotContain("\"wait\"")
+  }
+
   @Test
   fun `journey result serializes stable lowercase values and camelCase fields`() {
     val result = JourneyArtifactResult(

@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.agent
 
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.seconds
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
@@ -18,6 +19,7 @@ import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
+import me.chrisbanes.verity.core.result.WaitArtifact
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.validateActionFlow
 
@@ -32,6 +34,7 @@ class Orchestrator(
   private val inspectorFactory: () -> InspectorAgent,
   private val context: String = "",
   private val artifactRecorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
+  private val nowNanos: () -> Long = System::nanoTime,
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments.
@@ -72,6 +75,26 @@ class Orchestrator(
     navigator: NavigatorAgent,
     inspector: InspectorAgent,
   ): SegmentResult {
+    segment.wait?.let { wait ->
+      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index)
+      val result = ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds)
+      val evaluation = result.lastEvaluation
+      val reasoning = if (result.satisfied) {
+        evaluation?.verdict?.reasoning.orEmpty()
+      } else {
+        "Wait timed out after ${wait.timeoutSeconds} seconds: ${wait.until}"
+      }
+      return SegmentResult(
+        index = segment.index,
+        passed = result.satisfied,
+        reasoning = reasoning,
+        executionMode = SegmentExecutionMode.WAIT,
+        evidence = evaluation?.evidence.orEmpty(),
+        wait = WaitArtifact(wait.until, wait.timeoutSeconds, result.elapsedMs, result.checks, evaluation?.tier, evaluation?.verdict?.reasoning.orEmpty()),
+        error = if (result.satisfied) null else ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, reasoning),
+      )
+    }
+
     var executionMode = SegmentExecutionMode.ASSERTION_ONLY
     var actions = emptyList<String>()
     val generatedFlows = mutableListOf<String>()

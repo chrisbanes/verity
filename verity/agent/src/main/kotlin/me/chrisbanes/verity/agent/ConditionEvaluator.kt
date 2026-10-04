@@ -46,9 +46,9 @@ class ConditionEvaluator(
     val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex).tree(condition, context)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }
-  internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline): ConditionEvaluation {
+  internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
-    val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, deadline, temporaryScreenshot, verifyScreenshot)
+    val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot)
     VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
       val evaluation = inspection.visual(condition.trim().substring(prefix.range.last + 1).trim(), context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)

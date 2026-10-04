@@ -642,6 +642,7 @@ class RunCommand(
         evidence = segment.evidence,
         error = segment.error,
         loop = segment.loop,
+        wait = segment.wait,
       )
     },
   )

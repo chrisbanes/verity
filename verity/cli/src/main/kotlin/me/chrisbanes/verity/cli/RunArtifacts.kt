@@ -64,8 +64,17 @@ class RunArtifactDirectory(
 class JourneyRunArtifactRecorder(
   private val directory: Path,
   val key: String,
+  private val waitCheckIndex: Int? = null,
 ) : JourneyArtifactRecorder {
   val resultPath: String get() = "journeys/$key.json"
+
+  override fun forWaitCheck(checkIndex: Int): JourneyArtifactRecorder {
+    require(checkIndex >= 0)
+    return JourneyRunArtifactRecorder(directory, key, checkIndex)
+  }
+
+  private fun evidencePrefix(segmentIndex: Int): String = "evidence/$key/segment-${segmentIndex.toString().padStart(3, '0')}" +
+    (waitCheckIndex?.let { "-wait-${it.toString().padStart(3, '0')}" } ?: "")
 
   override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String = withContext(Dispatchers.IO) {
     val relative = "flows/$key/segment-${segmentIndex.toString().padStart(3, '0')}-${slugArtifactName(label, "flow")}.yaml"
@@ -76,7 +85,7 @@ class JourneyRunArtifactRecorder(
   }
 
   override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String = withContext(Dispatchers.IO) {
-    val relative = "evidence/$key/segment-${segmentIndex.toString().padStart(3, '0')}-tree.txt"
+    val relative = "${evidencePrefix(segmentIndex)}-tree.txt"
     val target = resolveArtifactPath(directory, relative)
     Files.createDirectories(target.parent)
     Files.writeString(target, hierarchy)
@@ -84,7 +93,7 @@ class JourneyRunArtifactRecorder(
   }
 
   override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = withContext(Dispatchers.IO) {
-    val relative = "evidence/$key/segment-${segmentIndex.toString().padStart(3, '0')}-visual.png"
+    val relative = "${evidencePrefix(segmentIndex)}-visual.png"
     val target = resolveArtifactPath(directory, relative)
     Files.createDirectories(target.parent)
     JourneyScreenshotArtifact(path = target, relativePath = relative)
