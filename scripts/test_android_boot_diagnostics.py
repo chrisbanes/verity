@@ -29,6 +29,7 @@ class DiagnosticsTest(unittest.TestCase):
         self.env.start()
 
     def tearDown(self):
+        self.doCleanups()
         self.env.stop()
         self.temp.cleanup()
 
@@ -132,11 +133,13 @@ class DiagnosticsTest(unittest.TestCase):
         with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000", "ANDROID_HOME": "/offline/sdk", "ANDROID_SERIAL": "ambient"}), patch.object(D, "capture", side_effect=fake_capture):
             original = D.startup_commands()
             self.assertEqual(D.startup(self.directory, 17), 0)
-        self.assertEqual(seen[:2], [argv for _, argv in original[:2]])
-        self.assertEqual(seen[2][:4], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554", "shell"])
-        self.assertIn("logcat --pid=81 ", seen[2][-1])
-        self.assertNotIn("DEBUG", seen[2][-1])
-        self.assertEqual(seen[3:], [argv for _, argv in original[2:]])
+        index = next(i for i, row in enumerate(original) if row[0] == "crash")
+        self.assertEqual(seen[:index], [argv for _, argv in original[:index]])
+        self.assertEqual(original[index-1][0], "firstFrameworkMarker")
+        self.assertEqual(seen[index][:4], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554", "shell"])
+        self.assertIn("logcat --pid=81 ", seen[index][-1])
+        self.assertNotIn("DEBUG", seen[index][-1])
+        self.assertEqual(seen[index+1:], [argv for _, argv in original[index:]])
 
     def test_historical_guest_filter_drains_huge_output_and_rejects_private_markers(self):
         self.history_fixture(91)
@@ -277,6 +280,158 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual(result["evidenceStatus"], "unknown")
         self.assertEqual(report["gradleExit"], 17)
         self.assertFalse(report["qualification"])
+
+    def first_marker_fixture(self):
+        fixture = self.directory / "first-marker-bin"
+        fixture.mkdir(exist_ok=True)
+        logcat = fixture / "logcat"
+        logcat.write_text("#!" + sys.executable + "\n" + r'''
+import json, os, re, subprocess, sys, time
+from pathlib import Path
+Path(os.environ['OFFLINE_LOG_PID']).write_text(json.dumps({'pid':os.getpid(),'start':subprocess.check_output(['/bin/ps','-p',str(os.getpid()),'-o','lstart='],text=True).strip()}))
+parent = os.getppid()
+args = sys.argv[1:]
+rows = json.loads(os.environ['OFFLINE_LOG_ROWS'])
+if os.environ.get('OFFLINE_UNSUPPORTED'):
+    print('unsupported option -m', file=sys.stderr)
+    print('W/Watchdog( 7): *** WATCHDOG KILLING SYSTEM PROCESS: blocked')
+    raise SystemExit(2)
+regex = re.compile(args[args.index('-e')+1]) if '-e' in args else None
+threshold = {'AndroidRuntime': 'E', 'Watchdog': 'W', 'DEBUG': 'F'}
+count = 0
+for priority, tag, message in rows:
+    if regex and (tag not in threshold or 'VDIWEF'.index(priority) < 'VDIWEF'.index(threshold[tag]) or not regex.search(message)):
+        continue
+    print(priority+'/'+tag+'( 7): '+message, flush=True)
+    count += 1
+    if '-m' in args and count >= int(args[args.index('-m')+1]):
+        raise SystemExit(0)
+if os.environ.get('OFFLINE_REMAINDER'):
+    end = time.monotonic()+30
+    while os.getppid() == parent and time.monotonic() < end:
+        time.sleep(.01)
+''')
+        logcat.chmod(0o755)
+        grep = fixture / "grep"
+        grep.write_text("#!" + sys.executable + "\nimport json,os,subprocess,sys\nfrom pathlib import Path\nPath(os.environ['OFFLINE_GREP_PID']).write_text(json.dumps({'pid':os.getpid(),'start':subprocess.check_output(['/bin/ps','-p',str(os.getpid()),'-o','lstart='],text=True).strip()}))\nos.execv('/usr/bin/grep',['grep']+sys.argv[1:])\n")
+        grep.chmod(0o755)
+        env = {"OFFLINE_LOG_PID": str(fixture / "log.pid"), "OFFLINE_GREP_PID": str(fixture / "grep.pid"), "PATH": str(fixture) + os.pathsep + os.environ["PATH"],
+                "MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000", "ANDROID_HOME": "/offline/sdk"}
+        self.addCleanup(self.assert_fixture_readers_exited, env)
+        return env
+
+    def assert_fixture_readers_exited(self, env):
+        # Exact fixture-written PID/start identities; no name-based selection.
+        for key in ("OFFLINE_LOG_PID", "OFFLINE_GREP_PID"):
+            path = Path(env[key])
+            if not path.exists():
+                continue
+            identity = json.loads(path.read_text())
+            pid = identity["pid"]
+            start = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True, timeout=.5)
+            if not start.stdout.strip():
+                continue
+            self.assertEqual(start.stdout.strip(), identity["start"], "Owned fixture PID was reused")
+            os.kill(pid, signal.SIGTERM)
+            end = time.monotonic() + 1
+            while True:
+                state = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=.5)
+                if not state.stdout.strip() or state.stdout.strip().startswith("Z"):
+                    break
+                if time.monotonic() >= end:
+                    current = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True, timeout=.5)
+                    self.assertEqual(current.stdout.strip(), identity["start"])
+                    os.kill(pid, signal.SIGKILL)
+                    state = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=.5)
+                    self.assertTrue(not state.stdout.strip() or state.stdout.strip().startswith("Z"), "Owned fixture child did not exit")
+                    break
+                time.sleep(.01)
+            path.unlink()
+
+    def test_first_marker_raw_message_stops_before_blocked_remainder_and_filters_privacy(self):
+        env = self.first_marker_fixture()
+        rows = [["E", "Private", "FATAL EXCEPTION IN SYSTEM PROCESS private"],
+                ["W", "WatchdogPrivate", "*** WATCHDOG KILLING SYSTEM PROCESS: private"],
+                ["I", "Watchdog", "*** WATCHDOG KILLING SYSTEM PROCESS: private"],
+                ["F", "DEBUG", "pid: 7, tid: 8, name: Binder Pool  >>> system_server.private <<<"],
+                ["W", "Watchdog", "*** WATCHDOG KILLING SYSTEM PROCESS: blocked"],
+                ["E", "AndroidRuntime", "Process: system_server, PID: 7"]]
+        with patch.dict(os.environ, {**env, "OFFLINE_LOG_ROWS": json.dumps(rows), "OFFLINE_REMAINDER": "1"}):
+            scripts = dict(D.startup_commands())
+            old = D.capture(["/bin/sh", "-c", scripts["crash"][-1]], deadline=time.monotonic()+1.2, limit=256)
+            self.assertEqual(old["outcome"], "timeout")
+            self.assertTrue(old["joined"])
+            self.assert_fixture_readers_exited(env)
+            selected = D.capture(["/bin/sh", "-c", scripts["firstFrameworkMarker"][-1]], limit=256)
+            self.assertEqual(selected["exit"], 0)
+            self.assertTrue(selected["joined"])
+            self.assertEqual(selected["stdout"].splitlines(), ["W/Watchdog( 7): *** WATCHDOG KILLING SYSTEM PROCESS: blocked"])
+            wrong = scripts["firstFrameworkMarker"][-1].replace(D.FIRST_FRAMEWORK_RAW, "^W/Watchdog")
+            raw = D.capture(["/bin/sh", "-c", wrong], deadline=time.monotonic()+1.2, limit=256)
+            self.assertEqual(raw["outcome"], "timeout")
+            self.assertFalse(raw["stdout"])
+            self.assertTrue(raw["joined"])
+            self.assert_fixture_readers_exited(env)
+        for priority, tag, message in (("E", "AndroidRuntime", "FATAL EXCEPTION IN SYSTEM PROCESS: main"),
+                                       ("E", "AndroidRuntime", "Process: system_server, PID: 7"),
+                                       ("F", "DEBUG", "pid: 7, tid: 8, name: Binder Pool  >>> system_server <<<")):
+            with self.subTest(tag=tag, message=message), patch.dict(os.environ, {**env, "OFFLINE_LOG_ROWS": json.dumps([[priority, tag, message]])}):
+                result = D.capture(["/bin/sh", "-c", D.FIRST_FRAMEWORK_SCRIPT], limit=256)
+                self.assertEqual(result["exit"], 0)
+                self.assertIn(message, result["stdout"])
+
+    def test_first_marker_unsupported_partial_output_absent_and_oversize_are_unknown(self):
+        env = self.first_marker_fixture()
+        for extra, rows in (({"OFFLINE_UNSUPPORTED": "1"}, []), ({}, []),
+                            ({}, [["W", "Watchdog", "*** WATCHDOG KILLING SYSTEM PROCESS: " + "x"*10000]])):
+            with self.subTest(extra=extra, rows=len(rows)):
+                self.startup_fixture()
+                with patch.dict(os.environ, {**env, **extra, "OFFLINE_LOG_ROWS": json.dumps(rows)}):
+                    D.startup(self.directory, 17, commands=lambda: [("firstFrameworkMarker", ["/bin/sh", "-c", D.FIRST_FRAMEWORK_SCRIPT])])
+                report = json.loads((self.directory / "startup.json").read_text())
+                result = report["commands"]["firstFrameworkMarker"]
+                self.assertEqual(result["evidenceStatus"], "unknown")
+                self.assertTrue(result["joined"])
+                self.assertFalse(result["qualification"])
+                self.assertLessEqual((self.directory / "startup.json").stat().st_size, 6000)
+                (self.directory / "startup.json").unlink()
+
+    def test_first_marker_clean_fragment_and_dirty_capture_statuses(self):
+        base = {"exit": 0, "outcome": "completed", "stdout": "W/Watchdog: *** WATCHDOG KILLING SYSTEM PROCESS: blocked\n",
+                "stderr": "", "joined": True, "truncated": False, "droppedBytes": {"stdout": 0, "stderr": 0}}
+        for changes in ({}, {"stderr": "unsupported"}, {"joined": False}, {"truncated": True},
+                        {"droppedBytes": {"stdout": 0, "stderr": 1}}, {"exit": 2},
+                        {"outcome": "timeout"}, {"outcome": "stopped"}):
+            with self.subTest(changes=changes):
+                self.startup_fixture()
+                with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", return_value={**base, **changes}):
+                    D.startup(self.directory, 17, commands=lambda: [("firstFrameworkMarker", ["offline"])])
+                result = json.loads((self.directory / "startup.json").read_text())["commands"]["firstFrameworkMarker"]
+                self.assertEqual(result["evidenceStatus"], "unknown" if changes else "selected-fragment")
+                self.assertFalse(result["qualification"])
+                self.assertIn("not complete/current crash", result["limitations"])
+                (self.directory / "startup.json").unlink()
+
+    def test_first_marker_deadline_and_cancel_do_not_run_later_readers(self):
+        for cancel in (False, True):
+            self.startup_fixture()
+            calls = []
+            original = D.capture
+            def capture(argv, stop, deadline, limit):
+                calls.append(argv)
+                if cancel:
+                    os.kill(os.getpid(), D.signal.SIGTERM)
+                result = original([sys.executable, "-c", "import time; time.sleep(30)"], stop, deadline, limit)
+                if not cancel:
+                    time.sleep(max(0, deadline-time.monotonic()))
+                return result
+            with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=capture):
+                D.startup(self.directory, 17, duration=1.2, commands=lambda: [("firstFrameworkMarker", ["first"]), ("crash", ["later"])])
+            report = json.loads((self.directory / "startup.json").read_text())
+            self.assertEqual(calls, [["first"]])
+            self.assertTrue(report["commands"]["firstFrameworkMarker"]["joined"])
+            self.assertEqual(report["commands"]["firstFrameworkMarker"]["evidenceStatus"], "unknown")
+            (self.directory / "startup.json").unlink()
 
     def test_startup_duplicate_is_refused_without_overwriting_prior_evidence(self):
         self.startup_fixture()

@@ -28,6 +28,14 @@ PROPERTIES = ("ro.boot.bootreason", "init.svc.zygote", "init.svc.bootanim", "ini
 CRASH_LOG_SCRIPT = r"logcat -b crash -d -t 128 -v brief | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: |^F/DEBUG[ ]*(\([ ]*[0-9]+\))?[ ]*: pid: [0-9]+, tid: [0-9]+, name: .*  >>> system_server <<<$'"
 
 
+FIRST_FRAMEWORK_RAW = r"^(FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$)|\*\*\* WATCHDOG KILLING SYSTEM PROCESS: |pid: [0-9]+, tid: [0-9]+, name: .*  >>> system_server <<<$)"
+FIRST_FRAMEWORK_FORMATTED = r"^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: |^F/DEBUG[ ]*(\([ ]*[0-9]+\))?[ ]*: pid: [0-9]+, tid: [0-9]+, name: .*  >>> system_server <<<$"
+# Preserve logcat's status independently of the guest privacy filter's status.
+FIRST_FRAMEWORK_SCRIPT = ("marker=$(logcat -b system -b main -b crash -d -v brief -s AndroidRuntime:E Watchdog:W DEBUG:F -e '" +
+                          FIRST_FRAMEWORK_RAW + "' -m 1); reader_status=$?; printf '%s\\n' \"$marker\" | grep -E '" +
+                          FIRST_FRAMEWORK_FORMATTED + "'; filter_status=$?; [ \"$reader_status\" -eq 0 ] && [ \"$filter_status\" -eq 0 ]")
+
+
 def binding():
     values = {key: os.environ[key] for key in KEYS}
     if any(not value or len(value) > 256 for value in values.values()):
@@ -324,6 +332,7 @@ def startup_commands():
             ("instrumentation", prefix + [r"pm list instrumentation | grep -E '^instrumentation:dev\.mobile\.maestro\.test/androidx\.test\.runner\.AndroidJUnitRunner \(target=dev\.mobile\.maestro\)$'"]),
             ("driverPid", prefix + ["pidof dev.mobile.maestro || printf '\n'"]),
             ("driverPort", prefix + [r"grep -E '^[ ]*[0-9]+: [0-9A-F]+:1B59 ' /proc/net/tcp /proc/net/tcp6"]),
+            ("firstFrameworkMarker", prefix + [FIRST_FRAMEWORK_SCRIPT]),
             ("crash", prefix + [CRASH_LOG_SCRIPT.replace("logcat -b crash ", "logcat -b crash -b main -b system ", 1).replace(" -t 128", "", 1)]),
             ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I Watchdog:V SystemServer:E | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: '"])]
 
@@ -425,12 +434,18 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
     try:
         pending = list(commands())
         if historical.get("pid") is not None:
-            pending.insert(min(2, len(pending)), ("historicalSystemServerLogs", historical_system_server_command(historical["pid"])))
+            pending.insert(next((index for index, row in enumerate(pending) if row[0] == "crash"), len(pending)), ("historicalSystemServerLogs", historical_system_server_command(historical["pid"])))
         for name, argv in pending:
             if terminate[0] or time.monotonic() >= deadline:
                 break
             result = capture(argv, lambda: terminate[0], deadline, limit=256)
             result["evidenceStatus"] = "observed" if result["outcome"] == "completed" and result["exit"] == 0 and result["stdout"].strip() and not result["truncated"] else "unknown"
+            if name == "firstFrameworkMarker":
+                clean = (result["evidenceStatus"] == "observed" and result.get("joined") is True and
+                         not result.get("stderr") and result.get("droppedBytes") == {"stdout": 0, "stderr": 0})
+                result["evidenceStatus"] = "selected-fragment" if clean else "unknown"
+                result["qualification"] = False
+                result["limitations"] = "selected retained fragment; not complete/current crash, process identity, cause or handoff authority"
             report["commands"][name] = result
             report["diagnosticFailures"] += failures(result)
             report["truncated"] |= result["truncated"]
