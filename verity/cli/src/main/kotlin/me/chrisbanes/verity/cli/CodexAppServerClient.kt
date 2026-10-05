@@ -8,11 +8,13 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import kotlin.math.min
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
@@ -36,6 +38,17 @@ internal class CodexAppServerClient internal constructor(
   private val scope: CoroutineScope,
 ) {
   private val frames = Channel<JsonObject>(64)
+  private val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+  @Volatile private var discardedOwnership: Pair<String?, String?>? = null
+
+  fun correlateDiscarded(threadId: String?, turnId: String?) {
+    discardedOwnership = threadId to turnId
+  }
+  fun clearDiscardedCorrelation() {
+    discardedOwnership = null
+  }
+  fun ownsTurn(threadId: String, turnId: String): Boolean = discardedOwnership == (threadId to turnId)
   private val writeMutex = Mutex()
   private var nextId = 0L
   private val reader = scope.launch(Dispatchers.IO) {
@@ -43,14 +56,45 @@ internal class CodexAppServerClient internal constructor(
       while (true) {
         val line = readFrame(process.inputStream) ?: break
         val envelope = Json.parseToJsonElement(line) as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (envelope.containsKey("method") && envelope.containsKey("id")) {
+          // Refuse every request the owned reader observes, including requests preceding
+          // an ACK that the consumer has not yet validated. Never dispatch a callback.
+          failed.set(true)
+          send(
+            buildJsonObject {
+              put("id", envelope.getValue("id"))
+              put(
+                "error",
+                buildJsonObject {
+                  put("code", -32601)
+                  put("message", "Requests are disabled")
+                },
+              )
+            },
+          )
+          throw CodexFailure(CodexFailureKind.PROTOCOL)
+        }
         val method = envelope["method"]?.jsonPrimitive?.contentOrNull
-        if (method in discardedNotifications && !envelope.containsKey("id")) continue
+        if (method in discardedNotifications && !envelope.containsKey("id")) {
+          val ownership = discardedOwnership
+          if (ownership == null) continue // Startup has no model request ownership.
+          val (thread, turn) = ownership
+          if (thread != null && turn != null) {
+            val params = envelope["params"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+            if (params["threadId"] != JsonPrimitive(thread) || params["turnId"] != JsonPrimitive(turn)) throw CodexFailure(CodexFailureKind.PROTOCOL)
+            continue
+          }
+          // An ACK may be queued but not yet validated. Let the sole request consumer
+          // validate this informational frame after the preceding ACK publishes ownership.
+        }
         if (!frames.trySend(envelope).isSuccess) throw CodexFailure(CodexFailureKind.PROTOCOL)
       }
+      failed.set(true)
       frames.close(CodexFailure(CodexFailureKind.PROTOCOL))
     } catch (e: CancellationException) {
       throw e
     } catch (_: Exception) {
+      failed.set(true)
       frames.close(CodexFailure(CodexFailureKind.PROTOCOL))
     }
   }
@@ -63,7 +107,8 @@ internal class CodexAppServerClient internal constructor(
     } catch (_: Exception) { /* Owned stream was closed. */ }
   }
 
-  suspend fun request(method: String, params: JsonObject = JsonObject(emptyMap())): JsonObject {
+  suspend fun beginRequest(method: String, params: JsonObject = JsonObject(emptyMap())): Long {
+    if (method != "turn/interrupt" && method != "thread/unsubscribe") requireHealthy()
     val id = ++nextId
     send(
       buildJsonObject {
@@ -72,16 +117,35 @@ internal class CodexAppServerClient internal constructor(
         put("params", params)
       },
     )
+    return id
+  }
+
+  suspend fun request(
+    method: String,
+    params: JsonObject = JsonObject(emptyMap()),
+    notification: suspend (JsonObject) -> Unit = { throw CodexFailure(CodexFailureKind.PROTOCOL) },
+  ): JsonObject {
+    val id = beginRequest(method, params)
     while (true) {
       val frame = receive()
-      if (frame.containsKey("method")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (frame.containsKey("method")) {
+        notification(frame)
+        continue
+      }
       if (frame["id"] != JsonPrimitive(id) || frame.containsKey("error")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      requireHealthy()
       return frame["result"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
     }
   }
 
+  fun requireHealthy() {
+    if (failed.get()) throw CodexFailure(CodexFailureKind.PROTOCOL)
+  }
+
   suspend fun receive(): JsonObject {
+    requireHealthy()
     val frame = frames.receive()
+    requireHealthy()
     if (frame.containsKey("method") && frame.containsKey("id")) {
       send(
         buildJsonObject {
@@ -163,9 +227,6 @@ internal class CodexOwnedResources {
   private val processes = mutableListOf<Process>()
   private val clients = mutableListOf<CodexAppServerClient>()
   private val directories = mutableListOf<Path>()
-  var ownedThreadId: String? = null
-  var ownedTurnId: String? = null
-
   suspend fun directory(): Path = withContext(Dispatchers.IO) {
     Files.createTempDirectory("verity-codex-").also { directories.add(it) }
   }
@@ -176,105 +237,125 @@ internal class CodexOwnedResources {
 
   fun client(process: Process): CodexAppServerClient = CodexAppServerClient(process, scope).also { clients.add(it) }
 
-  var cleanupFailed: Boolean = false
+  private val closeMutex = Mutex()
+  private var deadline: CodexCleanupDeadline? = null
+
+  @Volatile private var closed = false
+
+  @Volatile var cleanupFailed: Boolean = false
     private set
 
-  suspend fun close() = withContext(NonCancellable) {
-    var failed = false
-    val completed = withTimeoutOrNull(5_000) {
-      // T3 records these IDs only after acquiring the corresponding owned resources.
-      val client = clients.lastOrNull { it.process.isAlive }
-      if (client != null) {
-        ownedTurnId?.let { turn ->
-          ownedThreadId?.let { thread ->
-            val interrupted = withTimeoutOrNull(200) {
+  @Synchronized
+  fun beginCleanup(proposed: CodexCleanupDeadline = CodexCleanupDeadline()): CodexCleanupDeadline = deadline ?: proposed.also { deadline = it }
+
+  suspend fun close(
+    deadline: CodexCleanupDeadline = beginCleanup(),
+    beforeStop: suspend () -> Unit = {},
+  ) = withContext(NonCancellable) {
+    val sharedDeadline = beginCleanup(deadline)
+    if (closed) {
+      if (cleanupFailed) throw CodexFailure(CodexFailureKind.CLEANUP)
+      return@withContext
+    }
+    val closeCompleted = withTimeoutOrNull(sharedDeadline.remainingMillis()) {
+      closeMutex.withLock {
+        if (closed) {
+          if (cleanupFailed) throw CodexFailure(CodexFailureKind.CLEANUP)
+          return@withLock
+        }
+        var failed = false
+        val completed = withTimeoutOrNull(sharedDeadline.remainingMillis()) {
+          // A blocked RPC write cannot be bounded by cancellation alone. Reserve time to
+          // terminate the exact process, unblock the write, and join its owned callback.
+          val cleanup = scope.async { beforeStop() }
+          val rpcCompleted = withTimeoutOrNull(min(400L, sharedDeadline.remainingMillis())) {
+            try {
+              cleanup.await()
+              true
+            } catch (e: CancellationException) {
+              throw e
+            } catch (_: Exception) {
+              failed = true
+              true
+            }
+          }
+          if (rpcCompleted != true) {
+            failed = true
+            cleanup.cancel()
+          }
+          clients.asReversed().forEach { client ->
+            try {
+              client.stop()
+            } catch (e: CancellationException) {
+              throw e
+            } catch (_: Exception) {
+              failed = true
+            }
+          }
+          withContext(Dispatchers.IO) {
+            processes.asReversed().forEach { process ->
               try {
-                client.request(
-                  "turn/interrupt",
-                  buildJsonObject {
-                    put("threadId", thread)
-                    put("turnId", turn)
-                  },
-                )
+                if (process.isAlive) {
+                  process.destroy()
+                  if (!process.waitFor(100, TimeUnit.MILLISECONDS)) process.destroyForcibly()
+                  if (!process.waitFor(500, TimeUnit.MILLISECONDS)) failed = true
+                }
+                if (!process.isAlive) {
+                  runCatching { process.outputStream.close() }
+                  runCatching { process.inputStream.close() }
+                  runCatching { process.errorStream.close() }
+                }
               } catch (e: CancellationException) {
                 throw e
               } catch (_: Exception) {
                 failed = true
               }
             }
-            if (interrupted == null) failed = true
           }
-        }
-        ownedThreadId?.let { thread ->
-          val unsubscribed = withTimeoutOrNull(200) {
-            try {
-              client.request("thread/unsubscribe", buildJsonObject { put("threadId", thread) })
-            } catch (e: CancellationException) {
-              throw e
-            } catch (_: Exception) {
+          cleanup.cancelAndJoin()
+          job.cancelAndJoin()
+          withContext(Dispatchers.IO) {
+            val cleanupContext = currentCoroutineContext()
+            if (processes.any { it.isAlive }) {
               failed = true
-            }
-          }
-          if (unsubscribed == null) failed = true
-        }
-      }
-      clients.asReversed().forEach { client ->
-        try {
-          client.stop()
-        } catch (e: CancellationException) {
-          throw e
-        } catch (_: Exception) {
-          failed = true
-        }
-      }
-      withContext(Dispatchers.IO) {
-        processes.asReversed().forEach { process ->
-          try {
-            if (process.isAlive) {
-              process.destroy()
-              if (!process.waitFor(100, TimeUnit.MILLISECONDS)) process.destroyForcibly()
-              if (!process.waitFor(500, TimeUnit.MILLISECONDS)) failed = true
-            }
-            if (!process.isAlive) {
-              runCatching { process.outputStream.close() }
-              runCatching { process.inputStream.close() }
-              runCatching { process.errorStream.close() }
-            }
-          } catch (e: CancellationException) {
-            throw e
-          } catch (_: Exception) {
-            failed = true
-          }
-        }
-      }
-      job.cancelAndJoin()
-      withContext(Dispatchers.IO) {
-        val cleanupContext = currentCoroutineContext()
-        if (processes.any { it.isAlive }) {
-          failed = true
-        } else {
-          directories.asReversed().forEach { path ->
-            try {
-              if (Files.exists(path)) {
-                Files.walk(path).use { paths ->
-                  paths.sorted(Comparator.reverseOrder()).forEach {
-                    cleanupContext.ensureActive()
-                    Files.delete(it)
+            } else {
+              directories.asReversed().forEach { path ->
+                try {
+                  if (Files.exists(path)) {
+                    Files.walk(path).use { paths ->
+                      paths.sorted(Comparator.reverseOrder()).forEach {
+                        cleanupContext.ensureActive()
+                        Files.delete(it)
+                      }
+                    }
                   }
+                } catch (e: CancellationException) {
+                  throw e
+                } catch (_: Exception) {
+                  failed = true
                 }
               }
-            } catch (e: CancellationException) {
-              throw e
-            } catch (_: Exception) {
-              failed = true
+              if (directories.any { Files.exists(it) }) failed = true
             }
           }
-          if (directories.any { Files.exists(it) }) failed = true
+          true
         }
+        if (completed != true || failed) cleanupFailed = true
+        closed = true
+        if (cleanupFailed) throw CodexFailure(CodexFailureKind.CLEANUP)
       }
       true
     }
-    cleanupFailed = cleanupFailed || completed != true || failed
-    if (cleanupFailed) throw CodexFailure(CodexFailureKind.CLEANUP)
+    if (closeCompleted != true) {
+      cleanupFailed = true
+      closed = true
+      throw CodexFailure(CodexFailureKind.CLEANUP)
+    }
   }
+}
+
+/** A cleanup budget is created once and shared by every phase and caller. */
+internal class CodexCleanupDeadline(private val nanoTime: () -> Long = System::nanoTime) {
+  private val endNanos = nanoTime() + 5_000_000_000L
+  fun remainingMillis(): Long = ((endNanos - nanoTime()) / 1_000_000L).coerceAtLeast(0)
 }

@@ -171,8 +171,9 @@ class CodexLifecycleTest {
   fun `owned directory cleanup failure stays fixed and sticky after every exact process exited`() = runTest {
     withContext(Dispatchers.Default) {
       val fake = FakeCodexLauncher("cleanup-failure")
-      val backend = fake.prepare()
+      var prepared: CodexModelBackend? = null
       try {
+        val backend = fake.prepare().also { prepared = it }
         val failure = assertFailsWith<CodexFailure> { backend.close() }
         assertThat(failure.kind).isEqualTo(CodexFailureKind.CLEANUP)
         assertThat(failure.cause).isEqualTo(null)
@@ -197,7 +198,13 @@ class CodexLifecycleTest {
               if (java.nio.file.Files.exists(blocked)) java.nio.file.Files.setPosixFilePermissions(blocked, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"))
             }
           }
-          assertThat(assertFailsWith<CodexFailure> { backend.close() }.kind).isEqualTo(CodexFailureKind.CLEANUP)
+          prepared?.let { backend -> assertThat(assertFailsWith<CodexFailure> { backend.close() }.kind).isEqualTo(CodexFailureKind.CLEANUP) }
+          withContext(Dispatchers.IO) {
+            assertThat(fake.children.all { !it.process.isAlive }).isTrue()
+            fake.directories.filter { java.nio.file.Files.exists(it) }.forEach { path ->
+              java.nio.file.Files.walk(path).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(java.nio.file.Files::delete) }
+            }
+          }
           fake.verifyCleanup()
         }
       }

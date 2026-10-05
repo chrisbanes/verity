@@ -21,6 +21,8 @@ internal enum class CodexFailureKind { INSTALLATION, VERSION, HOST, PROTOCOL, IS
 
 internal class CodexFailure(val kind: CodexFailureKind) : Exception("Codex ${kind.name.lowercase()} failure")
 
+internal data class CodexThreadEchoFields(val responseArrays: Set<String>, val threadArrays: Set<String>)
+
 internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMap()) {
   val policy: Map<String, JsonElement> = buildMap {
     put("model_provider", JsonPrimitive("openai"))
@@ -120,6 +122,63 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
       }
       val thread = definitions["Thread"]?.jsonObject
       if (!hasType(thread, "object") || !hasType(thread?.get("properties")?.jsonObject?.get("id"), "string") || !hasType(thread?.get("properties")?.jsonObject?.get("ephemeral"), "boolean")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val threadProperties = thread?.get("properties")?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      listOf("model", "modelProvider").forEach { if (!hasType(threadProperties[it], "string")) throw CodexFailure(CodexFailureKind.PROTOCOL) }
+      if (!hasType(threadProperties["environments"], "array")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      listOf("model", "modelProvider", "cwd", "baseInstructions", "developerInstructions").forEach { if (!hasType(properties[it], "string")) throw CodexFailure(CodexFailureKind.PROTOCOL) }
+      if (!hasType(properties["config"], "object")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val startDefinitions = start["definitions"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (properties["approvalPolicy"]?.jsonObject?.get("anyOf")?.jsonArray?.any { reference(it, "AskForApproval") } != true || properties["sandbox"]?.jsonObject?.get("anyOf")?.jsonArray?.any { reference(it, "SandboxMode") } != true || properties["approvalsReviewer"]?.jsonObject?.get("anyOf")?.jsonArray?.any { reference(it, "ApprovalsReviewer") } != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (startDefinitions["SandboxMode"]?.jsonObject?.get("enum")?.jsonArray?.contains(JsonPrimitive("read-only")) != true || startDefinitions["ApprovalsReviewer"]?.jsonObject?.get("enum")?.jsonArray?.contains(JsonPrimitive("user")) != true || definitions["ApprovalsReviewer"]?.jsonObject?.get("enum")?.jsonArray?.contains(JsonPrimitive("user")) != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (startDefinitions["AskForApproval"]?.jsonObject?.get("oneOf")?.jsonArray?.any { it.jsonObject["enum"]?.jsonArray?.contains(JsonPrimitive("never")) == true } != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val turnStart = schema("v2/TurnStartParams.json")
+      val turnProperties = turnStart["properties"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (!hasType(turnProperties["threadId"], "string") || !hasType(turnProperties["serviceTierForTurn"], "string") || !hasType(turnProperties["input"], "array") || !reference(turnProperties["input"]?.jsonObject?.get("items"), "UserInput")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (turnProperties["effort"]?.jsonObject?.get("anyOf")?.jsonArray?.any { reference(it, "ReasoningEffort") } != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val inputs = turnStart["definitions"]?.jsonObject?.get("UserInput")?.jsonObject?.get("oneOf")?.jsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      mapOf("text" to "text", "localImage" to "path").forEach { (type, field) ->
+        val variant = inputs.singleOrNull { it.jsonObject["properties"]?.jsonObject?.get("type")?.jsonObject?.get("enum") == JsonArray(listOf(JsonPrimitive(type))) }?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (!hasType(variant["properties"]?.jsonObject?.get(field), "string")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      }
+      listOf("ItemStartedNotification", "ItemCompletedNotification").forEach { name ->
+        val event = schema("v2/$name.json")
+        val fields = event["properties"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (!hasType(fields["threadId"], "string") || !hasType(fields["turnId"], "string") || !reference(fields["item"], "ThreadItem")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val eventDefinitions = event["definitions"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val variants = eventDefinitions["ThreadItem"]?.jsonObject?.get("oneOf")?.jsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val assistant = variants.singleOrNull { it.jsonObject["properties"]?.jsonObject?.get("type")?.jsonObject?.get("enum") == JsonArray(listOf(JsonPrimitive("agentMessage"))) }?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val fieldsAssistant = assistant["properties"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (!hasType(fieldsAssistant["id"], "string") || !hasType(fieldsAssistant["text"], "string") || fieldsAssistant["phase"]?.jsonObject?.get("anyOf")?.jsonArray?.any { reference(it, "MessagePhase") } != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val phases = eventDefinitions["MessagePhase"]?.jsonObject?.get("oneOf")?.jsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (listOf("commentary", "final_answer").any { phase -> phases.none { it.jsonObject["enum"] == JsonArray(listOf(JsonPrimitive(phase))) && hasType(it, "string") } }) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      }
+      listOf("TurnStartResponse", "TurnStartedNotification", "TurnCompletedNotification").forEach { name ->
+        val event = schema("v2/$name.json")
+        val fields = event["properties"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (!reference(fields["turn"], "Turn") || (name != "TurnStartResponse" && !hasType(fields["threadId"], "string"))) throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val eventDefinitions = event["definitions"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val turnFields = eventDefinitions["Turn"]?.jsonObject?.get("properties")?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (!hasType(turnFields["id"], "string") || !hasType(turnFields["items"], "array") || !reference(turnFields["status"], "TurnStatus")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val statuses = eventDefinitions["TurnStatus"]?.jsonObject?.get("enum")?.jsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (!statuses.containsAll(listOf("completed", "failed", "interrupted", "inProgress").map(::JsonPrimitive))) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      }
+      val statusNotification = schema("v2/ThreadStatusChangedNotification.json")
+      val statusFields = statusNotification["properties"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (!hasType(statusFields["threadId"], "string") || !reference(statusFields["status"], "ThreadStatus")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val statusDefinitions = statusNotification["definitions"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val statusVariants = statusDefinitions["ThreadStatus"]?.jsonObject?.get("oneOf")?.jsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      listOf("idle", "active", "notLoaded", "systemError").forEach { type ->
+        val variant = statusVariants.singleOrNull { it.jsonObject["properties"]?.jsonObject?.get("type")?.jsonObject?.get("enum") == JsonArray(listOf(JsonPrimitive(type))) }?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (type == "active" && !hasType(variant["properties"]?.jsonObject?.get("activeFlags"), "array")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      }
+      val unsubscribe = schema("v2/ThreadUnsubscribeResponse.json")
+      if (!reference(unsubscribe["properties"]?.jsonObject?.get("status"), "ThreadUnsubscribeStatus") || unsubscribe["definitions"]?.jsonObject?.get("ThreadUnsubscribeStatus")?.jsonObject?.get("enum")?.jsonArray?.contains(JsonPrimitive("unsubscribed")) != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val optionalEmptyArrays = setOf("selectedCapabilityRoots", "dynamicTools", "environments")
+      val responseArrays = optionalEmptyArrays.filterTo(mutableSetOf()) { response.containsKey(it) }
+      val threadArrays = optionalEmptyArrays.filterTo(mutableSetOf()) { threadProperties.containsKey(it) }
+      responseArrays.forEach { if (!hasType(response[it], "array")) throw CodexFailure(CodexFailureKind.PROTOCOL) }
+      threadArrays.forEach { if (!hasType(threadProperties[it], "array")) throw CodexFailure(CodexFailureKind.PROTOCOL) }
+      CodexThreadEchoFields(responseArrays, threadArrays)
     }
   }
 }
