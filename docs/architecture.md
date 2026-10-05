@@ -227,6 +227,8 @@ Android and iOS execute those commands through the existing Orchestra and driver
 
 **`IosDeviceSession`**: Installs XCTest runner on device/simulator. Communicates via HTTP to the on-device XCTest server (localhost:22087). Simulator management via `xcrun simctl`, physical devices via `devicectl`.
 
+The factory shares an internal `IOSDevice` delegation adapter between Maestro's iOS driver and `IosDeviceSession`. Hierarchy calls forward the same hierarchy Boolean flag directly to the already-owned `XCTestIOSDevice`; other controller and close operations retain `LocalIOSDevice` delegation. This avoids Maestro 2.11.0's warning-only hierarchy scheduler, which its `LocalIOSDevice.close()` does not shut down.
+
 Bounded capture includes complete acquisition, parsing, conversion and owned cleanup. Android preserves the interruptible SDK route with converter checkpoints. iOS owns a call to the recorded main runner endpoint, checked chunked body input and a fixed-schema Jackson-token decoder; no-argument capture stays SDK-backed. The helper never starts or closes the main runner. These cooperative routes do not guarantee forced termination of arbitrary SDK CPU work.
 
 ### Factory
