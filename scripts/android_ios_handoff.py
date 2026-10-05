@@ -505,15 +505,15 @@ def main():
     signal.signal(signal.SIGTERM, cancel)
     end = time.monotonic() + 28  # Reserve two seconds for publication within the 30s named envelope.
     mode, directory, *extra = sys.argv[1:]
-    directory = Path(directory)
+    directory = Path(directory).absolute()
     if mode == "prepare":
         prepare(directory)
     elif mode == "prelaunch":
         prelaunch(directory)
     elif mode == "active":
-        active(directory, Path(extra[0]), end)
+        active(directory, Path(extra[0]).absolute(), end)
     elif mode == "guard":
-        guard(directory, Path(extra[0]), json.loads(os.environ["VERITY_HANDOFF_OUTCOMES"]), os.environ["VERITY_HANDOFF_CANCELLED"] != "false", end)
+        guard(directory, Path(extra[0]).absolute(), json.loads(os.environ["VERITY_HANDOFF_OUTCOMES"]), os.environ["VERITY_HANDOFF_CANCELLED"] != "false", end)
     else:
         raise RuntimeError("Unknown handoff operation")
     if time.monotonic() >= end + 2:

@@ -394,6 +394,56 @@ class HandoffTest(unittest.TestCase):
             self.assertFalse((self.directory / "handoff.json").exists())
         self.save(self.directory / "revalidated.json", original)
 
+    def main_revalidate_and_guard(self, ownership, observer):
+        replies = [result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\nf4\nn*:5555\nf5\nn[::1]:8554\n")]
+        with patch.object(H.os, "getcwd", return_value=str(self.root)), patch.object(H.signal, "signal"), patch.object(sys, "argv", ["handoff", "active", ownership, observer]), patch.object(H, "capture", side_effect=replies):
+            H.main()
+        with patch.object(H.os, "getcwd", return_value=str(self.root)), patch.object(H.signal, "signal"), patch.object(sys, "argv", ["handoff", "guard", ownership, observer]), patch.dict(os.environ, {"VERITY_HANDOFF_OUTCOMES": json.dumps(OUTCOMES), "VERITY_HANDOFF_CANCELLED": "false"}), patch.object(H, "capture", return_value=result(code=1)):
+            H.main()
+
+    def test_actual_main_relative_arguments_revalidate_exact_registered_early_identity_and_guard(self):
+        self.early({})
+        original = (self.directory / "active.json").read_bytes()
+        self.main_revalidate_and_guard("ownership", "observer")
+        self.assertEqual((self.directory / "active.json").read_bytes(), original)
+        intent = H.read(self.directory / "postboot-revalidation-started.json")
+        self.assertEqual(intent["observer"]["ownership"]["directory"], str(self.directory))
+        self.assertEqual(H.read(self.directory / "revalidated.json")["activeSha256"], H.hashlib.sha256(original).hexdigest())
+        self.assertEqual(H.read(self.directory / "handoff.json")["portsClosed"], [5554, 5555, 8554])
+        self.assertEqual(H.read(self.directory / "handoff.json")["androidOutcome"], "failure")
+
+    def test_actual_main_absolute_arguments_retain_same_complete_proof(self):
+        self.early({})
+        self.main_revalidate_and_guard(str(self.directory), str(self.observer))
+        self.assertTrue(H.read(self.directory / "handoff.json")["iosMayStart"])
+
+    def test_actual_main_lexical_parent_and_symlink_aliases_do_not_gain_authority(self):
+        self.early({})
+        (self.root / "subdir").mkdir()
+        (self.root / "alias").symlink_to(self.directory, target_is_directory=True)
+        for argument in ("subdir/../ownership", "alias"):
+            for name in ("postboot-revalidation-started.json", "revalidated-process-observation.json", "revalidated-listener-observation.json"):
+                (self.directory / name).unlink(missing_ok=True)
+            with patch.object(H.os, "getcwd", return_value=str(self.root)), patch.object(H.signal, "signal"), patch.object(sys, "argv", ["handoff", "active", argument, "observer"]), patch.object(H, "capture") as capture, self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+                H.main()
+            capture.assert_not_called()
+            self.assertFalse((self.directory / "revalidated.json").exists())
+            with self.assertRaises(FileNotFoundError):
+                self.guard()
+            self.assertFalse((self.directory / "handoff.json").exists())
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            H.ownership_binding(Path("ownership"))  # Direct API stays strict; only explicit CLI is normalized.
+
+    def test_actual_main_relative_path_does_not_mask_stale_observer_binding(self):
+        self.early({})
+        self.save(self.observer / "control.json", {**self.control, "token": "stale"})
+        with patch.object(H.os, "getcwd", return_value=str(self.root)), patch.object(H.signal, "signal"), patch.object(sys, "argv", ["handoff", "active", "ownership", "observer"]), patch.object(H, "capture") as capture, self.assertRaisesRegex(RuntimeError, "binding"):
+            H.main()
+        capture.assert_not_called()
+        self.assertFalse((self.directory / "revalidated.json").exists())
+        with self.assertRaisesRegex(RuntimeError, "Observer identity"):
+            self.guard()
+
     def test_failed_android_still_allows_only_proven_exit_and_all_owned_ports(self):
         self.active()
         self.guard()
