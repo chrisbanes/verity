@@ -187,7 +187,7 @@ jobs:
         if: always() && !cancelled()
         env:
           VERITY_BOOT_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          VERITY_HANDOFF_CANCELLED: ${{ cancelled() }}
+          VERITY_HANDOFF_CANCELLED: "false"
           VERITY_HANDOFF_OUTCOMES: >-
             {"inputs":"${{ steps.mac_inputs.outcome }}","sdk":"${{ steps.mac_sdk.outcome }}","tools":"${{ steps.mac_sdk_tools.outcome }}","prepare":"${{ steps.android_owner_prepare.outcome }}","observer":"${{ steps.android_observer_stop.outcome }}","android":"${{ steps.mac_android.outcome }}"}
         run: |
