@@ -35,10 +35,25 @@ class McpCommandTest {
   @Test
   fun `actual backend error preserves real stdio protocol frames`() = verifyStdio(true)
 
-  private fun verifyStdio(injectError: Boolean) = runBlocking {
+  @Test
+  fun `all packaged archives preserve actual backend errors and real SDK stdio frames`() {
+    for (classpath in packagedClasspaths()) verifyStdio(true, classpath)
+  }
+
+  private fun packagedClasspaths(): List<String> = System.getProperty("verity.cli.packaged.jars")
+    .split(File.pathSeparator)
+    .map { System.getProperty("verity.cli.fixture.classes") + File.pathSeparator + it }
+
+  private fun archiveOptions(classpath: String): List<String> = if (classpath in packagedClasspaths()) {
+    listOf("-Dverity.fixture.archive=${classpath.substringAfterLast(File.pathSeparator)}")
+  } else {
+    emptyList()
+  }
+
+  private fun verifyStdio(injectError: Boolean, classpath: String = System.getProperty("verity.cli.test.classpath")) = runBlocking {
     val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-mcp-command").toFile() }
     val stderr = File(directory, "stderr.txt")
-    val process = start(directory, stderr, "stdio", injectError = injectError)
+    val process = start(directory, stderr, "stdio", injectError = injectError, classpath = classpath)
     val captured = ByteArrayOutputStream()
     val client = Client(Implementation("verity-command-regression", "1"))
     val input = object : FilterInputStream(process.inputStream) {
@@ -79,12 +94,19 @@ class McpCommandTest {
   }
 
   @Test
-  fun `http startup keeps existing stdout diagnostic`() = runBlocking {
+  fun `http startup keeps existing stdout diagnostic`() = verifyHttpStartup()
+
+  @Test
+  fun `all packaged archives retain HTTP stdout startup`() {
+    for (classpath in packagedClasspaths()) verifyHttpStartup(classpath)
+  }
+
+  private fun verifyHttpStartup(classpath: String = System.getProperty("verity.cli.test.classpath")) = runBlocking {
     val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-mcp-http-command").toFile() }
     val stderr = File(directory, "stderr.txt")
     val stdout = File(directory, "stdout.txt")
     val port = withContext(Dispatchers.IO) { ServerSocket(0).use { it.localPort } }
-    val process = start(directory, stderr, "http", port, stdout)
+    val process = start(directory, stderr, "http", port, stdout, classpath = classpath)
     try {
       withTimeout(30_000) {
         while (!withContext(Dispatchers.IO) { stdout.readText().contains("Starting Verity MCP server on 127.0.0.1:$port...") }) {
@@ -100,19 +122,28 @@ class McpCommandTest {
   }
 
   @Test
-  fun `pinned backend errors route only stdio diagnostics to stderr`() = runBlocking {
+  fun `pinned backend errors route only stdio diagnostics to stderr`() = verifyLogging(System.getProperty("verity.cli.test.classpath"))
+
+  @Test
+  fun `all packaged archives preserve stdio HTTP and ordinary logging thresholds`() {
+    for (classpath in packagedClasspaths()) verifyLogging(classpath)
+  }
+
+  private fun verifyLogging(classpath: String) = runBlocking {
     for (mode in listOf("stdio", "http", "ordinary")) {
       val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-log-routing").toFile() }
       val stdout = File(directory, "stdout.txt")
       val stderr = File(directory, "stderr.txt")
       val process = withContext(Dispatchers.IO) {
         ProcessBuilder(
-          File(System.getProperty("java.home"), "bin/java").path,
-          "-Xmx512m",
-          "-cp",
-          System.getProperty("verity.cli.test.classpath"),
-          "me.chrisbanes.verity.cli.McpLoggingFixture",
-          mode,
+          listOf(
+            File(System.getProperty("java.home"), "bin/java").path,
+            "-Xmx512m",
+            "-cp",
+            classpath,
+            "me.chrisbanes.verity.cli.McpLoggingFixture",
+            mode,
+          ).toMutableList().apply { addAll(2, archiveOptions(classpath)) },
         ).redirectOutput(stdout).redirectError(stderr).start()
       }
       try {
@@ -133,12 +164,13 @@ class McpCommandTest {
     }
   }
 
-  private suspend fun start(directory: File, stderr: File, transport: String, port: Int = 0, stdout: File? = null, injectError: Boolean = false): Process = withContext(Dispatchers.IO) {
+  private suspend fun start(directory: File, stderr: File, transport: String, port: Int = 0, stdout: File? = null, injectError: Boolean = false, classpath: String = System.getProperty("verity.cli.test.classpath")): Process = withContext(Dispatchers.IO) {
     val command = mutableListOf(
       File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m", "-cp",
-      System.getProperty("verity.cli.test.classpath"), if (injectError) "me.chrisbanes.verity.cli.McpLoggingFixture" else "me.chrisbanes.verity.cli.VerityKt",
+      classpath, if (injectError) "me.chrisbanes.verity.cli.McpLoggingFixture" else "me.chrisbanes.verity.cli.VerityKt",
       "--output-path", File(directory, "output").path, "mcp", "--transport", transport,
     )
+    command.addAll(2, archiveOptions(classpath))
     if (transport == "http") command += listOf("--port", port.toString(), "--host", "127.0.0.1")
     ProcessBuilder(command).directory(directory).redirectError(stderr).apply {
       if (stdout != null) redirectOutput(stdout)
@@ -160,6 +192,14 @@ class McpCommandTest {
 object McpLoggingFixture {
   @JvmStatic
   fun main(args: Array<String>) {
+    // Packaged fixtures must load production/backend/SDK classes from the selected archive.
+    System.getProperty("verity.fixture.archive")?.let { archive ->
+      if (archive.endsWith(".jar")) {
+        for (name in listOf("me.chrisbanes.verity.cli.McpCommand", "org.slf4j.LoggerFactory", "org.apache.logging.log4j.core.appender.ConsoleAppender", "io.modelcontextprotocol.kotlin.sdk.client.Client")) {
+          check(File(Class.forName(name, false, McpLoggingFixture::class.java.classLoader).protectionDomain.codeSource.location.toURI()).canonicalFile == File(archive).canonicalFile)
+        }
+      }
+    }
     val protocol = args.size > 1
     if (protocol || args.single() == "stdio") configureStdioLogging()
     val factory = Class.forName("org.slf4j.LoggerFactory")

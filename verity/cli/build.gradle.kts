@@ -1,4 +1,5 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import com.github.jengelman.gradle.plugins.shadow.transformers.Log4j2PluginsCacheFileTransformer
 
 plugins {
   id("verity.kotlin-jvm")
@@ -19,8 +20,9 @@ tasks.withType<ShadowJar>().configureEach {
   exclude("module-info.class", "META-INF/versions/**/module-info.class", "META-INF/INDEX.LIST")
   isZip64 = true
   mergeServiceFiles()
-  // Let the transformers see every service descriptor and Kotlin module metadata file.
-  filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module")) {
+  transform<Log4j2PluginsCacheFileTransformer>()
+  // Preserve every binary Log4j plugin cache for merging, alongside service/module metadata.
+  filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module", "META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat")) {
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
   }
   failOnDuplicateEntries = true
@@ -110,9 +112,14 @@ val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc"
   receipt.set(layout.buildDirectory.file("reports/packaged-grpc.txt"))
 }
 
-// The device-free command regression intentionally uses its module runtime classpath.
+// Keep module regressions and separately exercise actual archives with fixture output only.
 tasks.test {
   systemProperty("verity.cli.test.classpath", sourceSets.test.get().runtimeClasspath.asPath)
+  dependsOn(hostJars)
+  val archives = files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  inputs.files(archives).withPropertyName("packagedLoggingArchives")
+  systemProperty("verity.cli.packaged.jars", archives.asPath)
+  systemProperty("verity.cli.fixture.classes", sourceSets.test.get().output.classesDirs.asPath)
 }
 
 val verifyHostJars = tasks.register<VerifyHostJars>("verifyHostJars") {
