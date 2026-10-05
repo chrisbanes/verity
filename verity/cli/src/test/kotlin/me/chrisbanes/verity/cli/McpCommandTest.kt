@@ -30,10 +30,15 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class McpCommandTest {
   @Test
-  fun `stdio command emits only real MCP frames on stdout`() = runBlocking {
+  fun `stdio command emits only real MCP frames on stdout`() = verifyStdio(false)
+
+  @Test
+  fun `actual backend error preserves real stdio protocol frames`() = verifyStdio(true)
+
+  private fun verifyStdio(injectError: Boolean) = runBlocking {
     val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-mcp-command").toFile() }
     val stderr = File(directory, "stderr.txt")
-    val process = start(directory, stderr, "stdio")
+    val process = start(directory, stderr, "stdio", injectError = injectError)
     val captured = ByteArrayOutputStream()
     val client = Client(Implementation("verity-command-regression", "1"))
     val input = object : FilterInputStream(process.inputStream) {
@@ -67,6 +72,7 @@ class McpCommandTest {
         assertThat(frame.containsKey("result") || frame.containsKey("method") || frame.containsKey("error")).isTrue()
       }
       assertThat(stderr.readText()).contains("Starting Verity MCP server (stdio)...")
+      if (injectError) assertThat(stderr.readText()).contains("Process failed with exit code 3")
     } finally {
       withContext(Dispatchers.IO) { directory.deleteRecursively() }
     }
@@ -93,10 +99,44 @@ class McpCommandTest {
     }
   }
 
-  private suspend fun start(directory: File, stderr: File, transport: String, port: Int = 0, stdout: File? = null): Process = withContext(Dispatchers.IO) {
+  @Test
+  fun `pinned backend errors route only stdio diagnostics to stderr`() = runBlocking {
+    for (mode in listOf("stdio", "http", "ordinary")) {
+      val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-log-routing").toFile() }
+      val stdout = File(directory, "stdout.txt")
+      val stderr = File(directory, "stderr.txt")
+      val process = withContext(Dispatchers.IO) {
+        ProcessBuilder(
+          File(System.getProperty("java.home"), "bin/java").path,
+          "-Xmx512m",
+          "-cp",
+          System.getProperty("verity.cli.test.classpath"),
+          "me.chrisbanes.verity.cli.McpLoggingFixture",
+          mode,
+        ).redirectOutput(stdout).redirectError(stderr).start()
+      }
+      try {
+        val exited = withContext(Dispatchers.IO) { process.waitFor(15, TimeUnit.SECONDS) }
+        assertThat(exited).isTrue()
+        assertThat(process.exitValue()).isEqualTo(0)
+        val diagnostic = if (mode == "stdio") stderr.readText() else stdout.readText()
+        val other = if (mode == "stdio") stdout.readText() else stderr.readText()
+        assertThat(diagnostic).contains("ERROR")
+        assertThat(diagnostic).contains("Process failed with exit code 3")
+        assertThat(diagnostic.contains("warning must remain below default threshold")).isFalse()
+        assertThat(other.contains("Process failed with exit code 3")).isFalse()
+        assertThat(stdout.readText()).contains("fixture-completed")
+      } finally {
+        stop(process)
+        withContext(Dispatchers.IO) { directory.deleteRecursively() }
+      }
+    }
+  }
+
+  private suspend fun start(directory: File, stderr: File, transport: String, port: Int = 0, stdout: File? = null, injectError: Boolean = false): Process = withContext(Dispatchers.IO) {
     val command = mutableListOf(
       File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m", "-cp",
-      System.getProperty("verity.cli.test.classpath"), "me.chrisbanes.verity.cli.VerityKt",
+      System.getProperty("verity.cli.test.classpath"), if (injectError) "me.chrisbanes.verity.cli.McpLoggingFixture" else "me.chrisbanes.verity.cli.VerityKt",
       "--output-path", File(directory, "output").path, "mcp", "--transport", transport,
     )
     if (transport == "http") command += listOf("--port", port.toString(), "--host", "127.0.0.1")
@@ -113,5 +153,20 @@ class McpCommandTest {
       check(process.waitFor(5, TimeUnit.SECONDS))
     }
     assertThat(process.isAlive).isFalse()
+  }
+}
+
+/** A fresh JVM exercises the actual pinned SLF4J backend, without initializing it in the test JVM. */
+object McpLoggingFixture {
+  @JvmStatic
+  fun main(args: Array<String>) {
+    val protocol = args.size > 1
+    if (protocol || args.single() == "stdio") configureStdioLogging()
+    val factory = Class.forName("org.slf4j.LoggerFactory")
+    val logger = factory.getMethod("getLogger", String::class.java).invoke(null, "maestro.device.util.CommandLineUtils")
+    val api = Class.forName("org.slf4j.Logger")
+    api.getMethod("warn", String::class.java).invoke(logger, "warning must remain below default threshold")
+    api.getMethod("error", String::class.java).invoke(logger, "Process failed with exit code 3")
+    if (protocol) me.chrisbanes.verity.cli.main(args) else println("fixture-completed")
   }
 }

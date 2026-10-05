@@ -82,14 +82,14 @@ object PackagedRuntimeProbe {
       println("PACKAGED_FACTORY_CONNECTED platform=$platform")
       withTimeout(120.seconds) {
         fun nonempty(tree: HierarchyNode): Boolean = tree.attributes.isNotEmpty() || tree.states.isNotEmpty() || tree.children.any(::nonempty)
-        check(nonempty(session.captureHierarchyTree()))
-        check(nonempty(session.captureHierarchyTree(2000.milliseconds)))
-        session.pressKey(if (platform == Platform.IOS) "return" else "BACK")
-        check(nonempty(session.captureHierarchyTree()))
+        check(nonempty(probeStage(platform, "noarg-first") { session.captureHierarchyTree() }))
+        check(nonempty(probeStage(platform, "bounded-first") { session.captureHierarchyTree(2000.milliseconds) }))
+        probeStage(platform, "key") { session.pressKey(if (platform == Platform.IOS) "return" else "BACK") }
+        check(nonempty(probeStage(platform, "noarg-after-key") { session.captureHierarchyTree() }))
         val bodyFailure = CompletableDeferred<Throwable?>()
         val capture = async(start = CoroutineStart.UNDISPATCHED) {
           try {
-            session.captureHierarchyTree(2000.milliseconds).also { bodyFailure.complete(null) }
+            probeStage(platform, "caller-cancel") { session.captureHierarchyTree(2000.milliseconds) }.also { bodyFailure.complete(null) }
           } catch (e: Throwable) {
             bodyFailure.complete(e)
             throw e
@@ -120,7 +120,7 @@ object PackagedRuntimeProbe {
           check(observed === caller || (observed is ProbeCallerCancellation && observed.cause === caller)) {
             "Expected explicit caller cancellation after entered capture: $observed"
           }
-          check(nonempty(session.captureHierarchyTree()))
+          check(nonempty(probeStage(platform, "reuse") { session.captureHierarchyTree() }))
           println("PACKAGED_FACTORY_CAPTURE_BOUNDED_KEY_CALLER_JOIN_REUSE_OK platform=$platform")
         } finally {
           withContext(NonCancellable) { capture.cancelAndJoin() }
@@ -134,3 +134,25 @@ object PackagedRuntimeProbe {
 }
 
 private class ProbeCallerCancellation : CancellationException("Packaged probe explicit caller stop")
+
+internal suspend fun <T> probeStage(
+  platform: Platform,
+  stage: String,
+  emit: (String) -> Unit = System.err::println,
+  nanoTime: () -> Long = System::nanoTime,
+  action: suspend () -> T,
+): T {
+  val started = nanoTime()
+  fun record(status: String, failure: Throwable? = null) {
+    val causes = generateSequence(failure?.cause) { it.cause }.take(4).map { it.javaClass.name }.toList()
+    val suppressed = failure?.suppressed?.take(4)?.map { it.javaClass.name }.orEmpty()
+    emit("PACKAGED_FACTORY_STAGE platform=$platform stage=$stage status=$status elapsed_nanos=${(nanoTime() - started).coerceAtLeast(0)} failure=${failure?.javaClass?.name ?: "none"} causes=${causes.joinToString(",")} suppressed=${suppressed.joinToString(",")}")
+  }
+  record("start")
+  return try {
+    action().also { record("response") }
+  } catch (failure: Throwable) {
+    record("failed", failure)
+    throw failure
+  }
+}

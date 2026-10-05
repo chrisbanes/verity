@@ -366,6 +366,8 @@ Each segment creates fresh navigator and inspector instances. Their reasoning is
 
 ## MCP Server
 
+The stdio CLI selects a dedicated Log4j console configuration before server logger initialization. SDK and server diagnostics retain their levels and text on stderr, while stdout carries MCP frames. HTTP and ordinary CLI commands retain their existing logging configuration.
+
 ### Transport
 
 - **stdio** (default) — for Claude Code / IDE integration

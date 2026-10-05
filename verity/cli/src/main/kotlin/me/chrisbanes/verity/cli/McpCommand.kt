@@ -23,7 +23,7 @@ class McpCommand : CliktCommand(name = "mcp") {
   override fun run() = runBlocking {
     // Kotlin Logging initializes lazily and its optional startup message uses stdout.
     // Reserve stdout for MCP frames before any server/config logger can initialize.
-    if (transport == "stdio") System.setProperty("kotlin-logging.logStartupMessage", "false")
+    if (transport == "stdio") configureStdioLogging()
     val parent = currentContext.parent?.command as Verity
     val config = VerityConfig.loadOrDefault(File("verity/config.yaml"))
     val requireContext = resolveRequiredContext(parent.requireContext, config)
@@ -58,4 +58,11 @@ class McpCommand : CliktCommand(name = "mcp") {
       else -> error("Unknown transport: $transport. Use 'stdio' or 'http'.")
     }
   }
+}
+
+// Select the pinned backend configuration before the first server or SDK logger initializes.
+internal fun configureStdioLogging() {
+  System.setProperty("kotlin-logging.logStartupMessage", "false")
+  val configuration = checkNotNull(McpCommand::class.java.getResource("/verity/log4j2-stdio.xml"))
+  System.setProperty("log4j.configurationFile", configuration.toExternalForm())
 }
