@@ -21,12 +21,12 @@ def result(out="", code=0, **changes):
 class HandoffTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.directory = self.root / "ownership"
         self.observer = self.root / "observer"
         self.observer.mkdir()
         env = {key: "fixture-" + key for key in H.binding.__globals__["KEYS"]}
-        env.update(ANDROID_AVD_HOME=str(self.root / "avds"), ANDROID_HOME=str(self.root / "sdk"))
+        env.update(HOME=str(self.root), ANDROID_AVD_HOME=str(self.root / ".android/avd"), ANDROID_HOME=str(self.root / "sdk"))
         self.env = patch.dict(os.environ, env)
         self.env.start()
         self.ports = patch.object(H, "free_ports")
@@ -38,6 +38,7 @@ class HandoffTest(unittest.TestCase):
         config = H.config_path()
         config.parent.mkdir(parents=True)
         config.write_text("AvdId=test\n")
+        (config.parent.parent / "test.ini").write_text("path=" + str(config.parent) + "\npath.rel=avd/test.avd\n")
         H.prelaunch(self.directory)
         pre = H.read(self.directory / "prelaunch.json")
         pre["beforeLaunchUnix"] = time.time() - 2
@@ -103,12 +104,12 @@ class HandoffTest(unittest.TestCase):
                 self.guard()
             self.save(self.directory / "prepared.json", original)
 
-    def test_occupied_port_and_stale_avd_refuse_prelaunch(self):
+    def test_occupied_port_and_missing_avd_refuse_prelaunch(self):
         (self.directory / "prelaunch.json").unlink()
         with patch.object(H, "free_ports", side_effect=OSError("occupied")), self.assertRaises(OSError):
             H.prelaunch(self.directory)
-        os.utime(H.config_path(), (1, 1))
-        with self.assertRaisesRegex(RuntimeError, "freshly"):
+        H.config_path().parent.rename(self.root / "removed-avd")
+        with self.assertRaises(FileNotFoundError):
             H.prelaunch(self.directory)
 
     def test_console_collision_foreign_argv_and_incomplete_listener_inventory_refuse(self):
@@ -186,6 +187,161 @@ class HandoffTest(unittest.TestCase):
             capture.assert_not_called()
         with patch.object(H, "capture", return_value=result(code=1)), self.assertRaises(RuntimeError):
             H.checked(["offline"], time.monotonic() - 1)
+
+    def test_config_rewrite_touch_and_atomic_replacement_keep_directory_ownership(self):
+        before = H.read(self.directory / "prelaunch.json")
+        config = H.config_path()
+        for mutation in ("rewrite", "touch", "replace"):
+            with self.subTest(mutation=mutation):
+                if mutation == "rewrite":
+                    config.write_text("AvdId=test\nhw.ramSize=2048\n")
+                elif mutation == "touch":
+                    os.utime(config, (1, 1))
+                else:
+                    replacement = config.with_name("config-new.ini")
+                    replacement.write_text("AvdId=test\nupdated=yes\n")
+                    replacement.replace(config)
+                self.active()
+                active = H.read(self.directory / "active.json")
+                self.assertEqual(active["prelaunch"]["avdDirectory"], before["avdDirectory"])
+                self.assertEqual(active["prelaunch"]["config"], before["config"])
+                self.assertNotEqual(active["configAfter"], before["config"])
+                self.guard()
+                self.assertTrue(H.read(self.directory / "handoff.json")["iosMayStart"])
+                (self.directory / "active.json").unlink()
+                (self.directory / "handoff.json").unlink()
+
+    def test_preexisting_directory_descriptor_and_symlink_refuse_prepare(self):
+        home = self.root / "other-home/.android/avd"
+        home.mkdir(parents=True)
+        with patch.dict(os.environ, HOME=str(self.root / "other-home"), ANDROID_AVD_HOME=str(home)), patch.object(H.platform, "system", return_value="Darwin"), patch.object(H.platform, "machine", return_value="arm64"):
+            target = home / "test.avd"
+            target.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                H.prepare(self.root / "preexisting-directory")
+            target.rmdir()
+            descriptor = home / "test.ini"
+            descriptor.write_text("owned elsewhere")
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                H.prepare(self.root / "preexisting-descriptor")
+            descriptor.unlink()
+            target.symlink_to(home / "missing")
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                H.prepare(self.root / "preexisting-symlink")
+        self.assertFalse((self.root / "preexisting-directory").exists())
+        self.assertFalse((self.root / "preexisting-descriptor").exists())
+        self.assertFalse((self.root / "preexisting-symlink").exists())
+
+    def test_pinned_home_prepare_without_export_then_export_must_match(self):
+        fresh_home = self.root / "fresh-home"
+        ownership = self.root / "fresh-ownership"
+        with patch.dict(os.environ, HOME=str(fresh_home)), patch.object(H.platform, "system", return_value="Darwin"), patch.object(H.platform, "machine", return_value="arm64"):
+            with patch.dict(os.environ) as env:
+                env.pop("ANDROID_AVD_HOME", None)
+                H.prepare(ownership)
+            prepared = H.read(ownership / "prepared.json")
+            home = fresh_home / ".android/avd"
+            self.assertEqual(prepared["avdHome"], H.directory_identity(home))
+            self.assertFalse((home / "test.avd").exists())
+            self.assertFalse((home / "test.ini").exists())
+            with patch.dict(os.environ, ANDROID_AVD_HOME=str(home)):
+                (home / "test.avd").mkdir()
+                (home / "test.avd/config.ini").write_text("AvdId=test\n")
+                (home / "test.ini").write_text("path=" + str(home / "test.avd") + "\n")
+                H.prelaunch(ownership)
+            (ownership / "prelaunch.json").unlink()
+            with patch.dict(os.environ, ANDROID_AVD_HOME=str(self.root / ".android/avd")), self.assertRaisesRegex(RuntimeError, "parent/namespace"):
+                H.prelaunch(ownership)
+            self.assertFalse((ownership / "prelaunch.json").exists())
+
+    def test_directory_replacement_and_symlink_refuse_active_and_postaction(self):
+        self.active()
+        target = H.config_path().parent
+        saved = self.root / "saved-avd"
+        target.rename(saved)
+        target.mkdir()
+        (target / "config.ini").write_bytes((saved / "config.ini").read_bytes())
+        with self.assertRaisesRegex(RuntimeError, "directory identity"):
+            self.guard()
+        with self.assertRaisesRegex(RuntimeError, "directory identity"):
+            self.active()
+        (target / "config.ini").unlink()
+        target.rmdir()
+        target.symlink_to(saved)
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            self.guard()
+        self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_parent_replacement_repoint_and_ambiguous_paths_refuse(self):
+        home = H.config_path().parent.parent
+        home.rename(self.root / "saved-home")
+        home.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "parent/namespace"):
+            self.active()
+        for configured in (self.root / "saved-home", home / ".." / "saved-home", Path("relative")):
+            with patch.dict(os.environ, ANDROID_AVD_HOME=str(configured)), self.assertRaises(RuntimeError):
+                self.active()
+        home.rmdir()
+        home.symlink_to(self.root / "saved-home")
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            self.active()
+
+    def test_mutated_config_cannot_bypass_process_observer_or_cancel_refusal(self):
+        H.config_path().write_text("mutable=yes\n")
+        with self.assertRaises(RuntimeError):
+            self.active([result("431\n"), result(self.ps.replace("-avd test", "-avd foreign"))])
+        with self.assertRaises(RuntimeError):
+            self.active([result("431\n432\n")])
+        self.active()
+        with self.assertRaises(RuntimeError):
+            self.guard(result(self.ps), deadline=time.monotonic() + .1)
+        with self.assertRaises(RuntimeError):
+            self.guard(result(self.ps.replace("-port 5554", "-port 5556")))
+        with self.assertRaises(RuntimeError):
+            self.guard(cancelled=True)
+        with patch.object(H, "closed_ports", side_effect=RuntimeError("live port")), self.assertRaises(RuntimeError):
+            self.guard()
+        self.save(self.observer / "joined.json", {"token": self.control["token"], "pid": self.control["pid"], "observerExited": False})
+        with self.assertRaises(RuntimeError):
+            self.guard()
+        self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_descriptor_both_orderings_bind_same_target_and_mutable_fields_allowed(self):
+        home, target, descriptor = H.avd_paths()
+        for extra in ("", "path.rel=avd/test.avd\n", "target=android-30\npath.rel=avd/test.avd\n"):
+            descriptor.write_text("path=" + str(target) + "\n" + extra)
+            self.active()
+            self.guard()
+            (self.directory / "active.json").unlink()
+            (self.directory / "handoff.json").unlink()
+
+    def test_descriptor_duplicate_foreign_relative_missing_and_symlink_refuse(self):
+        home, target, descriptor = H.avd_paths()
+        original = descriptor.read_text()
+        variants = ["path=" + str(target) + "\npath=" + str(target) + "\n",
+                    "path=" + str(target) + "\npath.rel=avd/foreign.avd\n",
+                    "path=" + str(target) + "\npath.rel=avd/test.avd\npath.rel=avd/test.avd\n",
+                    "path=" + str(target) + "\npath.rel=../avd/test.avd\n",
+                    "path=" + str(target) + "\npath.rel=" + str(target) + "\n",
+                    "path=" + str(self.root) + "\n", "path.rel=avd/test.avd\n", "x" * (H.CAP + 1)]
+        for text in variants:
+            descriptor.write_text(text)
+            with self.assertRaises(RuntimeError):
+                self.active()
+        descriptor.write_text(original)
+        self.active()
+        descriptor.write_text("path=" + str(target) + "\npath.rel=avd/foreign.avd\n")
+        with self.assertRaises(RuntimeError):
+            self.guard()
+        descriptor.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.guard()
+        saved = home / "saved.ini"
+        saved.write_text(original)
+        descriptor.symlink_to(saved)
+        with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
+            self.guard()
+        self.assertFalse((self.directory / "handoff.json").exists())
 
     def test_workflow_preserves_failure_and_sequential_guard(self):
         source = Path(__file__).parents[1] / ".github/workflows/ci.yml"

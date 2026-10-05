@@ -7,6 +7,7 @@ import re
 import shlex
 import signal
 import socket
+import stat
 import sys
 import time
 import uuid
@@ -89,8 +90,56 @@ def closed_ports(ports, deadline):
                     raise RuntimeError("Unknown port reachability") from failure
                 raise RuntimeError("Owned port is still reachable")
 
+def avd_paths(preparing=False):
+    home = Path(os.environ["HOME"]) / ".android" / "avd" if preparing else Path(os.environ["ANDROID_AVD_HOME"])
+    if not home.is_absolute() or ".." in home.parts or any(p.is_symlink() for p in (home, *home.parents)) or home.resolve() != home:
+        raise RuntimeError("Ambiguous configured AVD parent")
+    return home, home / "test.avd", home / "test.ini"
+
+
 def config_path():
-    return Path(os.environ["ANDROID_AVD_HOME"]) / "test.avd" / "config.ini"
+    return avd_paths()[1] / "config.ini"
+
+
+def directory_identity(path):
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or path.resolve() != path:
+        raise RuntimeError("Ambiguous AVD directory")
+    return {"path": str(path), "device": info.st_dev, "inode": info.st_ino,
+            "birthUnix": getattr(info, "st_birthtime", None)}
+
+
+def descriptor_directory(home, target, descriptor):
+    if not stat.S_ISREG(descriptor.lstat().st_mode):
+        raise RuntimeError("Ambiguous AVD descriptor")
+    with descriptor.open("rb") as stream:
+        data = stream.read(CAP + 1)
+    if len(data) > CAP:
+        raise RuntimeError("Oversized AVD descriptor")
+    values = {"path": [], "path.rel": []}
+    for line in data.decode("utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() in values:
+            values[key.strip()].append(value.strip())
+    if len(values["path"]) != 1 or len(values["path.rel"]) > 1:
+        raise RuntimeError("Missing or duplicate AVD descriptor path")
+    absolute = Path(values["path"][0])
+    if not absolute.is_absolute() or absolute != target or absolute.resolve() != target:
+        raise RuntimeError("AVD descriptor points outside owned directory")
+    if values["path.rel"]:
+        relative = Path(values["path.rel"][0])
+        candidate = home.parent / relative
+        if not values["path.rel"][0] or relative.is_absolute() or ".." in relative.parts or any(p.is_symlink() for p in (candidate, *candidate.parents)) or candidate.resolve() != target:
+            raise RuntimeError("Relative AVD descriptor points outside owned directory")
+
+
+def owned_directory(seed):
+    home, target, descriptor = avd_paths()
+    if directory_identity(home) != seed["avdHome"] or str(target) != seed["avdDirectoryPath"] or str(descriptor) != seed["avdDescriptorPath"] or seed.get("avdTargetAbsent") is not True:
+        raise RuntimeError("Configured AVD parent/namespace identity changed")
+    identity = directory_identity(target)
+    descriptor_directory(home, target, descriptor)
+    return identity
 
 
 def config_identity(path):
@@ -120,10 +169,17 @@ def load(directory, name):
 def prepare(directory):
     if platform.system() != "Darwin" or platform.machine() not in ("arm64", "aarch64"):
         raise RuntimeError("Matching Mac ARM host required")
+    home, target, descriptor = avd_paths(preparing=True)
+    home.mkdir(parents=True, exist_ok=True)
+    parent = directory_identity(home)
+    if target.exists() or target.is_symlink() or descriptor.exists() or descriptor.is_symlink():
+        raise RuntimeError("AVD directory or descriptor already exists before preparation")
     directory.mkdir(parents=True, exist_ok=False)
     free_ports(PORTS)
     write(directory / "prepared.json", {**context(), "nonce": uuid.uuid4().hex,
-                                       "startedUnix": time.time(), "declaredPorts": list(PORTS)})
+                                       "startedUnix": time.time(), "declaredPorts": list(PORTS),
+                                       "avdHome": parent, "avdDirectoryPath": str(target),
+                                       "avdDescriptorPath": str(descriptor), "avdTargetAbsent": True})
 
 
 def prelaunch(directory):
@@ -131,10 +187,10 @@ def prelaunch(directory):
     if any(seed.get(k) != v for k, v in context().items()):
         raise RuntimeError("Prelaunch binding mismatch")
     free_ports(PORTS)
+    identity = owned_directory(seed)
     config = config_identity(config_path())
-    if not seed["startedUnix"] <= config["mtimeNs"] / 1e9 <= time.time():
-        raise RuntimeError("AVD was not freshly created after preparation")
-    write(directory / "prelaunch.json", {"prepared": seed, "config": config, "beforeLaunchUnix": time.time()})
+    write(directory / "prelaunch.json", {"prepared": seed, "avdDirectory": identity,
+                                        "config": config, "beforeLaunchUnix": time.time()})
 
 
 def process_identity(pid, deadline):
@@ -154,8 +210,9 @@ def process_identity(pid, deadline):
 
 def active(directory, observer_directory, deadline):
     seed, pre = load(directory, "prelaunch.json")
-    if config_identity(config_path()) != pre["config"]:
-        raise RuntimeError("AVD configuration identity changed before active collection")
+    if owned_directory(seed) != pre["avdDirectory"]:
+        raise RuntimeError("AVD directory identity changed before active collection")
+    config = config_identity(config_path())  # Audit mutable SDK configuration; directory identity is ownership.
     control = read(observer_directory / "control.json")
     if control["binding"] != seed["binding"] or control["scriptSha256"] != seed["observerSourceSha256"] or control["serial"] != SERIAL or control["avd"] != AVD:
         raise RuntimeError("Observer binding mismatch")
@@ -191,7 +248,8 @@ def active(directory, observer_directory, deadline):
     if time.monotonic() >= deadline:
         raise RuntimeError("Identity collection deadline expired")
     write(directory / "active.json", {"prepared": seed, "prelaunch": pre, "observer": control,
-                                      "process": identity, "listenerPorts": owned, "observedUnix": time.time()})
+                                      "process": identity, "listenerPorts": owned, "configAfter": config,
+                                      "observedUnix": time.time()})
 
 
 def guard(directory, observer_directory, outcomes, cancelled, deadline):
@@ -201,6 +259,8 @@ def guard(directory, observer_directory, outcomes, cancelled, deadline):
     _, pre = load(directory, "prelaunch.json")
     if active_record["prelaunch"] != pre:
         raise RuntimeError("Stale launch identity")
+    if owned_directory(seed) != pre["avdDirectory"]:
+        raise RuntimeError("AVD directory identity changed before handoff")
     control = read(observer_directory / "control.json")
     if active_record["observer"] != control:
         raise RuntimeError("Observer identity changed")
