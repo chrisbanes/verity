@@ -719,12 +719,18 @@ class PackagedJourneyFixtureTest {
   }
 
   @Test
-  fun `iOS fixture uses actual General visibility after implicit launch without any model`() = runTest {
+  fun `iOS fixture scrolls natively and synchronizes before actual General visibility without models`() = runTest {
     for (visible in listOf(true, false)) {
       val fake = FakeDeviceSession(platform = Platform.IOS)
       val events = mutableListOf<String>()
+      val scroll = Interaction.Scroll(Direction.DOWN)
       val session = object : DeviceSession by fake {
-        override suspend fun executeActions(flow: ActionFlow) = fake.executeActions(flow).also { events += "launch" }
+        override suspend fun executeActions(flow: ActionFlow) = fake.executeActions(flow).also {
+          events += if (flow.actions.contains(scroll)) "scroll" else "launch"
+        }
+        override suspend fun waitForAnimationToEnd() {
+          events += "animation-wait"
+        }
         override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
           events += "capture"
           return HierarchyNode(attributes = if (visible) mapOf("text" to "General") else emptyMap()).containsText(text, ignoreCase)
@@ -736,8 +742,10 @@ class PackagedJourneyFixtureTest {
         inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("iOS fixture must not use inspector") }, evaluateVisualContent = { _, _, _, _ -> error("iOS fixture must not use visual model") }) },
       ).run(JourneyLoader.fromYaml(packagedJourney(Platform.IOS)))
       assertThat(result.passed).isEqualTo(visible)
-      assertThat(events).isEqualTo(listOf("launch", "capture"))
-      assertThat(fake.executedActionFlows.flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp()))
+      assertThat(events).isEqualTo(listOf("launch", "scroll", "animation-wait", "capture"))
+      assertThat(fake.executedActionFlows.flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp(), scroll))
+      assertThat(result.segments.single().actions).isEqualTo(listOf("Scroll down"))
+      assertThat(result.segments.single().assertionDescription).isEqualTo("General")
     }
   }
 
