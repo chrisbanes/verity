@@ -29,12 +29,24 @@ def read(path, limit=CAP):
     return json.loads(data)
 
 
-def write(path, value):
+def checkpoint(deadline, cancel):
+    if cancel() or deadline is not None and time.monotonic() >= deadline:
+        raise RuntimeError("Ownership collection stopped or deadline expired")
+
+
+def write(path, value, deadline=None, cancel=lambda: False):
+    checkpoint(deadline, cancel)
     data = (json.dumps(value) + "\n").encode()
     if len(data) > CAP or path.exists():
         raise RuntimeError("Duplicate or oversized handoff publication")
-    with path.open("xb") as stream:
-        stream.write(data)
+    stream = path.open("xb")
+    try:
+        with stream:
+            stream.write(data)
+        checkpoint(deadline, cancel)
+    except BaseException:
+        path.unlink()  # Only this invocation's exclusive publication, never an older receipt.
+        raise
 
 
 def context():
@@ -57,11 +69,14 @@ def checked_result(result, deadline):
 
 
 
-def checked(argv, deadline):
-    return checked_result(capture(argv, deadline=deadline, limit=CAP), deadline)
+def checked(argv, deadline, cancel=lambda: False):
+    checkpoint(deadline, cancel)
+    result = capture(argv, cancel=cancel, deadline=deadline, limit=CAP)
+    checkpoint(deadline, cancel)
+    return checked_result(result, deadline)
 
 
-def listener_observation(directory, seed, pid, result):
+def listener_observation(directory, seed, pid, result, prefix="", deadline=None, cancel=lambda: False):
     fields, unknown, recognized = [], [], 0
     rows = result["stdout"].splitlines()
     for row in rows:
@@ -80,13 +95,13 @@ def listener_observation(directory, seed, pid, result):
     stderr = result["stderr"].encode()
     unknown_data = "\n".join(unknown).encode()
     dropped = recognized - len(fields)
-    write(directory / "listener-observation.json", {"binding": seed["binding"], "sourceSha256": seed["sourceSha256"],
+    write(directory / (prefix + "listener-observation.json"), {"binding": seed["binding"], "sourceSha256": seed["sourceSha256"],
         "nonce": seed["nonce"], "serial": SERIAL, "avd": AVD, "pid": pid, "provisional": True,
         "status": {key: result[key] for key in ("outcome", "exit", "seconds", "joined", "truncated", "droppedBytes")},
         "rowCount": len(rows), "fields": fields, "droppedStructuredRows": dropped,
         "unknownRowCount": len(unknown), "unknownBytes": len(unknown_data),
         "unknownSha256": hashlib.sha256(unknown_data).hexdigest(),
-        "stderrRowCount": len(stderr.splitlines()), "stderrBytes": len(stderr), "stderrSha256": hashlib.sha256(stderr).hexdigest()})
+        "stderrRowCount": len(stderr.splitlines()), "stderrBytes": len(stderr), "stderrSha256": hashlib.sha256(stderr).hexdigest()}, deadline, cancel)
     if dropped:
         raise RuntimeError("Truncated listener observation")
 
@@ -273,10 +288,10 @@ def prelaunch(directory):
                                         "config": config, "sdkExecutables": sdk_registration(), "beforeLaunchUnix": time.time()})
 
 
-def process_identity(pid, deadline):
+def process_identity(pid, deadline, cancel=lambda: False):
     if type(pid) is not int or not 1 <= pid <= 2147483647:
         raise RuntimeError("Invalid recorded process PID")
-    row = checked(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="], deadline)
+    row = checked(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="], deadline, cancel)
     if row["exit"] == 1 and not row["stdout"].strip() and not row["stderr"].strip():
         return None
     if row["exit"] != 0 or row["stderr"].strip() or len(row["stdout"].splitlines()) != 1:
@@ -288,7 +303,8 @@ def process_identity(pid, deadline):
     return {"pid": pid, "started": match[1], "argv": shlex.split(match[2])}
 
 
-def active(directory, observer_directory, deadline):
+def collect_active(directory, observer_directory, deadline, cancel=lambda: False, prefix=""):
+    checkpoint(deadline, cancel)
     seed, pre = load(directory, "prelaunch.json")
     if owned_directory(seed) != pre["avdDirectory"]:
         raise RuntimeError("AVD directory identity changed before active collection")
@@ -296,14 +312,17 @@ def active(directory, observer_directory, deadline):
     control = read(observer_directory / "control.json")
     if control["binding"] != seed["binding"] or control["scriptSha256"] != seed["observerSourceSha256"] or control["serial"] != SERIAL or control["avd"] != AVD:
         raise RuntimeError("Observer binding mismatch")
-    listener = checked(["lsof", "-nP", "-t", "-iTCP:5554", "-sTCP:LISTEN"], deadline)
+    checkpoint(deadline, cancel)
+    if "ownership" in control and control["ownership"] != ownership_binding(directory):
+        raise RuntimeError("Observer ownership directory mismatch")
+    listener = checked(["lsof", "-nP", "-t", "-iTCP:5554", "-sTCP:LISTEN"], deadline, cancel)
     values = listener["stdout"].splitlines()
     if listener["exit"] != 0 or listener["stderr"].strip() or len(values) != 1 or not re.fullmatch(r"[1-9][0-9]{0,9}", values[0]):
         raise RuntimeError("Missing or ambiguous console listener")
     pid = int(values[0])
     if pid > 2147483647:
         raise RuntimeError("Invalid owned PID")
-    identity = process_identity(pid, deadline)
+    identity = process_identity(pid, deadline, cancel)
     if identity is None:
         raise RuntimeError("Emulator exited before identity collection")
     argv = identity["argv"]
@@ -320,11 +339,12 @@ def active(directory, observer_directory, deadline):
               "exactAllowedPath": str(executable) in [str(sdk / relative) for relative in SDK_EXECUTABLES],
               "registeredFile": str(executable) in [row["path"] for row in pre["sdkExecutables"]["files"]],
               "registrationUnchanged": registered == pre["sdkExecutables"]}
-    write(directory / "process-observation.json", {"binding": seed["binding"], "sourceSha256": seed["sourceSha256"],
+    checkpoint(deadline, cancel)
+    write(directory / (prefix + "process-observation.json"), {"binding": seed["binding"], "sourceSha256": seed["sourceSha256"],
         "nonce": seed["nonce"], "serial": SERIAL, "avd": AVD, "provisional": True,
         "pid": pid, "started": identity["started"], "rawExecutablePath": str(raw_executable),
         "executablePath": str(executable), "expectedSdk": str(sdk),
-        "checks": checks})
+        "checks": checks}, deadline, cancel)
     if not all(checks.values()):
         raise RuntimeError("Console listener is not an unchanged registered SDK executable")
     if argv.count("-avd") != 1 or argv[argv.index("-avd") + 1] != AVD or argv.count("-port") != 1 or argv[argv.index("-port") + 1] != "5554":
@@ -332,17 +352,82 @@ def active(directory, observer_directory, deadline):
     started = time.mktime(time.strptime(identity["started"], "%a %b %d %H:%M:%S %Y"))
     if started < int(pre["beforeLaunchUnix"]) or started > time.time():
         raise RuntimeError("Process predates owned launch")
-    ports = capture(["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], deadline=deadline, limit=CAP)
-    listener_observation(directory, seed, pid, ports)
+    ports = capture(["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], cancel=cancel, deadline=deadline, limit=CAP)
+    checkpoint(deadline, cancel)
+    listener_observation(directory, seed, pid, ports, prefix, deadline, cancel)
     checked_result(ports, deadline)
     if ports["exit"] != 0 or ports["stderr"].strip():
         raise RuntimeError("Unknown owned listener inventory status")
     owned = listener_ports(ports["stdout"], pid)
     if time.monotonic() >= deadline:
         raise RuntimeError("Identity collection deadline expired")
-    write(directory / "active.json", {"prepared": seed, "prelaunch": pre, "observer": control,
-                                      "process": identity, "listenerPorts": owned, "configAfter": config,
-                                      "observedUnix": time.time()})
+    checkpoint(deadline, cancel)
+    return {"prepared": seed, "prelaunch": pre, "observer": control,
+            "process": identity, "listenerPorts": owned, "configAfter": config,
+            "observedUnix": time.time()}
+
+
+def receipt_hash(path):
+    with path.open("rb") as stream:
+        data = stream.read(CAP + 1)
+    if len(data) > CAP:
+        raise RuntimeError("Oversized handoff identity hash")
+    return hashlib.sha256(data).hexdigest()
+
+
+def active(directory, observer_directory, deadline, cancel=lambda: False, early=False):
+    checkpoint(deadline, cancel)
+    seed, pre = load(directory, "prelaunch.json")
+    if owned_directory(seed) != pre["avdDirectory"]:
+        raise RuntimeError("AVD directory identity changed before active collection")
+    checkpoint(deadline, cancel)
+    if not early and (directory / "active.json").exists():
+        seed, original = load(directory, "active.json")
+        if original.get("phase") != "early":
+            raise RuntimeError("Duplicate postboot active collection")
+        original_hash = receipt_hash(directory / "active.json")
+        current = collect_active(directory, observer_directory, deadline, cancel, "revalidated-")
+        if any(current[key] != original[key] for key in ("prepared", "prelaunch", "observer", "process")):
+            raise RuntimeError("Early emulator identity changed before postboot revalidation")
+        if receipt_hash(directory / "active.json") != original_hash:
+            raise RuntimeError("Early receipt changed during postboot revalidation")
+        current["phase"] = "postboot-revalidation"
+        current["activeSha256"] = original_hash
+        write(directory / "revalidated.json", current, deadline, cancel)
+    else:
+        current = collect_active(directory, observer_directory, deadline, cancel, "early-" if early else "")
+        current["phase"] = "early" if early else "postboot"
+        write(directory / "active.json", current, deadline, cancel)
+
+
+def ownership_binding(directory):
+    if not directory.is_absolute() or directory.resolve() != directory or directory.is_symlink():
+        raise RuntimeError("Ambiguous ownership directory")
+    seed, _ = load(directory, "prelaunch.json")
+    return {"directory": str(directory), "nonce": seed["nonce"], "sourceSha256": seed["sourceSha256"]}
+
+
+def early_ownership(directory, observer_directory, expected, state, deadline, cancel):
+    checkpoint(deadline, cancel)
+    if ownership_binding(directory) != expected:
+        raise RuntimeError("Early ownership binding mismatch")
+    if state.get("attempted"):
+        return
+    listener = checked(["lsof", "-nP", "-t", "-iTCP:5554", "-sTCP:LISTEN"], deadline, cancel)
+    if listener["exit"] == 1 and not listener["stdout"].strip() and not listener["stderr"].strip():
+        state["status"] = "pending-console"
+        return
+    values = listener["stdout"].splitlines()
+    if listener["exit"] != 0 or listener["stderr"].strip() or len(values) != 1 or not re.fullmatch(r"[1-9][0-9]{0,9}", values[0]) or int(values[0]) > 2147483647:
+        raise RuntimeError("Unknown early console readiness")
+    state["attempted"] = True
+    try:
+        active(directory, observer_directory, min(deadline, time.monotonic() + 28), cancel, early=True)
+        state["status"] = "complete"
+    except Exception as failure:
+        state["status"] = "failed"
+        state["failureType"] = type(failure).__name__
+        checkpoint(deadline, cancel)
 
 
 def guard(directory, observer_directory, outcomes, cancelled, deadline):
@@ -371,6 +456,12 @@ def guard(directory, observer_directory, outcomes, cancelled, deadline):
     report = read(observer_directory / "report.json", 262144)
     if report.get("binding") != control or report.get("target") != {"serial": SERIAL, "avd": AVD} or report.get("truncated") is not False or report.get("droppedSnapshots") != 0 or report.get("droppedSnapshotBytes") != 0:
         raise RuntimeError("Unknown or truncated observer ownership report")
+    ports = set(active_record["listenerPorts"])
+    if (directory / "revalidated.json").exists():
+        _, revalidated = load(directory, "revalidated.json")
+        if active_record.get("phase") != "early" or revalidated.get("phase") != "postboot-revalidation" or revalidated.get("activeSha256") != receipt_hash(directory / "active.json") or any(revalidated.get(key) != active_record[key] for key in ("prelaunch", "observer", "process")):
+            raise RuntimeError("Invalid postboot revalidation")
+        ports.update(revalidated["listenerPorts"])
     original = active_record["process"]
     while True:
         current = process_identity(original["pid"], deadline)
@@ -381,10 +472,10 @@ def guard(directory, observer_directory, outcomes, cancelled, deadline):
         if time.monotonic() + .2 >= deadline:
             raise RuntimeError("Owned emulator still live at handoff deadline")
         time.sleep(.2)
-    closed_ports(active_record["listenerPorts"], deadline)
+    closed_ports(sorted(ports), deadline)
     if time.monotonic() >= deadline:
         raise RuntimeError("Port inspection exceeded handoff deadline")
-    write(directory / "handoff.json", {"prepared": seed, "processExited": True, "portsClosed": active_record["listenerPorts"],
+    write(directory / "handoff.json", {"prepared": seed, "processExited": True, "portsClosed": sorted(ports),
                                       "observerJoined": expected, "androidOutcome": outcomes["android"], "iosMayStart": True})
 
 

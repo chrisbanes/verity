@@ -78,6 +78,143 @@ class HandoffTest(unittest.TestCase):
             H.guard(self.directory, self.observer, kwargs.get("outcomes", OUTCOMES), kwargs.get("cancelled", False), kwargs.get("deadline", time.monotonic() + 28))
             return capture
 
+    def ownership(self):
+        bound = H.ownership_binding(self.directory)
+        self.control["ownership"] = bound
+        self.save(self.observer / "control.json", self.control)
+        report = H.read(self.observer / "report.json", 262144)
+        report["binding"] = self.control
+        self.save(self.observer / "report.json", report)
+        return bound
+
+    def early(self, state, replies=None, cancel=lambda: False, deadline=None):
+        with patch.object(H, "capture", side_effect=replies or [result("431\n"), result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\nf4\nn127.0.0.1:5555\n")]) as capture:
+            H.early_ownership(self.directory, self.observer, self.ownership(), state,
+                              deadline or time.monotonic() + 28, cancel)
+            return capture
+
+    def test_complete_early_identity_allows_preunlock_failure_exit_guard(self):
+        state = {}
+        self.early(state)
+        self.assertEqual(state, {"attempted": True, "status": "complete"})
+        self.assertEqual(H.read(self.directory / "active.json")["phase"], "early")
+        self.assertTrue((self.directory / "early-listener-observation.json").exists())
+        self.assertFalse((self.directory / "listener-observation.json").exists())
+        self.guard()
+        self.assertEqual(H.read(self.directory / "handoff.json")["portsClosed"], [5554, 5555])
+
+    def test_early_pending_only_until_console_and_full_attempt_never_retried(self):
+        state = {}
+        self.early(state, [result(code=1)])
+        self.assertEqual(state, {"status": "pending-console"})
+        self.early(state, [result("431\n"), result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\n")])
+        self.assertEqual(state["status"], "failed")
+        self.assertTrue(state["attempted"])
+        self.assertFalse((self.directory / "active.json").exists())
+        self.assertEqual(self.early(state, []).call_count, 0)
+        self.active()  # Failed early diagnostics never poison the distinct original postboot path.
+        self.guard()
+
+    def test_unknown_early_console_refuses_without_full_identity_attempt(self):
+        for reply in (result("431\n432\n"), result("431\n", stderr="unknown"), result("431\n", truncated=True), result("431\n", joined=False)):
+            state = {}
+            with self.assertRaises(RuntimeError):
+                self.early(state, [reply])
+            self.assertFalse(state.get("attempted", False))
+            self.assertFalse((self.directory / "active.json").exists())
+
+    def test_early_cancel_during_each_command_no_later_probe_or_active(self):
+        for stop_at in (1, 2, 3, 4):
+            for name in ("early-process-observation.json", "early-listener-observation.json"):
+                (self.directory / name).unlink(missing_ok=True)
+            stopped = [False]
+            replies = [result("431\n"), result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\nf4\nn*:5555\n")]
+            def command(*args, **kwargs):
+                self.assertIn("cancel", kwargs)
+                answer = replies.pop(0)
+                if 4 - len(replies) == stop_at:
+                    stopped[0] = True
+                return answer
+            bound = self.ownership()
+            with patch.object(H, "capture", side_effect=command) as capture, self.assertRaises(RuntimeError):
+                H.early_ownership(self.directory, self.observer, bound, {}, time.monotonic() + 28, lambda: stopped[0])
+            self.assertEqual(capture.call_count, stop_at)
+            self.assertFalse((self.directory / "active.json").exists())
+
+    def test_cancelled_exclusive_publication_removed_but_old_receipt_preserved(self):
+        path = self.directory / "publication.json"
+        with self.assertRaises(RuntimeError):
+            H.write(path, {"proof": True}, time.monotonic() + 1, lambda: path.exists())
+        self.assertFalse(path.exists())
+        H.write(path, {"old": True})
+        with self.assertRaises(RuntimeError):
+            H.write(path, {"new": True})
+        self.assertEqual(H.read(path), {"old": True})
+
+    def test_early_source_binding_stop_and_deadline_before_probe(self):
+        bound = self.ownership()
+        for expected, cancel, deadline in (({**bound, "nonce": "stale"}, lambda: False, time.monotonic()+28),
+                                            (bound, lambda: True, time.monotonic()+28),
+                                            (bound, lambda: False, time.monotonic()-1)):
+            with patch.object(H, "capture") as capture, self.assertRaises(RuntimeError):
+                H.early_ownership(self.directory, self.observer, expected, {}, deadline, cancel)
+            capture.assert_not_called()
+
+    def test_postboot_full_revalidation_preserves_early_hash_and_union(self):
+        self.early({})
+        original = (self.directory / "active.json").read_bytes()
+        self.active()
+        self.assertEqual((self.directory / "active.json").read_bytes(), original)
+        row = H.read(self.directory / "revalidated.json")
+        self.assertEqual(row["activeSha256"], H.hashlib.sha256(original).hexdigest())
+        self.assertEqual(row["listenerPorts"], [5554, 5555, 8554])
+        self.guard()
+        self.assertEqual(H.read(self.directory / "handoff.json")["portsClosed"], [5554, 5555, 8554])
+
+    def test_postboot_exited_or_reused_pid_never_revalidated(self):
+        self.early({})
+        for reply in (result(code=1), result(self.ps.replace(" -qemu", " -changed -qemu"))):
+            for name in ("revalidated-process-observation.json", "revalidated-listener-observation.json"):
+                (self.directory / name).unlink(missing_ok=True)
+            with self.assertRaises(RuntimeError):
+                self.active([result("431\n"), reply, result("p431\nf3\nn*:5554\nf4\nn*:5555\n")])
+            self.assertFalse((self.directory / "revalidated.json").exists())
+
+    def test_early_composite_deadline_is_minimum_of_observer_and_28_seconds(self):
+        bound = self.ownership()
+        for remaining in (10, 600):
+            started = time.monotonic()
+            end = started + remaining
+            with patch.object(H, "capture", return_value=result("431\n")), patch.object(H, "active") as active:
+                H.early_ownership(self.directory, self.observer, bound, {}, end, lambda: False)
+            supplied = active.call_args.args[2]
+            self.assertLessEqual(supplied, end)
+            self.assertLessEqual(supplied - started, 28.1)
+            self.assertTrue(active.call_args.kwargs["early"])
+
+    def test_mutated_early_receipt_during_revalidation_never_publishes_authority(self):
+        self.early({})
+        row = H.read(self.directory / "active.json")
+        original_collect = H.collect_active
+        def collect(*args, **kwargs):
+            value = original_collect(*args, **kwargs)
+            self.save(self.directory / "active.json", {**row, "observedUnix": row["observedUnix"] + 1})
+            return value
+        with patch.object(H, "collect_active", side_effect=collect), self.assertRaisesRegex(RuntimeError, "receipt changed"):
+            self.active()
+        self.assertFalse((self.directory / "revalidated.json").exists())
+
+    def test_guard_revalidation_hash_and_identity_binding_refuse(self):
+        self.early({})
+        self.active()
+        original = H.read(self.directory / "revalidated.json")
+        for field in ("activeSha256", "process", "observer", "phase"):
+            self.save(self.directory / "revalidated.json", {**original, field: "stale"})
+            with self.assertRaises(RuntimeError):
+                self.guard()
+            self.assertFalse((self.directory / "handoff.json").exists())
+        self.save(self.directory / "revalidated.json", original)
+
     def test_failed_android_still_allows_only_proven_exit_and_all_owned_ports(self):
         self.active()
         self.guard()

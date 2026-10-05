@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -448,6 +449,60 @@ class DiagnosticsTest(unittest.TestCase):
                 control[key] = replacement
                 self.assertEqual(D.observe(self.directory, control, inventory=lambda *_: self.fail("probe with invalid binding")), 1)
                 self.assertEqual(json.loads((self.directory / "done.json").read_text())["status"], "failed")
+
+    def test_explicit_early_ownership_runs_before_guest_callbacks_once_at_existing_cadence(self):
+        import android_ios_handoff as H
+        control = self.control()
+        control["ownership"] = {"directory": str(self.directory), "nonce": "bound", "sourceSha256": "owned"}
+        events = []
+        def early(directory, observer, expected, state, deadline, cancel):
+            events.append("early-proof")
+            self.assertFalse(cancel())
+            self.assertLessEqual(deadline - time.monotonic(), .2)
+            state.update(attempted=True, status="complete")
+        def command(*args, **kwargs):
+            events.append("guest")
+            return {"outcome": "completed", "exit": 0, "seconds": 0, "stdout": "", "stderr": "", "truncated": False,
+                    "droppedBytes": {"stdout": 0, "stderr": 0}, "joined": True}
+        with patch.object(H, "ownership_binding", return_value=control["ownership"]), patch.object(H, "early_ownership", side_effect=early) as proof, patch.object(D, "capture", side_effect=command):
+            self.assertEqual(D.observe(self.directory, control, inventory=lambda *_: {}, commands=lambda: [("guest", ["fixture"])], duration=.2, cadence=.03, pressure=lambda *_: {}), 0)
+        self.assertEqual(proof.call_count, 1)
+        self.assertEqual(events[:2], ["early-proof", "guest"])
+        self.assertEqual(json.loads((self.directory / "report.json").read_text())["ownership"], {"attempted": True, "status": "complete"})
+
+    def test_early_stop_during_proof_prevents_guest_probes(self):
+        import android_ios_handoff as H
+        control = self.control()
+        control["ownership"] = {"directory": str(self.directory), "nonce": "bound", "sourceSha256": "owned"}
+        def early(directory, observer, expected, state, deadline, cancel):
+            D.write_json(self.directory / "stop.json", {"token": control["token"]})
+            self.assertTrue(cancel())
+        with patch.object(H, "ownership_binding", return_value=control["ownership"]), patch.object(H, "early_ownership", side_effect=early), patch.object(D, "capture") as capture:
+            self.assertEqual(D.observe(self.directory, control, inventory=lambda *_: {}, commands=lambda: [("forbidden", ["fixture"])]), 0)
+        capture.assert_not_called()
+        self.assertEqual(json.loads((self.directory / "report.json").read_text())["status"], "stopped")
+
+    def test_early_signal_cancellation_restores_handler_and_never_probes_after_stop(self):
+        import android_ios_handoff as H
+        control = self.control()
+        control["ownership"] = {"directory": str(self.directory), "nonce": "bound", "sourceSha256": "owned"}
+        original = signal.getsignal(signal.SIGTERM)
+        def early(directory, observer, expected, state, deadline, cancel):
+            signal.raise_signal(signal.SIGTERM)
+            H.checkpoint(deadline, cancel)
+        with patch.object(H, "ownership_binding", return_value=control["ownership"]), patch.object(H, "early_ownership", side_effect=early), patch.object(D, "capture") as capture:
+            self.assertEqual(D.observe(self.directory, control, inventory=lambda *_: {}, commands=lambda: [("forbidden", ["fixture"])]), 0)
+        capture.assert_not_called()
+        self.assertEqual(signal.getsignal(signal.SIGTERM), original)
+        self.assertEqual(json.loads((self.directory / "report.json").read_text())["status"], "stopped")
+
+    def test_early_binding_mismatch_refuses_before_guest_commands(self):
+        import android_ios_handoff as H
+        control = self.control()
+        control["ownership"] = {"directory": str(self.directory), "nonce": "bound", "sourceSha256": "owned"}
+        with patch.object(H, "ownership_binding", return_value={"stale": True}), patch.object(D, "capture") as capture:
+            self.assertEqual(D.observe(self.directory, control, inventory=lambda *_: {}, commands=lambda: [("forbidden", ["fixture"])]), 1)
+        capture.assert_not_called()
 
     def test_report_cap_preserves_early_and_late_and_accounts_drops(self):
         report = {"snapshots": [{"index": i, "data": "\\\"" * 12000} for i in range(30)], "droppedSnapshots": 0, "droppedSnapshotBytes": 0, "truncated": False}

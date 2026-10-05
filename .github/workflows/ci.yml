@@ -154,7 +154,7 @@ jobs:
           target: default
           arch: arm64-v8a
           cores: 1
-          pre-emulator-launch-script: python3 scripts/android_ios_handoff.py prelaunch verity/smoke-tests/build/reports/packaged-targets/android-ownership && python3 scripts/android_boot_diagnostics.py start verity/smoke-tests/build/reports/packaged-targets/android-bootstrap
+          pre-emulator-launch-script: python3 scripts/android_ios_handoff.py prelaunch verity/smoke-tests/build/reports/packaged-targets/android-ownership && python3 scripts/android_boot_diagnostics.py start verity/smoke-tests/build/reports/packaged-targets/android-bootstrap --ownership-directory "$PWD/verity/smoke-tests/build/reports/packaged-targets/android-ownership"
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel off -feature -HVF -qemu -accel tcg
           disable-animations: true
           script: >-

@@ -206,8 +206,23 @@ def observe(directory, control, inventory=static_inventory, commands=guest_comma
         if not cancel():
             report["host"] = inventory(cancel, deadline)
             report["diagnosticFailures"] += failures(report["host"])
+        ownership = control.get("ownership")
+        if ownership is not None:
+            import android_ios_handoff as handoff
+            if handoff.ownership_binding(Path(ownership["directory"])) != ownership:
+                raise RuntimeError("Observer ownership binding mismatch")
+            report["ownership"] = {"attempted": False, "status": "pending"}
         late_pressure_sampled = False
         while not cancel() and time.monotonic() < deadline:
+            if ownership is not None and not report["ownership"]["attempted"]:
+                try:
+                    handoff.early_ownership(Path(ownership["directory"]), directory, ownership, report["ownership"], deadline, cancel)
+                except RuntimeError:
+                    if cancel() or time.monotonic() >= deadline:
+                        break
+                    raise
+            if cancel() or time.monotonic() >= deadline:
+                break
             elapsed = time.monotonic() - started
             snapshot = {"elapsedSeconds": round(elapsed, 3), "commands": {}}
             for name, argv in commands():
@@ -243,10 +258,13 @@ def observe(directory, control, inventory=static_inventory, commands=guest_comma
     return 1 if report["status"] == "failed" else 0
 
 
-def start(directory):
+def start(directory, ownership_directory=None):
     directory.mkdir(parents=True, exist_ok=False)
     control = {"token": uuid.uuid4().hex, "binding": binding(), "scriptSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                "startedUnix": time.time(), "serial": SERIAL, "avd": AVD}
+    if ownership_directory is not None:
+        import android_ios_handoff as handoff
+        control["ownership"] = handoff.ownership_binding(ownership_directory)
     write_json(directory / "control.json", control)
     process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "observe", str(directory.resolve()), control["token"]],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -453,9 +471,10 @@ def main():
     parser.add_argument("mode", choices=("start", "observe", "stop", "startup"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("token", nargs="?")
+    parser.add_argument("--ownership-directory", type=Path)
     args = parser.parse_args()
     if args.mode == "start":
-        start(args.directory)
+        start(args.directory, args.ownership_directory)
     elif args.mode == "stop":
         stop(args.directory)
     elif args.mode == "startup":
