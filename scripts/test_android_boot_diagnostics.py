@@ -45,6 +45,159 @@ class DiagnosticsTest(unittest.TestCase):
             D.write_json(self.directory / (name + ".json"), value)
         return records
 
+    def history_fixture(self, pid=71):
+        records = self.startup_fixture()
+        report = records["report"]
+        report.update(status="stopped", elapsedSeconds=500, snapshots=[self.history_row(pid, 200)])
+        D.write_json(self.directory / "report.json", report)
+        return records
+
+    def history_row(self, pid, elapsed):
+        return {"elapsedSeconds": elapsed, "commands": {"systemServer": {
+            "outcome": "completed", "exit": 0, "joined": True, "truncated": False,
+            "droppedBytes": {"stdout": 0, "stderr": 0}, "stdout": "system_server=" + str(pid) + "\n"}}}
+
+    def test_historical_pid_uses_newest_eligible_not_later_failed_read(self):
+        records = self.history_fixture()
+        report = records["report"]
+        failed = self.history_row(99, 450)
+        failed["commands"]["systemServer"].update(outcome="timeout", exit=-15)
+        truncated = self.history_row(98, 440)
+        truncated["commands"]["systemServer"]["truncated"] = True
+        report["snapshots"] += [self.history_row(72, 420), failed, truncated]
+        selected = D.historical_system_server(report, records["control"])
+        self.assertEqual(selected["pid"], 72)
+        self.assertEqual(selected["sourceSnapshotElapsedSeconds"], 420)
+        self.assertTrue(selected["historical"])
+        self.assertEqual(selected["evidenceStatus"], "historical")
+        self.assertIn("stale PID", selected["limitations"])
+
+    def test_historical_pid_exact_bounds_row_status_and_elapsed_are_required(self):
+        records = self.history_fixture()
+        for pid in (1, 2147483647):
+            records["report"]["snapshots"] = [self.history_row(pid, 200)]
+            self.assertEqual(D.historical_system_server(records["report"], records["control"])["pid"], pid)
+        for pid in (0, -1, 2147483648, "01", "+7", "7 8", "7;echo private", "7\n8", " 7", "7.0"):
+            with self.subTest(pid=pid):
+                records["report"]["snapshots"] = [self.history_row(pid, 200)]
+                self.assertNotIn("pid", D.historical_system_server(records["report"], records["control"]))
+        for key, value in (("exit", False), ("exit", 1), ("joined", False), ("truncated", True),
+                           ("droppedBytes", {"stdout": 0, "stderr": 1}), ("droppedBytes", {"stdout": False, "stderr": 0}),
+                           ("stdout", "system_server=7\n\n"), ("outcome", "timeout")):
+            row = self.history_row(7, 200)
+            row["commands"]["systemServer"][key] = value
+            records["report"]["snapshots"] = [row]
+            self.assertNotIn("pid", D.historical_system_server(records["report"], records["control"]))
+        for elapsed in (-1, 501, float("nan"), float("inf"), True, "200"):
+            records["report"]["snapshots"] = [self.history_row(7, elapsed)]
+            self.assertNotIn("pid", D.historical_system_server(records["report"], records["control"]))
+        for elapsed in (-1, 601, float("nan"), float("inf"), True, "500"):
+            records["report"].update(elapsedSeconds=elapsed, snapshots=[self.history_row(7, 200)])
+            self.assertNotIn("pid", D.historical_system_server(records["report"], records["control"]))
+        for pid in (0, True, "7", "7;echo private", 2147483648):
+            with self.assertRaises(ValueError):
+                D.historical_system_server_command(pid)
+
+    def test_historical_report_refusal_gates_and_absent_history_unknown_preserve_scope(self):
+        for mode in ("missing", "malformed", "binding", "target"):
+            records = self.history_fixture()
+            path = self.directory / "report.json"
+            if mode == "missing": path.unlink()
+            elif mode == "malformed": path.write_text("{bad")
+            else:
+                records["report"][mode] = {}
+                D.write_json(path, records["report"])
+            with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", side_effect=AssertionError("unbound probe")):
+                with self.assertRaises((RuntimeError, FileNotFoundError, ValueError)):
+                    D.startup(self.directory, 17)
+        self.startup_fixture()  # Valid bound report, but no eligible history.
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000"}), patch.object(D, "capture", return_value={
+                "outcome": "completed", "exit": 0, "joined": True, "truncated": False,
+                "stdout": "valid", "stderr": "", "droppedBytes": {"stdout": 0, "stderr": 0}}) as capture:
+            self.assertEqual(D.startup(self.directory, 17, commands=lambda: [("existing", ["offline"])]), 0)
+            capture.assert_called_once()
+        report = json.loads((self.directory / "startup.json").read_text())
+        self.assertEqual(report["gradleExit"], 17)
+        self.assertEqual(report["commands"]["historicalSystemServerLogs"]["evidenceStatus"], "unknown")
+        self.assertEqual(report["commands"]["existing"]["evidenceStatus"], "observed")
+
+    def test_historical_callback_is_early_exact_serial_and_other_commands_stay_ordered(self):
+        self.history_fixture(81)
+        seen = []
+        def fake_capture(argv, *_args, **_kwargs):
+            seen.append(argv)
+            return {"outcome": "completed", "exit": 0, "joined": True, "truncated": False,
+                    "stdout": "marker", "stderr": "", "droppedBytes": {"stdout": 0, "stderr": 0}}
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000", "ANDROID_HOME": "/offline/sdk", "ANDROID_SERIAL": "ambient"}), patch.object(D, "capture", side_effect=fake_capture):
+            original = D.startup_commands()
+            self.assertEqual(D.startup(self.directory, 17), 0)
+        self.assertEqual(seen[:2], [argv for _, argv in original[:2]])
+        self.assertEqual(seen[2][:4], ["/offline/sdk/platform-tools/adb", "-s", "emulator-5554", "shell"])
+        self.assertIn("logcat --pid=81 ", seen[2][-1])
+        self.assertNotIn("DEBUG", seen[2][-1])
+        self.assertEqual(seen[3:], [argv for _, argv in original[2:]])
+
+    def test_historical_guest_filter_drains_huge_output_and_rejects_private_markers(self):
+        self.history_fixture(91)
+        sdk = self.directory / "sdk"
+        (sdk / "platform-tools").mkdir(parents=True)
+        adb = sdk / "platform-tools/adb"
+        adb.write_text("#!" + sys.executable + "\nimport os,sys\nassert sys.argv[1:4]==['-s','emulator-5554','shell']\nos.execv('/bin/sh',['sh','-c',sys.argv[4]])\n")
+        adb.chmod(0o755)
+        logcat = sdk / "logcat"
+        huge = sdk / "huge"
+        logcat.write_text("#!" + sys.executable + "\nimport sys\nfrom pathlib import Path\n"
+                          "assert sys.argv[1:]==['--pid=91','-b','system','-b','main','-b','crash','-d','-v','brief']\n"
+                          "records=['W/Watchdog( 91): *** WATCHDOG KILLING SYSTEM PROCESS: blocked',"
+                          "'E/AndroidRuntime( 91): FATAL EXCEPTION IN SYSTEM PROCESS: main',"
+                          "'E/AndroidRuntime( 91): Process: system_server, PID: 91',"
+                          "'E/AndroidRuntime: Process: system_server.private',"
+                          "'W/WatchdogPrivate: *** WATCHDOG KILLING SYSTEM PROCESS: private',"
+                          "'E/Private: FATAL EXCEPTION IN SYSTEM PROCESS private',"
+                          "'F/DEBUG   ( 92): pid: 91, tid: 91, name: main  >>> system_server <<<',"
+                          "'E/AndroidRuntime: private application crash']\n"
+                          "if Path(" + repr(str(huge)) + ").exists(): records=[records[0]]*10000\n"
+                          "print('\\n'.join(records))\n")
+        logcat.chmod(0o755)
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000", "ANDROID_HOME": str(sdk),
+                                     "PATH": str(sdk) + os.pathsep + os.environ["PATH"]}):
+            argv = D.historical_system_server_command(91)
+            filtered = D.capture(argv)
+            self.assertEqual(len(filtered["stdout"].splitlines()), 3)
+            self.assertNotIn("private", filtered["stdout"])
+            self.assertNotIn("DEBUG", filtered["stdout"])
+            huge.touch()
+            self.assertEqual(D.startup(self.directory, 17, commands=lambda: []), 0)
+        report = json.loads((self.directory / "startup.json").read_text())
+        result = report["commands"]["historicalSystemServerLogs"]
+        self.assertTrue(result["joined"])
+        self.assertTrue(result["truncated"])
+        self.assertGreater(result["droppedBytes"]["stdout"], 500000)
+        self.assertEqual(len(result["stdout"].encode()), 256)
+        self.assertEqual(result["evidenceStatus"], "unknown")
+        self.assertLessEqual((self.directory / "startup.json").stat().st_size, 6000)
+        self.assertLessEqual(sum(p.stat().st_size for p in self.directory.glob("*.json")), D.MAX_REPORT)
+
+    def test_historical_callback_timeout_joins_and_no_cleanup_budget_never_spawns(self):
+        self.history_fixture()
+        original = D.capture
+        def slow_capture(argv, cancel, deadline, limit):
+            self.assertIn("--pid=71", argv[-1])
+            return original([sys.executable, "-c", "import os,time; print(os.getpid(),flush=True); time.sleep(30)"], cancel, deadline, limit)
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000", "ANDROID_HOME": "/offline/sdk"}), patch.object(D, "capture", side_effect=slow_capture):
+            self.assertEqual(D.startup(self.directory, 17, duration=1.2, commands=lambda: []), 0)
+        report = json.loads((self.directory / "startup.json").read_text())
+        result = report["commands"]["historicalSystemServerLogs"]
+        self.assertEqual(result["outcome"], "timeout")
+        self.assertTrue(result["joined"])
+        self.assertEqual(result["evidenceStatus"], "unknown")
+        with self.assertRaises(ProcessLookupError): os.kill(int(result["stdout"].strip()), 0)
+        (self.directory / "startup.json").unlink()
+        with patch.dict(os.environ, {"MAESTRO_DRIVER_STARTUP_TIMEOUT": "120000", "ANDROID_HOME": "/offline/sdk"}), patch.object(D.subprocess, "Popen", side_effect=AssertionError("no cleanup budget")):
+            self.assertEqual(D.startup(self.directory, 17, duration=.5, commands=lambda: []), 0)
+        report = json.loads((self.directory / "startup.json").read_text())
+        self.assertEqual(report["commands"]["historicalSystemServerLogs"]["evidenceStatus"], "unknown")
+
     def test_startup_encoded_cap_and_aggregate_accounting(self):
         records = self.startup_fixture()
         total = sum(p.stat().st_size for p in self.directory.glob("*.json"))

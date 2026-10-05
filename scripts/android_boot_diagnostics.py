@@ -3,6 +3,8 @@
 import argparse
 import hashlib
 import json
+import math
+import re
 import os
 import platform
 import selectors
@@ -308,6 +310,53 @@ def startup_commands():
             ("startupLog", prefix + [r"logcat -b main -b system -d -t 80 -v brief -s Maestro:V AndroidRuntime:V TestRunner:V AndroidJUnitRunner:V ActivityManager:I Watchdog:V SystemServer:E | grep -E 'dev\.mobile\.maestro(\.test)?([: /]|$)|dev\.mobile\.maestro\.MaestroDriverService([: /]|$)|^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: '"])]
 
 
+def historical_system_server(report, control):
+    """A validated retained PID is historical evidence, never current process identity."""
+    unknown = {"evidenceStatus": "unknown", "historical": True, "reason": "unavailable-or-unbound-observer-report"}
+    if not isinstance(report, dict) or report.get("binding") != control or report.get("target") != {"serial": SERIAL, "avd": AVD}:
+        return unknown
+    elapsed = report.get("elapsedSeconds")
+    if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or not 0 <= elapsed <= 600 or report.get("status") not in ("stopped", "deadline"):
+        return unknown
+    snapshots = report.get("snapshots")
+    if not isinstance(snapshots, list):
+        return unknown
+    eligible = []
+    for snapshot in snapshots:
+        if not isinstance(snapshot, dict):
+            continue
+        at = snapshot.get("elapsedSeconds")
+        if type(at) not in (int, float) or not math.isfinite(at) or not 0 <= at <= elapsed:
+            continue
+        commands = snapshot.get("commands")
+        result = commands.get("systemServer") if isinstance(commands, dict) else None
+        if not isinstance(result, dict) or result.get("outcome") != "completed" or type(result.get("exit")) is not int or result["exit"] != 0 or result.get("joined") is not True or result.get("truncated") is not False:
+            continue
+        dropped = result.get("droppedBytes")
+        if not isinstance(dropped, dict) or set(dropped) != {"stdout", "stderr"} or any(type(value) is not int or value != 0 for value in dropped.values()):
+            continue
+        value = result.get("stdout")
+        match = re.fullmatch(r"system_server=([1-9][0-9]{0,9})\n?", value) if isinstance(value, str) else None
+        if not match or int(match[1]) > 2147483647:
+            continue
+        eligible.append((at, int(match[1])))
+    if not eligible:
+        return {**unknown, "reason": "no-eligible-retained-system-server-pid"}
+    at, pid = max(eligible, key=lambda row: row[0])
+    return {"evidenceStatus": "historical", "historical": True, "pid": pid,
+            "sourceSnapshotElapsedSeconds": at, "observerElapsedSeconds": elapsed,
+            "limitations": "stale PID; reuse/restart/ring-eviction/timeout/absence do not establish current identity or cause"}
+
+
+def historical_system_server_command(pid):
+    # PID reaches interpolation only after exact decimal/bounds validation above.
+    if type(pid) is not int or not 1 <= pid <= 2147483647:
+        raise ValueError("Invalid historical PID")
+    markers = r"^E/AndroidRuntime(\([ ]*[0-9]+\))?[ ]*: (FATAL EXCEPTION IN SYSTEM PROCESS|Process: system_server([, ]|$))|^W/Watchdog(\([ ]*[0-9]+\))?[ ]*: \*\*\* WATCHDOG KILLING SYSTEM PROCESS: "
+    script = "logcat --pid=" + str(pid) + " -b system -b main -b crash -d -v brief | grep -E '" + markers + "'"
+    return [str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"), "-s", SERIAL, "shell", script]
+
+
 def startup(directory, gradle_exit, duration=45, commands=startup_commands):
     """One bounded post-failure observation after the original observer has joined."""
     started = time.monotonic()
@@ -344,6 +393,11 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
     report = {"binding": control, "phase": "post-failed-packaged-android-suite", "gradleExit": gradle_exit,
               "sdkStartupAllowanceMs": 120000, "qualification": False, "commands": {}, "diagnosticFailures": 0,
               "truncated": False, "droppedRetainedBytes": 0, "status": "running"}
+    historical = historical_system_server(original["report"], control)
+    report["historicalSystemServer"] = historical
+    report["commands"]["historicalSystemServerLogs"] = {"outcome": "skipped", "exit": None, "seconds": 0,
+        "stdout": "", "stderr": "", "droppedBytes": {"stdout": 0, "stderr": 0}, "truncated": False,
+        "joined": True, "evidenceStatus": "unknown", "reason": "source-unavailable-or-no-remaining-budget"}
     terminate = [False]
     previous = {}
     def stop_signal(*_):
@@ -351,7 +405,10 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
     for sig in (signal.SIGTERM, signal.SIGINT):
         previous[sig] = signal.signal(sig, stop_signal)
     try:
-        for name, argv in commands():
+        pending = list(commands())
+        if historical.get("pid") is not None:
+            pending.insert(min(2, len(pending)), ("historicalSystemServerLogs", historical_system_server_command(historical["pid"])))
+        for name, argv in pending:
             if terminate[0] or time.monotonic() >= deadline:
                 break
             result = capture(argv, lambda: terminate[0], deadline, limit=256)
