@@ -7,6 +7,7 @@ import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import ExitStack
 
 import android_ios_handoff as H
 
@@ -203,6 +204,184 @@ class HandoffTest(unittest.TestCase):
         with patch.object(H, "collect_active", side_effect=collect), self.assertRaisesRegex(RuntimeError, "receipt changed"):
             self.active()
         self.assertFalse((self.directory / "revalidated.json").exists())
+
+    def test_readiness_elapsed_consumes_same_absolute_28_second_operation_deadline(self):
+        bound = self.ownership()
+        for parent_end, elapsed in ((1000, 5), (120, 5)):
+            now = [100.0]
+            def ready(*args, **kwargs):
+                self.assertEqual(kwargs["deadline"], min(parent_end, 128))
+                now[0] += elapsed
+                return result("431\n")
+            with patch.object(H.time, "monotonic", side_effect=lambda: now[0]), patch.object(H, "capture", side_effect=ready), patch.object(H, "active") as active:
+                H.early_ownership(self.directory, self.observer, bound, {}, parent_end, lambda: False)
+            self.assertEqual(active.call_args.args[2], min(parent_end, 128))
+            self.assertEqual(active.call_args.args[2] - now[0], min(parent_end, 128) - 105)
+        now = [100.0]
+        def expired(*args, **kwargs):
+            now[0] = kwargs["deadline"]
+            return result("431\n")
+        with patch.object(H.time, "monotonic", side_effect=lambda: now[0]), patch.object(H, "capture", side_effect=expired) as capture, patch.object(H, "active") as active, self.assertRaises(RuntimeError):
+            H.early_ownership(self.directory, self.observer, bound, {}, 1000, lambda: False)
+        self.assertEqual(capture.call_count, 1)
+        active.assert_not_called()
+        self.assertFalse((self.directory / "active.json").exists())
+
+    def test_failed_postboot_attempts_remain_durable_guard_refusals_after_cleanup(self):
+        self.early({})
+        original = (self.directory / "active.json").read_bytes()
+        valid_replies = [result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\nf4\nn*:5555\n")]
+        for failure in ("exited", "reused", "listener", "sdk", "namespace", "hash", "cancel", "deadline", "publication"):
+            with self.subTest(failure=failure):
+                # Separate offline invocation fixtures; production never retries/removes durable intent.
+                for name in ("postboot-revalidation-started.json", "revalidated.json", "revalidated-process-observation.json", "revalidated-listener-observation.json"):
+                    (self.directory / name).unlink(missing_ok=True)
+                (self.directory / "active.json").write_bytes(original)
+                stopped = [False]
+                deadline = time.monotonic() + 28
+                with ExitStack() as stack:
+                    if failure == "sdk":
+                        stack.enter_context(patch.object(H, "sdk_registration", return_value={"changed": True}))
+                    elif failure == "namespace":
+                        stack.enter_context(patch.object(H, "owned_directory", return_value={"changed": True}))
+                    elif failure == "hash":
+                        original_hash = H.receipt_hash(self.directory / "active.json")
+                        real_hash = H.receipt_hash
+                        active_reads = [0]
+                        def changed_hash(path):
+                            if path.name == "active.json":
+                                active_reads[0] += 1
+                                return original_hash if active_reads[0] == 1 else "changed"
+                            return real_hash(path)
+                        stack.enter_context(patch.object(H, "receipt_hash", side_effect=changed_hash))
+                    elif failure == "publication":
+                        write = H.write
+                        def broken(path, *args, **kwargs):
+                            if path.name == "revalidated.json":
+                                raise OSError("offline publication failure")
+                            return write(path, *args, **kwargs)
+                        stack.enter_context(patch.object(H, "write", side_effect=broken))
+                    replies = list(valid_replies)
+                    if failure == "exited":
+                        replies[1] = result(code=1)
+                    elif failure == "reused":
+                        replies[1] = result(self.ps.replace(" -qemu", " -changed -qemu"))
+                    elif failure == "listener":
+                        replies[2] = result("p431\nf3\nn*:5554\n")
+                    now = [100.0]
+                    if failure == "deadline":
+                        deadline = 128
+                        stack.enter_context(patch.object(H.time, "monotonic", side_effect=lambda: now[0]))
+                    def command(*args, **kwargs):
+                        self.assertTrue((self.directory / "postboot-revalidation-started.json").exists())
+                        if failure == "cancel":
+                            stopped[0] = True
+                        elif failure == "deadline":
+                            now[0] = 128
+                        return replies.pop(0)
+                    capture = stack.enter_context(patch.object(H, "capture", side_effect=command))
+                    with self.assertRaises((RuntimeError, OSError)):
+                        H.active(self.directory, self.observer, deadline, lambda: stopped[0])
+                    if failure in ("cancel", "deadline"):
+                        self.assertEqual(capture.call_count, 1)
+                    elif failure == "namespace":
+                        self.assertEqual(capture.call_count, 0)
+                self.assertTrue((self.directory / "postboot-revalidation-started.json").exists())
+                self.assertFalse((self.directory / "revalidated.json").exists())
+                # Original process has exited and old ports are closed, but fallback is now forbidden.
+                with self.assertRaises((RuntimeError, FileNotFoundError)):
+                    self.guard()
+                self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_completed_intent_then_cancel_retained_without_later_probe(self):
+        self.early({})
+        path = self.directory / "postboot-revalidation-started.json"
+        with patch.object(H, "capture") as capture, self.assertRaises(RuntimeError):
+            H.active(self.directory, self.observer, time.monotonic() + 28, lambda: path.exists())
+        capture.assert_not_called()
+        self.assertTrue(path.exists())
+        with self.assertRaises(FileNotFoundError):
+            self.guard()
+
+    def test_partial_exclusively_created_intent_retained_and_refuses_guard_without_probes(self):
+        self.early({})
+        path = self.directory / "postboot-revalidation-started.json"
+        original_open = Path.open
+        class PartialWrite:
+            def __init__(self, stream):
+                self.stream = stream
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                self.stream.close()
+            def write(self, data):
+                self.stream.write(data[:10])
+                raise OSError("offline partial intent publication")
+        def opened(p, *args, **kwargs):
+            stream = original_open(p, *args, **kwargs)
+            return PartialWrite(stream) if p == path and args == ("xb",) else stream
+        with patch.object(Path, "open", new=opened), patch.object(H, "capture") as capture, self.assertRaises(OSError):
+            H.active(self.directory, self.observer, time.monotonic() + 28)
+        capture.assert_not_called()
+        self.assertEqual(path.stat().st_size, 10)
+        with self.assertRaises(ValueError):
+            self.guard()
+        self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_precreate_intent_failure_has_no_new_collection_and_retains_original_guard(self):
+        self.early({})
+        path = self.directory / "postboot-revalidation-started.json"
+        original_open = Path.open
+        def opened(p, *args, **kwargs):
+            if p == path and args == ("xb",):
+                raise PermissionError("offline intent creation denied")
+            return original_open(p, *args, **kwargs)
+        with patch.object(Path, "open", new=opened), patch.object(H, "capture") as capture, self.assertRaises(PermissionError):
+            H.active(self.directory, self.observer, time.monotonic() + 28)
+        capture.assert_not_called()
+        self.assertFalse(path.exists())
+        self.guard()  # Explicit root disposition: no postboot collection attempt was made.
+        self.assertEqual(H.read(self.directory / "handoff.json")["androidOutcome"], "failure")
+
+    def test_intent_mutation_during_collection_never_publishes_success(self):
+        self.early({})
+        collect = H.collect_active
+        def changed(*args, **kwargs):
+            value = collect(*args, **kwargs)
+            path = self.directory / "postboot-revalidation-started.json"
+            row = H.read(path)
+            self.save(path, {**row, "phase": "changed"})
+            return value
+        with patch.object(H, "collect_active", side_effect=changed), self.assertRaisesRegex(RuntimeError, "intent changed"):
+            self.active()
+        self.assertFalse((self.directory / "revalidated.json").exists())
+        with self.assertRaises(RuntimeError):
+            self.guard()
+
+    def test_successful_revalidation_requires_exact_intent_and_hash_pair(self):
+        self.early({})
+        self.active()
+        path = self.directory / "postboot-revalidation-started.json"
+        intent = path.read_bytes()
+        row = H.read(path)
+        for field in ("activeSha256", "observer", "prelaunch", "phase", "prepared"):
+            self.save(path, {**row, field: "stale"})
+            with self.assertRaises(RuntimeError):
+                self.guard()
+        path.write_text('{"partial":')
+        with self.assertRaises(ValueError):
+            self.guard()
+        path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.guard()  # Even a successful receipt alone cannot authorize.
+        path.write_bytes(intent)
+        revalidated = H.read(self.directory / "revalidated.json")
+        self.save(self.directory / "revalidated.json", {**revalidated, "intentSha256": "stale"})
+        with self.assertRaises(RuntimeError):
+            self.guard()
+        self.save(self.directory / "revalidated.json", revalidated)
+        self.guard()
+        self.assertEqual(H.read(self.directory / "handoff.json")["portsClosed"], [5554, 5555, 8554])
 
     def test_guard_revalidation_hash_and_identity_binding_refuse(self):
         self.early({})

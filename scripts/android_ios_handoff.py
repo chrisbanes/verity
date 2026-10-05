@@ -34,7 +34,7 @@ def checkpoint(deadline, cancel):
         raise RuntimeError("Ownership collection stopped or deadline expired")
 
 
-def write(path, value, deadline=None, cancel=lambda: False):
+def write(path, value, deadline=None, cancel=lambda: False, retain_failed=False):
     checkpoint(deadline, cancel)
     data = (json.dumps(value) + "\n").encode()
     if len(data) > CAP or path.exists():
@@ -45,7 +45,8 @@ def write(path, value, deadline=None, cancel=lambda: False):
             stream.write(data)
         checkpoint(deadline, cancel)
     except BaseException:
-        path.unlink()  # Only this invocation's exclusive publication, never an older receipt.
+        if not retain_failed:
+            path.unlink()  # Only this invocation's exclusive incomplete publication, never an older receipt.
         raise
 
 
@@ -378,14 +379,21 @@ def receipt_hash(path):
 def active(directory, observer_directory, deadline, cancel=lambda: False, early=False):
     checkpoint(deadline, cancel)
     seed, pre = load(directory, "prelaunch.json")
-    if owned_directory(seed) != pre["avdDirectory"]:
-        raise RuntimeError("AVD directory identity changed before active collection")
     checkpoint(deadline, cancel)
     if not early and (directory / "active.json").exists():
         seed, original = load(directory, "active.json")
         if original.get("phase") != "early":
+            if owned_directory(seed) != pre["avdDirectory"]:
+                raise RuntimeError("AVD directory identity changed before active collection")
             raise RuntimeError("Duplicate postboot active collection")
         original_hash = receipt_hash(directory / "active.json")
+        control = read(observer_directory / "control.json")
+        if original.get("prelaunch") != pre or original.get("observer") != control:
+            raise RuntimeError("Early proof binding changed before postboot intent")
+        intent = {"prepared": seed, "prelaunch": pre, "observer": control,
+                  "activeSha256": original_hash, "phase": "postboot-revalidation-started"}
+        write(directory / "postboot-revalidation-started.json", intent, deadline, cancel, retain_failed=True)
+        intent_hash = receipt_hash(directory / "postboot-revalidation-started.json")
         current = collect_active(directory, observer_directory, deadline, cancel, "revalidated-")
         if any(current[key] != original[key] for key in ("prepared", "prelaunch", "observer", "process")):
             raise RuntimeError("Early emulator identity changed before postboot revalidation")
@@ -393,6 +401,9 @@ def active(directory, observer_directory, deadline, cancel=lambda: False, early=
             raise RuntimeError("Early receipt changed during postboot revalidation")
         current["phase"] = "postboot-revalidation"
         current["activeSha256"] = original_hash
+        if receipt_hash(directory / "postboot-revalidation-started.json") != intent_hash:
+            raise RuntimeError("Postboot intent changed during revalidation")
+        current["intentSha256"] = intent_hash
         write(directory / "revalidated.json", current, deadline, cancel)
     else:
         current = collect_active(directory, observer_directory, deadline, cancel, "early-" if early else "")
@@ -408,6 +419,7 @@ def ownership_binding(directory):
 
 
 def early_ownership(directory, observer_directory, expected, state, deadline, cancel):
+    deadline = min(deadline, time.monotonic() + 28)
     checkpoint(deadline, cancel)
     if ownership_binding(directory) != expected:
         raise RuntimeError("Early ownership binding mismatch")
@@ -422,7 +434,7 @@ def early_ownership(directory, observer_directory, expected, state, deadline, ca
         raise RuntimeError("Unknown early console readiness")
     state["attempted"] = True
     try:
-        active(directory, observer_directory, min(deadline, time.monotonic() + 28), cancel, early=True)
+        active(directory, observer_directory, deadline, cancel, early=True)
         state["status"] = "complete"
     except Exception as failure:
         state["status"] = "failed"
@@ -456,10 +468,18 @@ def guard(directory, observer_directory, outcomes, cancelled, deadline):
     report = read(observer_directory / "report.json", 262144)
     if report.get("binding") != control or report.get("target") != {"serial": SERIAL, "avd": AVD} or report.get("truncated") is not False or report.get("droppedSnapshots") != 0 or report.get("droppedSnapshotBytes") != 0:
         raise RuntimeError("Unknown or truncated observer ownership report")
+    if active_record.get("phase") not in ("early", "postboot"):
+        raise RuntimeError("Unknown active ownership phase")
     ports = set(active_record["listenerPorts"])
-    if (directory / "revalidated.json").exists():
+    intent_path = directory / "postboot-revalidation-started.json"
+    if intent_path.exists() or (directory / "revalidated.json").exists():
+        _, intent = load(directory, "postboot-revalidation-started.json")
+        expected_intent = {"prepared": seed, "prelaunch": pre, "observer": control,
+                           "activeSha256": receipt_hash(directory / "active.json"), "phase": "postboot-revalidation-started"}
+        if active_record["phase"] != "early" or intent != expected_intent:
+            raise RuntimeError("Invalid postboot intent")
         _, revalidated = load(directory, "revalidated.json")
-        if active_record.get("phase") != "early" or revalidated.get("phase") != "postboot-revalidation" or revalidated.get("activeSha256") != receipt_hash(directory / "active.json") or any(revalidated.get(key) != active_record[key] for key in ("prelaunch", "observer", "process")):
+        if revalidated.get("phase") != "postboot-revalidation" or revalidated.get("activeSha256") != intent["activeSha256"] or revalidated.get("intentSha256") != receipt_hash(intent_path) or any(revalidated.get(key) != active_record[key] for key in ("prelaunch", "observer", "process")):
             raise RuntimeError("Invalid postboot revalidation")
         ports.update(revalidated["listenerPorts"])
     original = active_record["process"]
