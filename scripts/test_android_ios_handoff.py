@@ -35,6 +35,12 @@ class HandoffTest(unittest.TestCase):
         self.closed.start()
         with patch.object(H.platform, "system", return_value="Darwin"), patch.object(H.platform, "machine", return_value="arm64"):
             H.prepare(self.directory)
+        sdk = self.root / "sdk/emulator"
+        for relative in H.SDK_EXECUTABLES:
+            executable = sdk / relative
+            executable.parent.mkdir(parents=True, exist_ok=True)
+            executable.write_text("offline fixture, never executed")
+            executable.chmod(0o755)
         config = H.config_path()
         config.parent.mkdir(parents=True)
         config.write_text("AvdId=test\n")
@@ -61,6 +67,8 @@ class HandoffTest(unittest.TestCase):
         path.write_text(json.dumps(data))
 
     def active(self, replies=None):
+        # Each fixture invocation is independent; production duplicate publication is tested separately.
+        (self.directory / "process-observation.json").unlink(missing_ok=True)
         with patch.object(H, "capture", side_effect=replies or [result("431\n"), result(self.ps), result("p431\nn*:5554\nn127.0.0.1:5555\nn[::1]:8554\n")]):
             H.active(self.directory, self.observer, time.monotonic() + 28)
 
@@ -342,6 +350,135 @@ class HandoffTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
             self.guard()
         self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_exact_registered_frontend_regular_and_headless_paths_pass_full_handoff(self):
+        for relative in H.SDK_EXECUTABLES:
+            executable = self.root / "sdk/emulator" / relative
+            ps = self.ps.replace(str(self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"), str(executable))
+            self.active([result("431\n"), result(ps), result("p431\nn*:5554\nn127.0.0.1:5555\n")])
+            observed = H.read(self.directory / "process-observation.json")
+            self.assertTrue(observed["provisional"])
+            self.assertTrue(all(observed["checks"].values()))
+            self.assertNotIn("argv", observed)
+            self.assertEqual(observed["executablePath"], str(executable))
+            self.guard()
+            (self.directory / "active.json").unlink()
+            (self.directory / "handoff.json").unlink()
+
+    def test_foreign_sdk_subdirectory_isa_name_and_symlink_refuse_with_observation(self):
+        regular = self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"
+        foreign = self.root / "foreign/qemu-system-aarch64"
+        foreign.parent.mkdir()
+        foreign.write_text("private argv must not be retained")
+        escaped = self.root / "sdk/emulator/escape"
+        escaped.symlink_to(foreign)
+        candidates = [foreign, self.root / "sdk/emulator/wrong/qemu-system-aarch64",
+                      self.root / "sdk/emulator/qemu/darwin-x86_64/qemu-system-aarch64",
+                      self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64-unknown", escaped]
+        for candidate in candidates:
+            ps = self.ps.replace(str(regular), str(candidate)).rstrip() + " private-token\n"
+            with self.assertRaisesRegex(RuntimeError, "registered SDK"):
+                self.active([result("431\n"), result(ps)])
+            observed = H.read(self.directory / "process-observation.json")
+            self.assertFalse(all(observed["checks"].values()))
+            self.assertLessEqual((self.directory / "process-observation.json").stat().st_size, H.CAP)
+            self.assertNotIn("private-token", (self.directory / "process-observation.json").read_text())
+            self.assertFalse((self.directory / "active.json").exists())
+            with self.assertRaises(FileNotFoundError):
+                self.guard()
+        self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_used_registration_disappearance_and_replacement_refuse_active_or_guard(self):
+        regular = self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"
+        self.active()
+        regular.unlink()
+        with self.assertRaisesRegex(RuntimeError, "registration changed"):
+            self.guard()
+        (self.directory / "active.json").unlink()
+        with self.assertRaisesRegex(RuntimeError, "registered SDK"):
+            self.active([result("431\n"), result(self.ps)])
+        observed = H.read(self.directory / "process-observation.json")
+        self.assertFalse(observed["checks"]["registrationUnchanged"])
+        regular.write_text("replaced")
+        regular.chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, "registered SDK"):
+            self.active([result("431\n"), result(self.ps)])
+        self.assertFalse((self.directory / "active.json").exists())
+
+    def test_unused_alternative_may_be_absent_but_actual_registered_backend_required(self):
+        headless = self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64-headless"
+        headless.unlink()
+        (self.directory / "prelaunch.json").unlink()
+        H.prelaunch(self.directory)
+        pre = H.read(self.directory / "prelaunch.json")
+        pre["beforeLaunchUnix"] = time.time() - 2
+        self.save(self.directory / "prelaunch.json", pre)
+        self.active()
+        self.guard()
+        self.assertIn(str(headless), pre["sdkExecutables"]["absent"])
+        (self.root / "sdk/emulator/emulator").unlink()
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            H.sdk_registration()
+
+    def test_provisional_duplicate_oversized_or_invalid_identity_never_authorizes(self):
+        self.active()
+        (self.directory / "active.json").unlink()
+        with patch.object(H, "capture", side_effect=[result("431\n"), result(self.ps)]), self.assertRaisesRegex(RuntimeError, "Duplicate"):
+            H.active(self.directory, self.observer, time.monotonic() + 28)
+        with self.assertRaises(FileNotFoundError):
+            self.guard()
+        for row in (result("invalid process row"), result(self.ps, truncated=True, droppedBytes={"stdout": 1, "stderr": 0})):
+            with self.assertRaises(RuntimeError):
+                self.active([result("431\n"), row])
+        self.assertFalse((self.directory / "active.json").exists())
+        self.assertFalse((self.directory / "handoff.json").exists())
+
+    def test_encoded_provisional_observation_cap_refuses_before_active_publication(self):
+        oversized = "/" + '"' * 4500
+        original_resolve = Path.resolve
+        def resolve(path, *args, **kwargs):
+            return path if str(path) == oversized else original_resolve(path, *args, **kwargs)
+        identity = {"pid": 431, "started": time.strftime("%a %b %d %H:%M:%S %Y"), "argv": [oversized]}
+        with patch.object(Path, "resolve", resolve), patch.object(H, "process_identity", return_value=identity), patch.object(H, "capture", return_value=result("431\n")):
+            with self.assertRaisesRegex(RuntimeError, "oversized"):
+                H.active(self.directory, self.observer, time.monotonic() + 28)
+        self.assertFalse((self.directory / "process-observation.json").exists())
+        self.assertFalse((self.directory / "active.json").exists())
+        with self.assertRaises(FileNotFoundError):
+            self.guard()
+
+    def test_bound_configured_sdk_alias_and_canonical_spelling_share_exact_registered_file(self):
+        alias = self.root / "declared-sdk-alias"
+        alias.symlink_to(self.root / "sdk")
+        with patch.dict(os.environ, ANDROID_HOME=str(alias)):
+            (self.directory / "prelaunch.json").unlink()
+            H.prelaunch(self.directory)
+            pre = H.read(self.directory / "prelaunch.json")
+            pre["beforeLaunchUnix"] = time.time() - 2
+            self.save(self.directory / "prelaunch.json", pre)
+            for ps in (self.ps.replace(str(self.root / "sdk"), str(alias)), self.ps):
+                self.active([result("431\n"), result(ps), result("p431\nn*:5554\nn127.0.0.1:5555\n")])
+                observed = H.read(self.directory / "process-observation.json")
+                self.assertTrue(observed["checks"]["declaredSdkSpelling"])
+                self.assertEqual(observed["executablePath"], str(self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"))
+                self.guard()
+                (self.directory / "active.json").unlink()
+                (self.directory / "handoff.json").unlink()
+            self.active()
+        with self.assertRaisesRegex(RuntimeError, "registration changed"):
+            self.guard()
+
+    def test_unconfigured_external_alias_resolving_registered_binary_still_refuses(self):
+        alias = self.root / "unconfigured-sdk-alias"
+        alias.symlink_to(self.root / "sdk")
+        ps = self.ps.replace(str(self.root / "sdk"), str(alias))
+        with self.assertRaisesRegex(RuntimeError, "registered SDK"):
+            self.active([result("431\n"), result(ps)])
+        observed = H.read(self.directory / "process-observation.json")
+        self.assertTrue(observed["checks"]["registeredFile"])
+        self.assertFalse(observed["checks"]["declaredSdkSpelling"])
+        self.assertNotEqual(observed["rawExecutablePath"], observed["executablePath"])
+        self.assertFalse((self.directory / "active.json").exists())
 
     def test_workflow_preserves_failure_and_sequential_guard(self):
         source = Path(__file__).parents[1] / ".github/workflows/ci.yml"

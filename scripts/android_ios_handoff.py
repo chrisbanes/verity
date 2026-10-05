@@ -17,6 +17,8 @@ from android_boot_diagnostics import binding, capture, SERIAL, AVD
 
 CAP = 8192
 PORTS = (5554, 5555)
+SDK_EXECUTABLES = ("emulator", "qemu/darwin-aarch64/qemu-system-aarch64",
+                   "qemu/darwin-aarch64/qemu-system-aarch64-headless")
 
 
 def read(path, limit=CAP):
@@ -142,6 +144,29 @@ def owned_directory(seed):
     return identity
 
 
+def sdk_registration():
+    configured = Path(os.environ["ANDROID_HOME"]) / "emulator"
+    if not configured.is_absolute():
+        raise RuntimeError("Configured SDK path is not absolute")
+    sdk = configured.resolve()
+    directory = directory_identity(sdk)
+    files, absent = [], []
+    for relative in SDK_EXECUTABLES:
+        path = sdk / relative
+        if not path.exists() and not path.is_symlink():
+            absent.append(str(path))
+            continue
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or path.resolve() != path or sdk not in path.parents or not os.access(path, os.X_OK):
+            raise RuntimeError("Ambiguous configured SDK executable")
+        files.append({"path": str(path), "device": info.st_dev, "inode": info.st_ino,
+                      "size": info.st_size, "mtimeNs": info.st_mtime_ns,
+                      "birthUnix": getattr(info, "st_birthtime", None)})
+    if str(sdk / "emulator") in absent or len(files) < 2:
+        raise RuntimeError("Required configured SDK frontend/ARM64 backend is missing")
+    return {"configuredPath": str(configured), "directory": directory, "files": files, "absent": absent}
+
+
 def config_identity(path):
     if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
         raise RuntimeError("Ambiguous AVD configuration")
@@ -190,7 +215,7 @@ def prelaunch(directory):
     identity = owned_directory(seed)
     config = config_identity(config_path())
     write(directory / "prelaunch.json", {"prepared": seed, "avdDirectory": identity,
-                                        "config": config, "beforeLaunchUnix": time.time()})
+                                        "config": config, "sdkExecutables": sdk_registration(), "beforeLaunchUnix": time.time()})
 
 
 def process_identity(pid, deadline):
@@ -227,10 +252,26 @@ def active(directory, observer_directory, deadline):
     if identity is None:
         raise RuntimeError("Emulator exited before identity collection")
     argv = identity["argv"]
-    sdk = Path(os.environ["ANDROID_HOME"]).resolve() / "emulator"
-    executable = Path(argv[0]).resolve()
-    if sdk not in executable.parents or executable.name not in ("emulator", "qemu-system-aarch64"):
-        raise RuntimeError("Console listener is not the configured SDK emulator")
+    configured_sdk = Path(os.environ["ANDROID_HOME"]) / "emulator"
+    sdk = configured_sdk.resolve()
+    raw_executable = Path(argv[0])
+    executable = raw_executable.resolve()
+    try:
+        registered = sdk_registration()
+    except (OSError, RuntimeError):
+        registered = None
+    checks = {"absolute": raw_executable.is_absolute(), "declaredSdkSpelling": str(raw_executable) in [str(root / relative) for root in (configured_sdk, sdk) for relative in SDK_EXECUTABLES],
+              "configuredSdkContainment": sdk in executable.parents,
+              "exactAllowedPath": str(executable) in [str(sdk / relative) for relative in SDK_EXECUTABLES],
+              "registeredFile": str(executable) in [row["path"] for row in pre["sdkExecutables"]["files"]],
+              "registrationUnchanged": registered == pre["sdkExecutables"]}
+    write(directory / "process-observation.json", {"binding": seed["binding"], "sourceSha256": seed["sourceSha256"],
+        "nonce": seed["nonce"], "serial": SERIAL, "avd": AVD, "provisional": True,
+        "pid": pid, "started": identity["started"], "rawExecutablePath": str(raw_executable),
+        "executablePath": str(executable), "expectedSdk": str(sdk),
+        "checks": checks})
+    if not all(checks.values()):
+        raise RuntimeError("Console listener is not an unchanged registered SDK executable")
     if argv.count("-avd") != 1 or argv[argv.index("-avd") + 1] != AVD or argv.count("-port") != 1 or argv[argv.index("-port") + 1] != "5554":
         raise RuntimeError("Emulator argv does not identify the owned AVD/port")
     started = time.mktime(time.strptime(identity["started"], "%a %b %d %H:%M:%S %Y"))
@@ -261,6 +302,8 @@ def guard(directory, observer_directory, outcomes, cancelled, deadline):
         raise RuntimeError("Stale launch identity")
     if owned_directory(seed) != pre["avdDirectory"]:
         raise RuntimeError("AVD directory identity changed before handoff")
+    if sdk_registration() != pre["sdkExecutables"]:
+        raise RuntimeError("Configured SDK executable registration changed before handoff")
     control = read(observer_directory / "control.json")
     if active_record["observer"] != control:
         raise RuntimeError("Observer identity changed")
