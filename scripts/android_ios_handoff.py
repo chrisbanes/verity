@@ -48,13 +48,68 @@ def eligible(outcomes, cancelled):
         "prepare": "success", "observer": "success", "android": outcomes.get("android")} and outcomes.get("android") in ("success", "failure")
 
 
-def checked(argv, deadline):
-    result = capture(argv, deadline=deadline, limit=CAP)
+def checked_result(result, deadline):
     if result["outcome"] != "completed" or not result["joined"] or result["truncated"] or any(result["droppedBytes"].values()):
         raise RuntimeError("Unknown process/socket inspection")
     if time.monotonic() >= deadline:
         raise RuntimeError("Handoff deadline expired")
     return result
+
+
+
+def checked(argv, deadline):
+    return checked_result(capture(argv, deadline=deadline, limit=CAP), deadline)
+
+
+def listener_observation(directory, seed, pid, result):
+    fields, unknown, recognized = [], [], 0
+    rows = result["stdout"].splitlines()
+    for row in rows:
+        numeric = re.fullmatch(r"([pf])([0-9]{1,10})", row)
+        endpoint = re.fullmatch(r"n(\*|127\.0\.0\.1|\[::\]|\[::1\]):([0-9]{1,5})", row)
+        if numeric:
+            value = {"field": numeric[1], "value": int(numeric[2])}
+        elif endpoint:
+            value = {"field": "n", "address": endpoint[1], "port": int(endpoint[2])}
+        else:
+            unknown.append(row)
+            continue
+        recognized += 1
+        if len(fields) < 64:
+            fields.append(value)
+    stderr = result["stderr"].encode()
+    unknown_data = "\n".join(unknown).encode()
+    dropped = recognized - len(fields)
+    write(directory / "listener-observation.json", {"binding": seed["binding"], "sourceSha256": seed["sourceSha256"],
+        "nonce": seed["nonce"], "serial": SERIAL, "avd": AVD, "pid": pid, "provisional": True,
+        "status": {key: result[key] for key in ("outcome", "exit", "seconds", "joined", "truncated", "droppedBytes")},
+        "rowCount": len(rows), "fields": fields, "droppedStructuredRows": dropped,
+        "unknownRowCount": len(unknown), "unknownBytes": len(unknown_data),
+        "unknownSha256": hashlib.sha256(unknown_data).hexdigest(),
+        "stderrRowCount": len(stderr.splitlines()), "stderrBytes": len(stderr), "stderrSha256": hashlib.sha256(stderr).hexdigest()})
+    if dropped:
+        raise RuntimeError("Truncated listener observation")
+
+
+def listener_ports(stdout, pid):
+    rows = stdout.splitlines()
+    if not rows or rows[0] != "p" + str(pid) or len(rows) < 3 or (len(rows) - 1) % 2:
+        raise RuntimeError("Missing or foreign owned listener process/file set")
+    descriptors, ports = set(), set()
+    for index in range(1, len(rows), 2):
+        descriptor = re.fullmatch(r"f([0-9]{1,10})", rows[index])
+        endpoint = re.fullmatch(r"n(\*|127\.0\.0\.1|\[::\]|\[::1\]):([0-9]{1,5})", rows[index + 1])
+        if not descriptor or not endpoint:
+            raise RuntimeError("Unknown or orphan listener descriptor/endpoint")
+        fd = int(descriptor[1])
+        port = int(endpoint[2])
+        if not 0 <= fd <= 2147483647 or fd in descriptors or not 1 <= port <= 65535:
+            raise RuntimeError("Duplicate or invalid listener descriptor/port")
+        descriptors.add(fd)
+        ports.add(port)
+    if not set(PORTS).issubset(ports):
+        raise RuntimeError("Declared emulator ports not owned by exact process")
+    return sorted(ports)
 
 
 def free_ports(ports):
@@ -277,15 +332,12 @@ def active(directory, observer_directory, deadline):
     started = time.mktime(time.strptime(identity["started"], "%a %b %d %H:%M:%S %Y"))
     if started < int(pre["beforeLaunchUnix"]) or started > time.time():
         raise RuntimeError("Process predates owned launch")
-    ports = checked(["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], deadline)
-    rows = ports["stdout"].splitlines()
-    if ports["exit"] != 0 or ports["stderr"].strip() or any(not re.fullmatch(r"(?:p[0-9]+|n(?:\*|127\.0\.0\.1|\[::\]|\[::1\]):[0-9]+)", row) for row in rows):
-        raise RuntimeError("Unknown owned listener inventory")
-    if {row for row in rows if row.startswith("p")} != {"p" + str(pid)}:
-        raise RuntimeError("Listener process collision")
-    owned = sorted({int(row.rsplit(":", 1)[1]) for row in rows if row.startswith("n")})
-    if not set(PORTS).issubset(owned):
-        raise RuntimeError("Declared emulator ports not owned by exact process")
+    ports = capture(["lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], deadline=deadline, limit=CAP)
+    listener_observation(directory, seed, pid, ports)
+    checked_result(ports, deadline)
+    if ports["exit"] != 0 or ports["stderr"].strip():
+        raise RuntimeError("Unknown owned listener inventory status")
+    owned = listener_ports(ports["stdout"], pid)
     if time.monotonic() >= deadline:
         raise RuntimeError("Identity collection deadline expired")
     write(directory / "active.json", {"prepared": seed, "prelaunch": pre, "observer": control,

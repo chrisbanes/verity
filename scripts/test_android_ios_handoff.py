@@ -69,7 +69,8 @@ class HandoffTest(unittest.TestCase):
     def active(self, replies=None):
         # Each fixture invocation is independent; production duplicate publication is tested separately.
         (self.directory / "process-observation.json").unlink(missing_ok=True)
-        with patch.object(H, "capture", side_effect=replies or [result("431\n"), result(self.ps), result("p431\nn*:5554\nn127.0.0.1:5555\nn[::1]:8554\n")]):
+        (self.directory / "listener-observation.json").unlink(missing_ok=True)
+        with patch.object(H, "capture", side_effect=replies or [result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\nf4\nn127.0.0.1:5555\nf5\nn[::1]:8554\n")]):
             H.active(self.directory, self.observer, time.monotonic() + 28)
 
     def guard(self, reply=None, **kwargs):
@@ -121,7 +122,7 @@ class HandoffTest(unittest.TestCase):
             H.prelaunch(self.directory)
 
     def test_console_collision_foreign_argv_and_incomplete_listener_inventory_refuse(self):
-        variants = [[result("431\n432\n")], [result("431\n"), result(self.ps.replace("-avd test", "-avd ambient"))], [result("431\n"), result(self.ps), result("p431\nn*:5554\n")]]
+        variants = [[result("431\n432\n")], [result("431\n"), result(self.ps.replace("-avd test", "-avd ambient"))], [result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\n")]]
         for replies in variants:
             with self.assertRaises(RuntimeError):
                 self.active(replies)
@@ -355,7 +356,7 @@ class HandoffTest(unittest.TestCase):
         for relative in H.SDK_EXECUTABLES:
             executable = self.root / "sdk/emulator" / relative
             ps = self.ps.replace(str(self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"), str(executable))
-            self.active([result("431\n"), result(ps), result("p431\nn*:5554\nn127.0.0.1:5555\n")])
+            self.active([result("431\n"), result(ps), result("p431\nf3\nn*:5554\nf4\nn127.0.0.1:5555\n")])
             observed = H.read(self.directory / "process-observation.json")
             self.assertTrue(observed["provisional"])
             self.assertTrue(all(observed["checks"].values()))
@@ -457,7 +458,7 @@ class HandoffTest(unittest.TestCase):
             pre["beforeLaunchUnix"] = time.time() - 2
             self.save(self.directory / "prelaunch.json", pre)
             for ps in (self.ps.replace(str(self.root / "sdk"), str(alias)), self.ps):
-                self.active([result("431\n"), result(ps), result("p431\nn*:5554\nn127.0.0.1:5555\n")])
+                self.active([result("431\n"), result(ps), result("p431\nf3\nn*:5554\nf4\nn127.0.0.1:5555\n")])
                 observed = H.read(self.directory / "process-observation.json")
                 self.assertTrue(observed["checks"]["declaredSdkSpelling"])
                 self.assertEqual(observed["executablePath"], str(self.root / "sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64"))
@@ -479,6 +480,71 @@ class HandoffTest(unittest.TestCase):
         self.assertFalse(observed["checks"]["declaredSdkSpelling"])
         self.assertNotEqual(observed["rawExecutablePath"], observed["executablePath"])
         self.assertFalse((self.directory / "active.json").exists())
+
+    def test_strict_descriptor_inventory_keeps_all_ports_with_ipv4_ipv6_and_wildcard(self):
+        rows = "p431\nf0\nn*:5554\nf4\nn127.0.0.1:5555\nf5\nn[::]:5554\nf6\nn[::1]:8554\n"
+        self.assertEqual(H.listener_ports(rows, 431), [5554, 5555, 8554])
+        self.active([result("431\n"), result(self.ps), result(rows)])
+        report = H.read(self.directory / "listener-observation.json")
+        self.assertEqual(report["rowCount"], 9)
+        self.assertEqual(report["unknownRowCount"], 0)
+        self.assertTrue(report["provisional"])
+        self.guard()
+        self.assertEqual(H.read(self.directory / "handoff.json")["portsClosed"], [5554, 5555, 8554])
+
+    def test_orphan_duplicate_foreign_unknown_missing_and_invalid_inventory_refuses(self):
+        valid = "p431\nf3\nn*:5554\nf4\nn127.0.0.1:5555\n"
+        variants = ["", valid.replace("p431", "p432"), valid + "p431\n", valid.replace("f4", "f3"),
+                    valid.replace("f3\n", ""), valid.replace("n*:5554\n", ""), valid + "n*:8554\n",
+                    valid.replace("f4", "cprivate-command"), valid.replace("n*:5554", "n10.0.0.1:5554"),
+                    valid.replace("f3", "f-1"), valid.replace("f3", "f2147483648"),
+                    valid.replace(":5554", ":0"), valid.replace(":5554", ":65536"), valid.replace(":5554", ":8554")]
+        for rows in variants:
+            with self.subTest(rows=rows), self.assertRaises(RuntimeError):
+                self.active([result("431\n"), result(self.ps), result(rows)])
+            self.assertTrue((self.directory / "listener-observation.json").exists())
+            self.assertFalse((self.directory / "active.json").exists())
+        with self.assertRaises(FileNotFoundError):
+            self.guard()
+
+    def test_listener_status_and_private_output_observed_without_authorizing(self):
+        valid = "p431\nf3\nn*:5554\nf4\nn127.0.0.1:5555\n"
+        changes = [{"exit": 1}, {"stderr": "private-filesystem-warning"}, {"outcome": "timeout"},
+                   {"truncated": True}, {"joined": False}, {"droppedBytes": {"stdout": 1, "stderr": 0}}]
+        for change in changes:
+            with self.assertRaises(RuntimeError):
+                self.active([result("431\n"), result(self.ps), result(valid, **change)])
+            report = H.read(self.directory / "listener-observation.json")
+            key = next(iter(change))
+            if key == "stderr":
+                self.assertEqual(report["stderrBytes"], len(change[key]))
+                self.assertEqual(report["stderrRowCount"], 1)
+            else:
+                self.assertEqual(report["status"][key], change[key])
+            self.assertNotIn("private-filesystem-warning", (self.directory / "listener-observation.json").read_text())
+        private = "private-unknown-row-with-token"
+        with self.assertRaises(RuntimeError):
+            self.active([result("431\n"), result(self.ps), result(valid + private + "\n")])
+        report = H.read(self.directory / "listener-observation.json")
+        self.assertEqual(report["unknownRowCount"], 1)
+        self.assertEqual(report["unknownBytes"], len(private))
+        self.assertNotIn(private, (self.directory / "listener-observation.json").read_text())
+        self.assertFalse((self.directory / "active.json").exists())
+
+    def test_listener_observation_row_cap_duplicate_and_deadline_refuse(self):
+        rows = "p431\n" + "".join("f" + str(fd) + "\nn*:" + str(5554 + fd) + "\n" for fd in range(40))
+        with self.assertRaisesRegex(RuntimeError, "Truncated"):
+            self.active([result("431\n"), result(self.ps), result(rows)])
+        report = H.read(self.directory / "listener-observation.json")
+        self.assertGreater(report["droppedStructuredRows"], 0)
+        self.assertLessEqual((self.directory / "listener-observation.json").stat().st_size, H.CAP)
+        (self.directory / "process-observation.json").unlink()
+        with patch.object(H, "capture", side_effect=[result("431\n"), result(self.ps), result("p431\nf3\nn*:5554\nf4\nn*:5555\n")]), self.assertRaisesRegex(RuntimeError, "Duplicate"):
+            H.active(self.directory, self.observer, time.monotonic() + 28)
+        with self.assertRaisesRegex(RuntimeError, "deadline"):
+            H.checked_result(result(), time.monotonic() - 1)
+        self.assertFalse((self.directory / "active.json").exists())
+        self.assertFalse((self.directory / "handoff.json").exists())
 
     def test_workflow_preserves_failure_and_sequential_guard(self):
         source = Path(__file__).parents[1] / ".github/workflows/ci.yml"
