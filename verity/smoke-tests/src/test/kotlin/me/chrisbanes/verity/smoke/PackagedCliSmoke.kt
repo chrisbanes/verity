@@ -29,6 +29,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.tools.ToolProvider
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.time.TimeSource
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
@@ -37,6 +39,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -266,7 +269,7 @@ private class PackagedQualification {
     val client = Client(Implementation("verity-packaged-smoke", "1"))
     try {
       withTimeout(30_000) { client.connect(StdioClientTransport(input.asSource().buffered(), child.process.outputStream.asSink().buffered())) }
-      tools(client, target, platform, record)
+      tools(client, target, platform, record, "stdio")
     } finally {
       withContext(NonCancellable) {
         try {
@@ -310,7 +313,7 @@ private class PackagedQualification {
         }
       }
       withTimeout(30_000) { client.connect(transport) }
-      tools(client, target, platform, record)
+      tools(client, target, platform, record, "http")
     } finally {
       withContext(NonCancellable) {
         try {
@@ -331,11 +334,11 @@ private class PackagedQualification {
     }
   }
 
-  private suspend fun tools(client: Client, target: String, platform: Platform, record: (String) -> Unit) {
+  private suspend fun tools(client: Client, target: String, platform: Platform, record: (String) -> Unit, transport: String) {
     assertThat(client.serverVersion!!.name).isEqualTo("verity")
     assertThat(withTimeout(30_000) { client.listTools().tools.size }).isEqualTo(14)
     suspend fun call(name: String, arguments: JsonObject) = client.callTool(CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)))
-    exercisePackagedTools(platform, target, record, ::call)
+    exercisePackagedTools(platform, target, record, ::call, transport)
   }
 
   private suspend fun start(directory: File, owned: MutableList<PackagedChild>, name: String, args: List<String>, pipeOutput: Boolean = false): PackagedChild = withContext(Dispatchers.IO) {
@@ -361,7 +364,7 @@ private class PackagedQualification {
 }
 
 /** Same protocol sequence is exercised by real SDK clients and offline negative fixtures. */
-private suspend fun exercisePackagedTools(platform: Platform, target: String, record: (String) -> Unit, call: suspend (String, JsonObject) -> CallToolResult) {
+private suspend fun exercisePackagedTools(platform: Platform, target: String, record: (String) -> Unit, call: suspend (String, JsonObject) -> CallToolResult, transport: String = "offline", recordDispatcher: CoroutineDispatcher = Dispatchers.IO) {
   fun text(result: CallToolResult) = result.content.filterIsInstance<TextContent>().joinToString("\n") { it.text }
   fun args(id: String) = buildJsonObject { put("session_id", id) }
   fun diffArgs(id: String, snapshot: String) = buildJsonObject {
@@ -387,14 +390,25 @@ private suspend fun exercisePackagedTools(platform: Platform, target: String, re
     check(opened.isError != true) { text(opened) }
     return Regex("session_id: ([a-f0-9-]+)").find(text(opened))?.groupValues?.get(1) ?: error("Missing session ID: ${text(opened)}")
   }
-  suspend fun close(id: String) = withContext(NonCancellable) {
-    val closed = withTimeout(10_000) { call("close_session", args(id)) }
-    check(closed.isError != true) { text(closed) }
-    withContext(Dispatchers.IO) { record("session_id=$id close=completed") }
+  suspend fun close(id: String) {
+    val started = TimeSource.Monotonic.markNow()
+    suspend fun stage(value: String) = withContext(NonCancellable + recordDispatcher) {
+      record("transport=$transport session_id=$id stage=close_session close=$value elapsed_ms=${started.elapsedNow().inWholeMilliseconds}")
+    }
+    stage("started")
+    try {
+      val closed = call("close_session", args(id))
+      stage("response")
+      check(closed.isError != true) { text(closed) }
+      stage("completed")
+    } catch (failure: Throwable) {
+      stage("failed type=${failure.javaClass.simpleName}")
+      throw failure
+    }
   }
   val id = open()
-  val snapshot = try {
-    withContext(Dispatchers.IO) { record("session_id=$id open=completed") }
+  val snapshot = withPackagedSessionClose({ close(id) }) {
+    withContext(recordDispatcher) { record("session_id=$id open=completed") }
     withTimeout(120_000) {
       val captured = call(
         "capture_hierarchy",
@@ -416,11 +430,9 @@ private suspend fun exercisePackagedTools(platform: Platform, target: String, re
       check(key.isError != true) { text(key) }
       val diff = call("diff_hierarchy", diffArgs(id, snapshot))
       check(diff.isError != true) { text(diff) }
-      withContext(Dispatchers.IO) { record("session_id=$id snapshot_id=$snapshot hierarchy=nonempty diff=passed") }
+      withContext(recordDispatcher) { record("session_id=$id snapshot_id=$snapshot hierarchy=nonempty diff=passed") }
       snapshot
     }
-  } finally {
-    close(id)
   }
   withTimeout(120_000) {
     check(call("capture_hierarchy", args(id)).isError == true) { "Closed session still captures" }
@@ -428,17 +440,35 @@ private suspend fun exercisePackagedTools(platform: Platform, target: String, re
   }
   // Observable cleared-session semantics: the new session has no captures and cannot reuse an old ID.
   val fresh = open()
-  try {
-    withContext(Dispatchers.IO) { record("session_id=$fresh open=completed") }
+  withPackagedSessionClose({ close(fresh) }) {
+    withContext(recordDispatcher) { record("session_id=$fresh open=completed") }
     withTimeout(120_000) {
       val empty = call("diff_hierarchy", args(fresh))
       check(errorCode(empty) == "insufficient_captures")
       check(Json.parseToJsonElement(text(empty)).jsonObject["error"]!!.jsonObject["available_captures"]!!.jsonPrimitive.content == "0") { "Fresh session retained captures" }
       check(errorCode(call("diff_hierarchy", diffArgs(fresh, snapshot))) == "snapshot_unavailable")
-      withContext(Dispatchers.IO) { record("snapshot_reuse=closed-session-rejected fresh-session-empty old-id-unavailable") }
+      withContext(recordDispatcher) { record("snapshot_reuse=closed-session-rejected fresh-session-empty old-id-unavailable") }
     }
+  }
+}
+
+/** Cleanup gets the existing functional allowance and cannot replace a failed body. */
+private suspend fun <T> withPackagedSessionClose(close: suspend () -> Unit, body: suspend () -> T): T {
+  var primary: Throwable? = null
+  try {
+    return body()
+  } catch (failure: Throwable) {
+    primary = failure
+    throw failure
   } finally {
-    close(fresh)
+    withContext(NonCancellable) {
+      try {
+        withTimeout(120_000) { close() }
+      } catch (failure: Throwable) {
+        if (primary == null) throw failure
+        if (failure !== primary) primary.addSuppressed(failure)
+      }
+    }
   }
 }
 
@@ -733,7 +763,49 @@ class PackagedInputsTest {
   }
 }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PackagedProtocolSequenceTest {
+  @Test
+  fun `close beyond ten seconds completes within functional allowance`() = runTest {
+    val fixture = ProtocolFixture(Platform.ANDROID_MOBILE, closeDelayMs = 11_000)
+    val records = mutableListOf<String>()
+    exercisePackagedTools(fixture.platform, "owned-target", records::add, fixture::call, "fixture-stdio", StandardTestDispatcher(testScheduler))
+    assertThat(fixture.closed.size).isEqualTo(2)
+    assertThat(fixture.calls).isEqualTo(listOf("open_session", "capture_hierarchy", "press_key", "diff_hierarchy", "close_session", "capture_hierarchy", "diff_hierarchy", "open_session", "diff_hierarchy", "diff_hierarchy", "close_session"))
+    assertThat(records.count { "transport=fixture-stdio" in it && "close=started" in it }).isEqualTo(2)
+    assertThat(records.count { "close=response" in it }).isEqualTo(2)
+    assertThat(records.count { "close=completed" in it }).isEqualTo(2)
+    assertThat(records.any { "snapshot_reuse=closed-session-rejected fresh-session-empty old-id-unavailable" in it }).isTrue()
+    assertThat(testScheduler.currentTime).isEqualTo(22_000L)
+  }
+
+  @Test
+  fun `close beyond functional allowance still fails`() = runTest {
+    val fixture = ProtocolFixture(Platform.ANDROID_MOBILE, closeDelayMs = 120_001)
+    val records = mutableListOf<String>()
+    assertFailsWith<TimeoutCancellationException> {
+      exercisePackagedTools(fixture.platform, "owned-target", records::add, fixture::call, "fixture-http", StandardTestDispatcher(testScheduler))
+    }
+    assertThat(fixture.closed.isEmpty()).isTrue()
+    assertThat(fixture.calls.last()).isEqualTo("close_session")
+    assertThat(records.any { "transport=fixture-http" in it && "close=failed type=TimeoutCancellationException" in it }).isTrue()
+    assertThat(records.none { "close=completed" in it }).isTrue()
+    assertThat(testScheduler.currentTime).isEqualTo(120_000L)
+  }
+
+  @Test
+  fun `body failure remains primary when close also fails`() = runTest {
+    val bodyFailure = IllegalStateException("primary body failure")
+    val closeFailure = IllegalArgumentException("close failure")
+    val actual = assertFailsWith<IllegalStateException> {
+      withPackagedSessionClose({ throw closeFailure }) { throw bodyFailure }
+    }
+    assertThat(actual === bodyFailure).isTrue()
+    assertThat(actual.suppressed.size).isEqualTo(1)
+    assertThat(actual.suppressed.single().javaClass).isEqualTo(closeFailure.javaClass)
+    assertThat(actual.suppressed.single().message).isEqualTo(closeFailure.message)
+  }
+
   @Test
   fun `both platform keys capture nonempty hierarchy and reject old snapshots after complete close`() = runTest {
     for (platform in listOf(Platform.ANDROID_MOBILE, Platform.IOS)) {
@@ -772,7 +844,7 @@ class PackagedProtocolSequenceTest {
     exercisePackagedTools(fixture.platform, "owned-target", {}, fixture::call)
   }
 
-  private class ProtocolFixture(val platform: Platform, val emptyHierarchy: Boolean = false, val leak: String? = null, val failClose: Boolean = false) {
+  private class ProtocolFixture(val platform: Platform, val emptyHierarchy: Boolean = false, val leak: String? = null, val failClose: Boolean = false, val closeDelayMs: Long = 0) {
     val calls = mutableListOf<String>()
     val closed = mutableSetOf<String>()
     private var opens = 0
@@ -790,11 +862,14 @@ class PackagedProtocolSequenceTest {
           success("session_id: ${if (opens++ == 0) first else fresh}")
         }
 
-        "close_session" -> if (failClose) {
-          error("close_failed")
-        } else {
-          closed += checkNotNull(id)
-          success("closed")
+        "close_session" -> {
+          delay(closeDelayMs)
+          if (failClose) {
+            error("close_failed")
+          } else {
+            closed += checkNotNull(id)
+            success("closed")
+          }
         }
 
         "capture_hierarchy" -> if (id in closed) error("session_unavailable") else success("snapshot_id: $snapshot\n\n${if (emptyHierarchy) "" else "[0] text=Settings"}")
