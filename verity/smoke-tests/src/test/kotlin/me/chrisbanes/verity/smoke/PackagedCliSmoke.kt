@@ -7,10 +7,16 @@ import assertk.assertions.isTrue
 import com.sun.net.httpserver.HttpServer
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpTimeoutCapability
+import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.plugins.timeout
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
 import io.modelcontextprotocol.kotlin.sdk.client.StreamableHttpClientTransport
+import io.modelcontextprotocol.kotlin.sdk.shared.RequestOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
@@ -24,11 +30,14 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import javax.tools.ToolProvider
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +46,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -49,6 +59,7 @@ import kotlinx.io.buffered
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -296,10 +307,18 @@ private class PackagedQualification {
   private suspend fun http(directory: File, options: List<String>, target: String, platform: Platform, owned: MutableList<PackagedChild>, record: (String) -> Unit) {
     val port = withContext(Dispatchers.IO) { ServerSocket(0).use { it.localPort } }
     val child = start(directory, owned, "http", options + listOf("mcp", "--transport", "http", "--host", "127.0.0.1", "--port", port.toString()))
-    val http = HttpClient(CIO) { install(SSE) }
+    val http = packagedHttpClient(record)
     val client = Client(Implementation("verity-packaged-http-smoke", "1"))
-    val transport = StreamableHttpClientTransport(http, "http://127.0.0.1:$port/mcp")
-    try {
+    val transport = packagedHttpTransport(http, "http://127.0.0.1:$port/mcp")
+    withPackagedCleanup({
+      withPackagedCleanup({
+        withPackagedCleanup({ withContext(Dispatchers.IO) { child.stop() } }) { http.close() }
+      }) {
+        withPackagedCleanup({ withTimeout(10_000) { client.close() } }) {
+          withTimeout(10_000) { transport.terminateSession() }
+        }
+      }
+    }) {
       withTimeout(30_000) {
         while (!withContext(Dispatchers.IO) {
             runCatching {
@@ -314,19 +333,6 @@ private class PackagedQualification {
       }
       withTimeout(30_000) { client.connect(transport) }
       tools(client, target, platform, record, "http")
-    } finally {
-      withContext(NonCancellable) {
-        try {
-          withTimeout(10_000) { transport.terminateSession() }
-        } finally {
-          try {
-            withTimeout(10_000) { client.close() }
-          } finally {
-            http.close()
-            withContext(Dispatchers.IO) { child.stop() }
-          }
-        }
-      }
     }
     withContext(Dispatchers.IO) {
       check(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 100) } }.isFailure) { "Owned HTTP port remains open" }
@@ -336,8 +342,8 @@ private class PackagedQualification {
 
   private suspend fun tools(client: Client, target: String, platform: Platform, record: (String) -> Unit, transport: String) {
     assertThat(client.serverVersion!!.name).isEqualTo("verity")
-    assertThat(withTimeout(30_000) { client.listTools().tools.size }).isEqualTo(14)
-    suspend fun call(name: String, arguments: JsonObject) = client.callTool(CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)))
+    assertThat(withTimeout(30_000) { client.listTools(options = RequestOptions(timeout = 30_000.milliseconds)).tools.size }).isEqualTo(14)
+    suspend fun call(name: String, arguments: JsonObject) = client.callTool(CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)), packagedRequestOptions(name))
     exercisePackagedTools(platform, target, record, ::call, transport)
   }
 
@@ -362,6 +368,50 @@ private class PackagedQualification {
     check(child.process.exitValue() == 0) { "Child failed: ${withContext(Dispatchers.IO) { child.stderr.readText() }}" }
   }
 }
+
+private fun packagedHttpTimeoutMillis(method: String, name: String?, verb: String): Long? = when {
+  verb == "GET" -> null
+
+  // SSE keeps its existing streaming behavior.
+  verb == "DELETE" -> 10_000
+
+  method in setOf("initialize", "notifications/initialized", "tools/list") -> 30_000
+
+  method == "tools/call" && name == "open_session" -> 600_000
+
+  else -> 120_000
+}
+
+private fun packagedRequestOptions(name: String) = RequestOptions(timeout = (if (name == "open_session") 600_000 else 120_000).milliseconds)
+
+private fun packagedHttpClient(record: (String) -> Unit): HttpClient = HttpClient(CIO) {
+  install(SSE)
+  install(HttpTimeout) { requestTimeoutMillis = 120_000 }
+}.apply {
+  plugin(HttpSend).intercept { request ->
+    val method = request.headers["Mcp-Method"].orEmpty()
+    val name = request.headers["Mcp-Name"]
+    val safeMethod = method.takeIf { it in setOf("initialize", "notifications/initialized", "tools/list", "tools/call") } ?: "unknown"
+    val safeName = name?.takeIf { it in setOf("open_session", "close_session", "capture_hierarchy", "press_key", "diff_hierarchy") } ?: "none-or-unknown"
+    val started = TimeSource.Monotonic.markNow()
+    suspend fun stage(value: String) = withContext(NonCancellable + Dispatchers.IO) {
+      record("transport=http stage=request method=$safeMethod name=$safeName verb=${request.method.value} limit_ms=${request.getCapabilityOrNull(HttpTimeoutCapability)?.requestTimeoutMillis ?: packagedHttpTimeoutMillis(method, name, request.method.value) ?: "stream"} state=$value elapsed_ms=${started.elapsedNow().inWholeMilliseconds}")
+    }
+    stage("started")
+    try {
+      execute(request).also { stage("response") }
+    } catch (failure: Throwable) {
+      stage("failed type=${failure.javaClass.simpleName}")
+      throw failure
+    }
+  }
+}
+
+private fun packagedHttpTransport(http: HttpClient, url: String, limit: (String, String?, String) -> Long? = ::packagedHttpTimeoutMillis) = StreamableHttpClientTransport(http, url, requestBuilder = {
+  limit(headers["Mcp-Method"].orEmpty(), headers["Mcp-Name"], method.value)?.let { millis ->
+    timeout { requestTimeoutMillis = millis }
+  }
+})
 
 /** Same protocol sequence is exercised by real SDK clients and offline negative fixtures. */
 private suspend fun exercisePackagedTools(platform: Platform, target: String, record: (String) -> Unit, call: suspend (String, JsonObject) -> CallToolResult, transport: String = "offline", recordDispatcher: CoroutineDispatcher = Dispatchers.IO) {
@@ -453,7 +503,9 @@ private suspend fun exercisePackagedTools(platform: Platform, target: String, re
 }
 
 /** Cleanup gets the existing functional allowance and cannot replace a failed body. */
-private suspend fun <T> withPackagedSessionClose(close: suspend () -> Unit, body: suspend () -> T): T {
+private suspend fun <T> withPackagedSessionClose(close: suspend () -> Unit, body: suspend () -> T): T = withPackagedCleanup({ withTimeout(120_000) { close() } }, body)
+
+private suspend fun <T> withPackagedCleanup(close: suspend () -> Unit, body: suspend () -> T): T {
   var primary: Throwable? = null
   try {
     return body()
@@ -463,7 +515,7 @@ private suspend fun <T> withPackagedSessionClose(close: suspend () -> Unit, body
   } finally {
     withContext(NonCancellable) {
       try {
-        withTimeout(120_000) { close() }
+        close()
       } catch (failure: Throwable) {
         if (primary == null) throw failure
         if (failure !== primary) primary.addSuppressed(failure)
@@ -765,6 +817,172 @@ class PackagedInputsTest {
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PackagedProtocolSequenceTest {
+  @Test
+  fun `HTTP and SDK request limits use exact headers with finite unknown fallback`() {
+    for (method in listOf("initialize", "notifications/initialized", "tools/list")) {
+      assertThat(packagedHttpTimeoutMillis(method, null, "POST")).isEqualTo(30_000L)
+    }
+    assertThat(packagedHttpTimeoutMillis("tools/call", "open_session", "POST")).isEqualTo(600_000L)
+    assertThat(packagedHttpTimeoutMillis("tools/call", "close_session", "POST")).isEqualTo(120_000L)
+    assertThat(packagedHttpTimeoutMillis("tools/call", "open_session_extra", "POST")).isEqualTo(120_000L)
+    assertThat(packagedHttpTimeoutMillis("unknown", "open_session", "POST")).isEqualTo(120_000L)
+    assertThat(packagedHttpTimeoutMillis("", null, "POST")).isEqualTo(120_000L)
+    assertThat(packagedHttpTimeoutMillis("", null, "GET")).isEqualTo(null)
+    assertThat(packagedHttpTimeoutMillis("tools/call", "open_session", "DELETE")).isEqualTo(10_000L)
+    assertThat(packagedRequestOptions("open_session").timeout.inWholeMilliseconds).isEqualTo(600_000L)
+    assertThat(packagedRequestOptions("close_session").timeout.inWholeMilliseconds).isEqualTo(120_000L)
+  }
+
+  @Test
+  fun `real CIO SDK delayed POST needs aligned timeout and still expires or cancels finitely`() = runTest {
+    withContext(Dispatchers.Default) {
+      for (mode in listOf("old-engine", "aligned", "finite-expiry", "cancelled")) {
+        val fixture = ProtocolFixture(Platform.ANDROID_MOBILE)
+        val records = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val methods = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val handlerFailure = AtomicReference<Throwable?>()
+        val executor = Executors.newCachedThreadPool()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+          this.executor = executor
+          createContext("/mcp") { exchange ->
+            try {
+              when (exchange.requestMethod) {
+                "GET" -> exchange.sendResponseHeaders(405, -1)
+
+                "DELETE" -> {
+                  methods += "DELETE"
+                  exchange.sendResponseHeaders(200, -1)
+                }
+
+                else -> {
+                  val request = Json.parseToJsonElement(exchange.requestBody.bufferedReader().use { it.readText() }).jsonObject
+                  val method = request["method"]!!.jsonPrimitive.content
+                  methods += method
+                  assertThat(exchange.requestHeaders.getFirst("Mcp-Method")).isEqualTo(method)
+                  if (method.startsWith("notifications/")) {
+                    exchange.sendResponseHeaders(202, -1)
+                  } else {
+                    val result = when (method) {
+                      "initialize" -> Json.parseToJsonElement("""{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"verity","version":"fixture"}}""")
+
+                      "tools/list" -> Json.parseToJsonElement("""{"tools":[]}""")
+
+                      "tools/call" -> {
+                        val params = request["params"]!!.jsonObject
+                        val name = params["name"]!!.jsonPrimitive.content
+                        assertThat(exchange.requestHeaders.getFirst("Mcp-Name")).isEqualTo(name)
+                        if (name == "open_session") Thread.sleep(2_000)
+                        Json.encodeToJsonElement(runBlocking { fixture.call(name, params["arguments"]!!.jsonObject) })
+                      }
+
+                      else -> error("Unexpected fixture method")
+                    }
+                    val response = buildJsonObject {
+                      put("jsonrpc", "2.0")
+                      put("id", request["id"]!!)
+                      put("result", result)
+                    }.toString().toByteArray()
+                    exchange.responseHeaders.set("Content-Type", "application/json")
+                    exchange.responseHeaders.set("Mcp-Session-Id", "owned-fixture")
+                    exchange.sendResponseHeaders(200, response.size.toLong())
+                    exchange.responseBody.write(response)
+                  }
+                }
+              }
+            } catch (_: java.io.IOException) {
+              // The expected request timeout/cancellation closes the response socket.
+            } catch (_: InterruptedException) {
+              Thread.currentThread().interrupt()
+            } catch (failure: Throwable) {
+              handlerFailure.set(failure)
+            } finally {
+              exchange.close()
+            }
+          }
+          start()
+        }
+        val http = if (mode == "old-engine") {
+          HttpClient(CIO) {
+            install(SSE)
+            engine { requestTimeout = 1_000 }
+          }
+        } else {
+          packagedHttpClient(records::add)
+        }
+        val client = Client(Implementation("verity-http-timeout-fixture", "1"))
+        val url = "http://127.0.0.1:${server.address.port}/mcp"
+        val transport = if (mode == "old-engine") {
+          StreamableHttpClientTransport(http, url)
+        } else {
+          packagedHttpTransport(http, url) { method, name, verb ->
+            packagedHttpTimeoutMillis(method, name, verb)?.let { if (mode == "finite-expiry" && name == "open_session") 1_000 else 5_000 }
+          }
+        }
+        withPackagedCleanup({
+          withPackagedCleanup({
+            try {
+              server.stop(0)
+            } finally {
+              executor.shutdownNow()
+              check(executor.awaitTermination(5, TimeUnit.SECONDS))
+            }
+          }) {
+            withPackagedCleanup({
+              http.close()
+              withTimeout(10_000) { http.coroutineContext.job.join() }
+            }) {
+              withPackagedCleanup({ withTimeout(10_000) { client.close() } }) {
+                withTimeout(10_000) { transport.terminateSession() }
+              }
+            }
+          }
+        }) {
+          withTimeout(15_000) {
+            client.connect(transport)
+            client.listTools(options = RequestOptions(timeout = 30_000.milliseconds))
+            suspend fun call(name: String, arguments: JsonObject) = client.callTool(CallToolRequest(CallToolRequestParams(name = name, arguments = arguments)), packagedRequestOptions(name))
+            if (mode == "aligned") {
+              exercisePackagedTools(fixture.platform, "owned-target", records::add, ::call, "http")
+              assertThat(fixture.closed.size).isEqualTo(2)
+              assertThat(fixture.calls).isEqualTo(listOf("open_session", "capture_hierarchy", "press_key", "diff_hierarchy", "close_session", "capture_hierarchy", "diff_hierarchy", "open_session", "diff_hierarchy", "diff_hierarchy", "close_session"))
+              assertThat(records.count { "name=open_session" in it && "state=response" in it }).isEqualTo(2)
+              assertThat(records.any { "snapshot_reuse=closed-session-rejected fresh-session-empty old-id-unavailable" in it }).isTrue()
+            } else if (mode == "cancelled") {
+              assertFailsWith<TimeoutCancellationException> { withTimeout(500) { call("open_session", buildJsonObject { put("platform", "android") }) } }
+            } else {
+              val failure = assertFailsWith<io.modelcontextprotocol.kotlin.sdk.types.McpException> { call("open_session", buildJsonObject { put("platform", "android") }) }
+              assertThat(generateSequence<Throwable>(failure) { it.cause }.any { it is io.ktor.client.plugins.HttpRequestTimeoutException }).isTrue()
+              if (mode == "finite-expiry") assertThat(records.any { "name=open_session" in it && "limit_ms=1000" in it && "state=failed" in it }).isTrue()
+            }
+          }
+        }
+        assertThat(handlerFailure.get()).isEqualTo(null)
+        assertThat(methods.take(3)).isEqualTo(listOf("initialize", "notifications/initialized", "tools/list"))
+        assertThat(methods.last()).isEqualTo("DELETE")
+        assertThat(executor.isTerminated).isTrue()
+      }
+    }
+  }
+
+  @Test
+  fun `HTTP body failure stays primary through failing teardown`() = runTest {
+    val primary = IllegalStateException("HTTP body failed")
+    val teardown = IllegalArgumentException("HTTP teardown failed")
+    val joinFailure = IllegalStateException("HTTP join failed")
+    var serverJoined = false
+    val actual = assertFailsWith<IllegalStateException> {
+      withPackagedCleanup({
+        withPackagedCleanup({ serverJoined = true }) {
+          withPackagedCleanup({ throw joinFailure }) { throw teardown }
+        }
+      }) { throw primary }
+    }
+    assertThat(actual === primary).isTrue()
+    assertThat(actual.suppressed.single().message).isEqualTo(teardown.message)
+    assertThat(actual.suppressed.single().suppressed.single().message).isEqualTo(joinFailure.message)
+    assertThat(serverJoined).isTrue()
+  }
+
   @Test
   fun `close beyond ten seconds completes within functional allowance`() = runTest {
     val fixture = ProtocolFixture(Platform.ANDROID_MOBILE, closeDelayMs = 11_000)
