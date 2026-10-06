@@ -280,8 +280,99 @@ private fun packagedSha256(file: File): String {
   return java.util.HexFormat.of().formatHex(digest.digest())
 }
 
+/** Exception ownership outlives the real scope's finishing/root-cause selection. */
+private class PackagedQualificationLifetime {
+  private var primary: Throwable? = null
+  private val cleanupFailures = mutableListOf<Throwable>()
+
+  fun failure(failure: Throwable) {
+    val previous = primary
+    if (previous == null) {
+      primary = failure
+    } else if (failure is kotlinx.coroutines.CancellationException && previous !is kotlinx.coroutines.CancellationException) {
+      if (failure !== previous && previous !in failure.suppressed) failure.addSuppressed(previous)
+      primary = failure
+    } else if (failure !== previous && failure !is kotlinx.coroutines.CancellationException) {
+      cleanupFailures += failure
+    }
+  }
+
+  fun attempt(operation: () -> Unit): Throwable? = try {
+    operation()
+    null
+  } catch (failure: Throwable) {
+    cleanupFailures += failure
+    failure
+  }
+
+  suspend fun cleanup(operation: suspend () -> Unit) {
+    try {
+      operation()
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+      failure(cancel)
+    } catch (failure: Throwable) {
+      cleanupFailures += failure
+    }
+  }
+
+  fun resolve(): Throwable? {
+    val chosen = primary ?: cleanupFailures.firstOrNull() ?: return null
+    cleanupFailures.forEach { if (it !== chosen && it !in chosen.suppressed) chosen.addSuppressed(it) }
+    return chosen
+  }
+}
+
+private suspend fun <T> withPackagedQualificationLifetime(body: suspend kotlinx.coroutines.CoroutineScope.(PackagedQualificationLifetime) -> T): T {
+  val lifetime = PackagedQualificationLifetime()
+  var result: Result<T>? = null
+  try {
+    result = Result.success(
+      kotlinx.coroutines.coroutineScope {
+        try {
+          body(lifetime)
+        } catch (failure: Throwable) {
+          lifetime.failure(failure)
+          throw failure
+        }
+      },
+    )
+  } catch (failure: Throwable) {
+    lifetime.failure(failure)
+  }
+  lifetime.resolve()?.let { throw it }
+  return checkNotNull(result).getOrThrow()
+}
+
+private suspend fun finishPackagedQualification(
+  lifetime: PackagedQualificationLifetime,
+  observer: kotlinx.coroutines.Job,
+  owned: List<PackagedChild>,
+  trap: HttpServer,
+  requests: AtomicInteger,
+  record: (String) -> Unit,
+  driverCheck: () -> Unit,
+  ownedCleanup: (PackagedChild) -> Unit = { it.stop() },
+) {
+  lifetime.cleanup { withContext(NonCancellable) { observer.cancelAndJoin() } }
+  lifetime.cleanup {
+    withContext(NonCancellable + Dispatchers.IO) {
+      val childFailures = owned.asReversed().mapNotNull { child -> lifetime.attempt { ownedCleanup(child) } }
+      val trapPort = trap.address.port
+      lifetime.attempt { trap.stop(0) }
+      lifetime.attempt { check(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", trapPort), 100) } }.isFailure) { "Owned model trap port remains open" } }
+      var alive: Int? = null
+      lifetime.attempt { alive = owned.sumOf { it.aliveOwnedCount() } }
+      lifetime.attempt { record("model_requests=${requests.get()} children_alive=${alive ?: "unknown"} temporary_payloads=${if (childFailures.isEmpty()) "deleted" else "cleanup_failed"} cleanup_failures=${childFailures.size} cleanup=${if (childFailures.isEmpty() && alive == 0) "completed" else "failed"}") }
+      lifetime.attempt { check(alive == 0) { "Owned workers/processes remain alive" } }
+      lifetime.attempt { assertThat(requests.get()).isEqualTo(0) }
+      lifetime.attempt { check(childFailures.isEmpty()) { "Owned child cleanup failed: $childFailures" } }
+      lifetime.attempt(driverCheck)
+    }
+  }
+}
+
 private class PackagedQualification(private val healthSafety: SupplementaryHealthSafety) {
-  suspend fun qualify(input: PackagedInputs, platform: Platform, target: String, targetReceipt: File) = kotlinx.coroutines.coroutineScope {
+  suspend fun qualify(input: PackagedInputs, platform: Platform, target: String, targetReceipt: File) = withPackagedQualificationLifetime { lifetime ->
     healthSafety.requireVerified()
     // Recheck immediately before any setup, not only during dynamic-test discovery.
     withContext(Dispatchers.IO) { input.validate(System.getProperty("os.name"), System.getProperty("os.arch"), platform) }
@@ -376,27 +467,22 @@ private class PackagedQualification(private val healthSafety: SupplementaryHealt
       withContext(Dispatchers.IO) { record("mcp_http=initialize tools-list open capture key diff close snapshot-rejection") }
       assertThat(requests.get()).isEqualTo(0)
     } catch (cancel: kotlinx.coroutines.CancellationException) {
+      lifetime.failure(cancel)
       throw cancel
     } catch (failure: Throwable) {
-      afterPackagedFailure(failure) {
-        if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
-          supplementaryHealth("after-failure", input.variant, ::record, healthSafety)
+      lifetime.failure(failure)
+      try {
+        afterPackagedFailure(failure) {
+          if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
+            supplementaryHealth("after-failure", input.variant, ::record, healthSafety)
+          }
         }
+      } catch (delivered: Throwable) {
+        lifetime.failure(delivered)
+        throw delivered
       }
     } finally {
-      withContext(NonCancellable) { observer.cancelAndJoin() }
-      withContext(NonCancellable + Dispatchers.IO) {
-        val cleanupFailures = owned.asReversed().mapNotNull { child -> runCatching { child.stop() }.exceptionOrNull() }
-        val trapPort = trap.address.port
-        trap.stop(0)
-        check(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", trapPort), 100) } }.isFailure) { "Owned model trap port remains open" }
-        val alive = owned.sumOf { it.aliveOwnedCount() }
-        record("model_requests=${requests.get()} children_alive=$alive temporary_payloads=${if (cleanupFailures.isEmpty()) "deleted" else "cleanup_failed"} cleanup_failures=${cleanupFailures.size} cleanup=${if (cleanupFailures.isEmpty() && alive == 0) "completed" else "failed"}")
-        check(alive == 0) { "Owned workers/processes remain alive" }
-        assertThat(requests.get()).isEqualTo(0)
-        check(cleanupFailures.isEmpty()) { "Owned child cleanup failed: $cleanupFailures" }
-        if (platform == Platform.IOS) requireDriverPortClosed()
-      }
+      finishPackagedQualification(lifetime, observer, owned, trap, requests, ::record, { if (platform == Platform.IOS) requireDriverPortClosed() })
     }
   }
 
@@ -924,6 +1010,206 @@ class PackagedSupplementaryHealthTest {
       assertThat(handle.isEmpty || !handle.get().isAlive).isTrue()
     } finally {
       withContext(Dispatchers.IO) { check(directory.deleteRecursively()) }
+    }
+  }
+}
+
+class PackagedQualificationLifetimeTest {
+  @Test
+  fun `successful helper cancellation retains delivered identity outside qualification scope and final IO`() = cancelledHelper(false, false)
+
+  @Test
+  fun `uncertain helper cancellation retains cleanup publication errors and refuses next variant after scope`() = cancelledHelper(true, true)
+
+  private fun cancelledHelper(failHelperCleanup: Boolean, failFinalCleanup: Boolean) = runBlocking {
+    val directory = Files.createTempDirectory("qualification-scope-cancel").toFile()
+    val helperPid = File(directory, "helper.pid")
+    val child = ProcessBuilder("python3", "-c", "import time;time.sleep(30)").redirectOutput(File(directory, "child.out")).redirectError(File(directory, "child.err")).start()
+    val owned = PackagedChild(child, File(directory, "child.out"), File(directory, "child.err"))
+    val trap = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply { start() }
+    val safety = SupplementaryHealthSafety()
+    val original = IllegalStateException("actual factory failure")
+    val ownedStopFailure = IllegalStateException("injected failure after exact owned stop")
+    var publicationFailure: Throwable? = null
+    var delivered: kotlinx.coroutines.CancellationException? = null
+    var observer: kotlinx.coroutines.Job? = null
+    var driverChecked = false
+    val caught = kotlinx.coroutines.CompletableDeferred<Throwable>()
+    var qualificationJob: kotlinx.coroutines.Job? = null
+    try {
+      val job = launch {
+        try {
+          withPackagedQualificationLifetime { lifetime ->
+            observer = launch {
+              while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+                withContext(Dispatchers.IO) { owned.observeDescendants() }
+                delay(20)
+              }
+            }
+            try {
+              lifetime.failure(original)
+              try {
+                afterPackagedFailure(original) {
+                  try {
+                    runSupplementaryHealth(listOf("python3", "-c", "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(30)", helperPid.path), "after-failure", {}, phaseMs = 2500, workMs = 1500, safety = safety, cleanupOperation = { name, operation ->
+                      if (failHelperCleanup && name == "parent-terminate") throw UnsupportedOperationException("owned helper termination denied")
+                      operation()
+                    })
+                  } catch (cancel: kotlinx.coroutines.CancellationException) {
+                    delivered = cancel
+                    throw cancel
+                  }
+                }
+              } catch (failure: Throwable) {
+                lifetime.failure(failure)
+                throw failure
+              }
+            } finally {
+              finishPackagedQualification(lifetime, observer!!, listOf(owned), trap, AtomicInteger(), {
+                if (failFinalCleanup) {
+                  try {
+                    directory.appendText(it)
+                  } catch (failure: Throwable) {
+                    publicationFailure = failure
+                    throw failure
+                  }
+                }
+              }, { driverChecked = true }, {
+                it.stop()
+                if (failFinalCleanup) throw ownedStopFailure
+              })
+            }
+          }
+        } catch (failure: Throwable) {
+          caught.complete(failure)
+        }
+      }
+      qualificationJob = job
+      withTimeout(2000) { while (!helperPid.isFile) delay(20) }
+      job.cancel(kotlinx.coroutines.CancellationException("caller cancellation during after-failure helper"))
+      job.join()
+      val actual = caught.await()
+      assertThat(actual === delivered).isTrue()
+      assertThat(actual.suppressed.contains(original)).isTrue()
+      assertThat(observer!!.isCompleted).isTrue()
+      assertThat(child.isAlive).isFalse()
+      val helper = ProcessHandle.of(helperPid.readText().toLong())
+      assertThat(helper.isEmpty || !helper.get().isAlive).isTrue()
+      assertThat(driverChecked).isTrue()
+      if (failFinalCleanup) {
+        assertThat(actual.suppressed.contains(ownedStopFailure)).isTrue()
+        assertThat(publicationFailure != null && actual.suppressed.contains(publicationFailure)).isTrue()
+      }
+      val nextEvents = mutableListOf<String>()
+      if (failHelperCleanup) {
+        val refusal = actual.suppressed.filterIsInstance<SupplementaryHealthCleanupFailure>().single()
+        assertThat(refusal.suppressed.single() is UnsupportedOperationException).isTrue()
+        assertThat(
+          assertFailsWith<SupplementaryHealthCleanupFailure> {
+            beforePackagedFactory("universal", { _, _ -> nextEvents += "helper" }, {}, safety) { nextEvents += "factory" }
+          } === refusal,
+        ).isTrue()
+        assertThat(nextEvents.isEmpty()).isTrue()
+      } else {
+        beforePackagedFactory("universal", { _, _ -> nextEvents += "helper" }, {}, safety) { nextEvents += "factory" }
+        assertThat(nextEvents).isEqualTo(listOf("helper", "factory"))
+      }
+    } finally {
+      withContext(NonCancellable) { qualificationJob?.cancelAndJoin() }
+      withContext(NonCancellable + Dispatchers.IO) {
+        owned.stop()
+        trap.stop(0)
+        check(directory.deleteRecursively())
+      }
+    }
+  }
+
+  @Test
+  fun `late cancellation during final IO retains factory and actual cleanup errors after scope exit`() = finalCleanup(true)
+
+  @Test
+  fun `ordinary factory error retains actual cleanup and receipt errors with all final checks attempted`() = finalCleanup(false)
+
+  private fun finalCleanup(cancelDuringCleanup: Boolean) = runBlocking {
+    val directory = Files.createTempDirectory("qualification-final-io").toFile()
+    val child = ProcessBuilder("python3", "-c", "import time;time.sleep(30)").redirectOutput(File(directory, "child.out")).redirectError(File(directory, "child.err")).start()
+    val owned = PackagedChild(child, File(directory, "child.out"), File(directory, "child.err"))
+    val trap = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply { start() }
+    val trapPort = trap.address.port
+    val safety = SupplementaryHealthSafety()
+    val original = IllegalStateException("original ordinary factory failure")
+    val cleanupError = UnsupportedOperationException("actual owned stop operation error")
+    val reachedIO = kotlinx.coroutines.CompletableDeferred<Unit>()
+    val releaseIO = java.util.concurrent.CountDownLatch(1)
+    val caught = kotlinx.coroutines.CompletableDeferred<Throwable>()
+    var qualificationJob: kotlinx.coroutines.Job? = null
+    var receiptError: Throwable? = null
+    var retainedLifetime: PackagedQualificationLifetime? = null
+    var observer: kotlinx.coroutines.Job? = null
+    var driverChecked = false
+    try {
+      val job = launch {
+        try {
+          withPackagedQualificationLifetime { lifetime ->
+            retainedLifetime = lifetime
+            observer = launch { while (kotlinx.coroutines.currentCoroutineContext().isActive) delay(20) }
+            try {
+              beforePackagedFactory("macos-aarch64", { _, _ -> error("ordinary diagnostic denied") }, {}, safety) { throw original }
+            } catch (failure: Throwable) {
+              lifetime.failure(failure)
+              throw failure
+            } finally {
+              finishPackagedQualification(lifetime, observer!!, listOf(owned), trap, AtomicInteger(), {
+                try {
+                  directory.appendText(it)
+                } catch (failure: Throwable) {
+                  receiptError = failure
+                  throw failure
+                }
+              }, { driverChecked = true }, {
+                it.stop()
+                reachedIO.complete(Unit)
+                check(releaseIO.await(2, TimeUnit.SECONDS))
+                throw cleanupError
+              })
+            }
+          }
+        } catch (failure: Throwable) {
+          caught.complete(failure)
+        }
+      }
+      qualificationJob = job
+      withTimeout(6000) { reachedIO.await() }
+      if (cancelDuringCleanup) job.cancel(kotlinx.coroutines.CancellationException("late caller cancellation in final IO"))
+      releaseIO.countDown()
+      job.join()
+      val actual = caught.await()
+      assertThat(actual === retainedLifetime!!.resolve()).isTrue()
+      if (cancelDuringCleanup) {
+        assertThat(actual is kotlinx.coroutines.CancellationException).isTrue()
+        assertThat(actual.suppressed.contains(original)).isTrue()
+      } else {
+        assertThat(actual === original).isTrue()
+      }
+      assertThat(actual.suppressed.contains(cleanupError)).isTrue()
+      assertThat(receiptError != null && actual.suppressed.contains(receiptError)).isTrue()
+      assertThat(driverChecked).isTrue()
+      assertThat(observer!!.isCompleted).isTrue()
+      assertThat(child.isAlive).isFalse()
+      assertThat(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", trapPort), 100) } }.isFailure).isTrue()
+      if (!cancelDuringCleanup) {
+        val events = mutableListOf<String>()
+        beforePackagedFactory("universal", { _, _ -> events += "helper" }, {}, safety) { events += "factory" }
+        assertThat(events).isEqualTo(listOf("helper", "factory"))
+      }
+    } finally {
+      releaseIO.countDown()
+      withContext(NonCancellable) { qualificationJob?.cancelAndJoin() }
+      withContext(NonCancellable + Dispatchers.IO) {
+        owned.stop()
+        trap.stop(0)
+        check(directory.deleteRecursively())
+      }
     }
   }
 }
