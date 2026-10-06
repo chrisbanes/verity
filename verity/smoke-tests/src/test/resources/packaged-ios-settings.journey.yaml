@@ -1,0 +1,6 @@
+name: Packaged iOS Settings visible
+app: com.apple.Preferences
+platform: ios
+steps:
+  - Scroll down
+  - "[?visible] General"

@@ -26,7 +26,7 @@ Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation 
 | `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 14 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
-| `:verity:smoke-tests` | `:verity:cli` | Device smoke tests (Android emulator) |
+| `:verity:smoke-tests` | `:verity:cli` | Offline archive/protocol fixtures and explicit Android/iOS device smoke tests |
 
 **Key rule:** `:verity:mcp` does not depend on `:verity:agent`. The MCP server exposes raw device capabilities — the external AI agent provides the intelligence.
 
@@ -40,11 +40,50 @@ Build caching, configuration caching, and isolated projects are enabled in `grad
 
 The optional HTTP remote build cache follows Haze's setup. Set all three Gradle properties `remoteBuildCacheUrl`, `remoteBuildCacheUsername`, and `remoteBuildCachePassword` to enable it. Blank or missing values disable it. `remoteBuildCachePush` defaults to false. The local build cache remains enabled for local builds and for CI without a configured remote cache; CI disables the local build cache when the remote cache is enabled.
 
-The CLI fat JAR merges service descriptors and Kotlin module metadata before removing duplicate entries, and fails if duplicate ZIP entries remain. Its `shadowJar` task is excluded from build caching because the artifact exceeds the remote cache upload limit; compilation and test tasks remain cacheable. Unchanged local outputs can still leave `shadowJar` up to date.
+The three CLI fat JAR tasks merge service descriptors, Kotlin module metadata and Log4j plugin caches, and fail if duplicate ZIP entries remain. They share reproducible entry ordering, omitted entry timestamps and ZIP64 settings. All three archive tasks are excluded from build caching because the artifacts exceed the remote cache upload limit; compilation and test tasks remain cacheable. Unchanged local archive outputs can still be up to date.
 
 CI and release workflows map the Actions secrets `GRADLE_REMOTE_CACHE_URL`, `GRADLE_REMOTE_CACHE_USERNAME`, and `GRADLE_REMOTE_CACHE_PASSWORD` to those properties. Same-repository pull requests and tagged releases read from the remote cache with `remoteBuildCachePush=false`; only pushes to `main` enable Gradle cache uploads. Fork pull requests do not receive Actions secrets and fall back to the local cache. When the remote cache is configured, CI excludes the disabled local build cache from the Actions cache. The workflows work before the secrets are added.
 
-The iOS smoke job runs Gradle before starting a simulator. Gradle resolves cached compilation and test outputs first; a cached test task skips device startup and execution entirely. On a cache miss, `IosSettingsSmoke` uses `DeviceLifecycle` to boot and wait for a simulator only after compilation, then shuts down the simulator it started. CI selects iPhone 17 on iOS 27 through `VERITY_SMOKE_IOS_MODEL` and `VERITY_SMOKE_IOS_RUNTIME`; those stable selection values are test-task inputs. An existing matching booted simulator is reused and left running. The macOS job still starts to perform Gradle's cache lookup, even when device execution is cached.
+CI builds and verifies packaged inputs before native tests. Linux uses an API 34
+AOSP x86-64 Android emulator. The sequential macOS ARM64 job uses an API 30 AOSP
+ARM64 emulator with one core and software emulation, followed by a fresh job-owned
+iPhone 17 / iOS 27 simulator. The macOS pre-native build uses `--no-daemon`;
+`packagedAndroidTest --rerun` forces the selected test task without globally
+rerunning its prebuilt dependencies. `packagedIosTest` and the ordinary tagged
+smoke tests are also explicitly forced to execute. Native tests are excluded
+from the default offline `check`.
+
+The Android prelaunch hook binds a fresh AVD namespace and configured SDK
+emulator identity. Early process ownership, any postboot intent/revalidation,
+exact process start and listener ports are checked separately from device
+qualification. Before iOS setup, the handoff guard requires the original owned
+emulator to have exited, all recorded listener ports to be closed, and the
+bootstrap observer to have stopped and joined. Missing, stale, cancelled or
+unknown ownership refuses iOS. An Android test failure still fails the job even
+when safe handoff allows iOS tests to run.
+
+The job creates and records an exact simulator UUID rather than reusing a user's
+booted simulator. Setup failure rolls back that UUID; the always-run cleanup
+shuts down and deletes it. Diagnostic timeouts remain unknown observations and
+do not replace native test outcomes.
+
+`:verity:cli:hostJars` builds universal, macOS ARM64 and Linux x86-64 archives.
+`verifyHostJars` checks their resource inventories and packaged ABI;
+`verifyPackagedGrpc` checks the aligned Java gRPC graph. Both are dependencies of
+CLI `check`. The smoke module's `packagedProbeJar` and `packagedGrpcProbe` provide
+test-only factory and device-free ABI verification; `packagedAndroidTest` and
+`packagedIosTest` exercise matching-host and universal production archives through
+real devices, CLI runs and both MCP transports.
+
+`:verity:cli:packageRelease` produces the three JAR assets and named SHA256
+manifest. The release workflow serializes work per version tag without cancelling
+an active publication. It reuses an existing release only when its exact four
+assets match; otherwise it refuses to overwrite. New uploads are read back and
+downloaded for tag, name, size and SHA256 verification before formula generation
+and a tap update. The internal JSON manifest is not a fifth published asset.
+This is future-tag wiring, not evidence that a release has been published. See
+[host packaging](specs/host-packaging.md) for the user-facing policy and measured
+payloads.
 
 To opt out locally, pass `--no-build-cache`, `--no-isolated-projects`, or `--no-configuration-cache` as appropriate. Disable isolated projects as well when disabling configuration caching.
 
@@ -70,7 +109,7 @@ To opt out locally, pass `--no-build-cache`, `--no-isolated-projects`, or `--no-
 Maestro SDK uses gRPC with Netty 4.1; Ktor uses Netty 4.2. Resolved by:
 - Excluding `grpc-netty` globally
 - Using `grpc-netty-shaded` (bundles relocated Netty classes)
-- Pinning `io.grpc` artifacts to a single version
+- Enforcing `io.grpc:grpc-bom:1.84.0` for the Java gRPC family; the separately versioned `grpc-kotlin-stub:1.5.0` is not assigned the Java BOM version
 
 ---
 
@@ -227,6 +266,8 @@ Android and iOS execute those commands through the existing Orchestra and driver
 
 **`IosDeviceSession`**: Installs XCTest runner on device/simulator. Communicates via HTTP to the on-device XCTest server (localhost:22087). Simulator management via `xcrun simctl`, physical devices via `devicectl`.
 
+The factory shares an internal `IOSDevice` delegation adapter between Maestro's iOS driver and `IosDeviceSession`. Hierarchy calls forward the same hierarchy Boolean flag directly to the already-owned `XCTestIOSDevice`; other controller and close operations retain `LocalIOSDevice` delegation. This avoids Maestro 2.11.0's warning-only hierarchy scheduler, which its `LocalIOSDevice.close()` does not shut down.
+
 Bounded capture includes complete acquisition, parsing, conversion and owned cleanup. Android preserves the interruptible SDK route with converter checkpoints. iOS owns a call to the recorded main runner endpoint, checked chunked body input and a fixed-schema Jackson-token decoder; no-argument capture stays SDK-backed. The helper never starts or closes the main runner. These cooperative routes do not guarantee forced termination of arbitrary SDK CPU work.
 
 ### Factory
@@ -363,6 +404,8 @@ Each segment creates fresh navigator and inspector instances. Their reasoning is
 ---
 
 ## MCP Server
+
+All three production fat JARs merge Log4j binary plugin metadata, retaining XML configuration factories, console appenders and layouts. The stdio CLI selects a dedicated Log4j console configuration before server logger initialization. SDK and server diagnostics retain their levels and text on stderr, while stdout carries MCP frames. HTTP and ordinary CLI commands retain their existing logging configuration.
 
 ### Transport
 

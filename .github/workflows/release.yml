@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -34,22 +38,31 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Build shadow JAR
-        run: ./gradlew :verity:cli:shadowJar -Pversion=${{ steps.version.outputs.version }}
+      - name: Package verified release assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./gradlew :verity:cli:packageRelease --no-scan -Pversion="$VERSION" '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
-      - name: Compute SHA256
-        id: sha
+      - name: Publish or verify matching release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          JAR_PATH="verity/cli/build/libs/verity-${{ steps.version.outputs.version }}.jar"
-          SHA=$(shasum -a 256 "$JAR_PATH" | awk '{print $1}')
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-          echo "jar_path=$JAR_PATH" >> "$GITHUB_OUTPUT"
+          python3 scripts/release_artifacts.py publish \
+            --manifest verity/cli/build/release/manifest.json \
+            --assets verity/cli/build/release/assets \
+            --receipt verity/cli/build/release/published.json
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          files: ${{ steps.sha.outputs.jar_path }}
-          generate_release_notes: true
+      - name: Render formula from verified publication receipt
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 scripts/release_artifacts.py formula \
+            --manifest verity/cli/build/release/manifest.json \
+            --receipt verity/cli/build/release/published.json \
+            --template Formula/verity.rb \
+            --output verity/cli/build/release/verity.rb
+          ruby -c verity/cli/build/release/verity.rb
 
       - name: Update Homebrew formula
         uses: actions/checkout@v7
@@ -58,14 +71,10 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
-      - name: Write updated formula
+      - name: Write verified formula
         run: |
           mkdir -p homebrew-tap/Formula
-          VERSION="${{ steps.version.outputs.version }}"
-          SHA="${{ steps.sha.outputs.sha256 }}"
-          sed -e "s/PLACEHOLDER/$SHA/" \
-              -e "s|url \".*\"|url \"https://github.com/chrisbanes/verity/releases/download/v${VERSION}/verity-${VERSION}.jar\"|" \
-              Formula/verity.rb > homebrew-tap/Formula/verity.rb
+          cp verity/cli/build/release/verity.rb homebrew-tap/Formula/verity.rb
 
       - name: Push formula to tap
         working-directory: homebrew-tap
@@ -73,5 +82,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/verity.rb
+          if git diff --cached --quiet; then exit 0; fi
           git commit -m "verity ${{ steps.version.outputs.version }}"
           git push
