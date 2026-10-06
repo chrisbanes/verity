@@ -327,7 +327,7 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertFalse((self.directory / "identity.json").exists())
 
     def test_health_host_filter_discards_private_and_incomplete_or_denied_is_unknown(self):
-        state = "Service package: found\nsystem_server=123\nlogd=124\n[init.svc.zygote]: [running]\n[init.svc.logd]: [running]\n[sys.boot_completed]: [1]\n[sys.system_server.start_count]: [1]\n[sys.system_server.start_elapsed]: [120]\n[sys.system_server.start_uptime]: [120]\n"
+        state = "system_server=123\nlogd=124\n[init.svc.zygote]: [running]\n[init.svc.logd]: [running]\n[sys.boot_completed]: [1]\n[sys.system_server.start_count]: [1]\n[sys.system_server.start_elapsed]: [120]\n[sys.system_server.start_uptime]: [120]\n"
         base = {"outcome": "completed", "exit": 0, "joined": True, "truncated": False,
                 "droppedBytes": {"stdout": 0, "stderr": 0}, "stderr": "", "stdout": state}
         observed = D.safe_health_result("state", {**base, "stdout": state+"[init.svc.logd.private]: [private]\nprivate application\n"})
@@ -357,7 +357,7 @@ class DiagnosticsTest(unittest.TestCase):
             path.write_text("#!"+sys.executable+"\nimport os,sys\nprint("+repr(output)+",end='')\nif os.environ.get('DENIED') and sys.argv[0].endswith('dmesg'):\n print('private denied path',file=sys.stderr);sys.exit(1)\n")
             path.chmod(0o755)
         with patch.dict(os.environ, {"PATH": str(fixture)+os.pathsep+os.environ["PATH"], "ANDROID_HOME": "/offline/sdk"}):
-            self.assertEqual([n for n,_ in D.health_commands("before-factory")], ["state"])
+            self.assertEqual([n for n,_ in D.health_commands("before-factory")], ["state", "package"])
             commands = dict(D.health_commands("after-failure"))
             state = D.capture(["/bin/sh", "-c", commands["state"][-1]])
             self.assertNotIn("private", state["stdout"])
@@ -380,7 +380,7 @@ class DiagnosticsTest(unittest.TestCase):
         with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}), patch.object(D, "capture", return_value=result):
             for variant in ("macos-aarch64", "universal"):
                 report = D.health(self.directory, variant, "before-factory")
-                self.assertEqual(list(report["commands"]), ["state"])
+                self.assertEqual(list(report["commands"]), ["state", "package"])
                 self.assertEqual(report["commands"]["state"]["evidenceStatus"], "unknown")
                 self.assertFalse(report["qualification"])
                 self.assertLessEqual(sum(len(r["stdout"].encode()) for r in report["commands"].values()), 1024)
@@ -413,6 +413,75 @@ class DiagnosticsTest(unittest.TestCase):
             (self.directory.parent/"android-health/health-universal-after-failure.json").unlink()
             import shutil
             shutil.rmtree(self.directory/"health-sdk")
+
+
+    def test_watchdog_event_guest_and_host_projection_reader_status_and_private_decoys(self):
+        fixture = self.directory / "watchdog-bin"
+        fixture.mkdir()
+        logcat = fixture / "logcat"
+        logcat.write_text("#!"+sys.executable+"\nimport os,sys\nfrom pathlib import Path\nPath(os.environ['ARGS']).write_text(' '.join(sys.argv[1:]))\nprint(os.environ['EVENTS'],end='')\nif os.environ.get('DENIED'):\n print('private permission path',file=sys.stderr);sys.exit(1)\n")
+        logcat.chmod(0o755)
+        events = "I/watchdog( 547): private subject and stack\nI/watchdog_private( 9): secret\nW/watchdog( 9): secret\nI/other( 9): secret\nI/watchdog(0): bad\n"
+        with patch.dict(os.environ, {"PATH": str(fixture)+os.pathsep+os.environ["PATH"], "ANDROID_HOME": "/offline/sdk", "EVENTS": events, "ARGS": str(fixture/"args")}):
+            script = dict(D.health_commands("after-failure"))["watchdog"][-1]
+            result = D.capture(["/bin/sh", "-c", script])
+            self.assertEqual(result["stdout"], "watchdog_pid=547\n")
+            self.assertEqual((fixture/"args").read_text(), "-b events -d -v brief -s watchdog:I -m 1")
+            safe = D.safe_health_result("watchdog", result)
+            self.assertEqual(safe["evidenceStatus"], "selected-fragment")
+            self.assertNotIn("private", json.dumps(safe))
+            self.assertIn("historical", safe["limitations"])
+            with patch.dict(os.environ, {"DENIED": "1"}):
+                denied = D.capture(["/bin/sh", "-c", script])
+            self.assertNotEqual(denied["exit"], 0)
+            self.assertEqual(D.safe_health_result("watchdog", denied)["stdout"], "")
+        base = {**result, "stdout": "watchdog_pid=547\n"}
+        for change in ({"stdout":""}, {"stdout":"watchdog_pid=547 private\n"}, {"stdout":"watchdog_pid=2147483648\n"},
+                       {"stdout":"watchdog_pid=547\nwatchdog_pid=548\n"}, {"stderr":"unknown option/private"},
+                       {"outcome":"timeout"}, {"outcome":"deadline"}, {"outcome":"stopped"}, {"joined":False},
+                       {"truncated":True}, {"droppedBytes":{"stdout":1,"stderr":0}}, {"exit":1}):
+            with self.subTest(change=change):
+                safe = D.safe_health_result("watchdog", {**base, **change})
+                self.assertEqual(safe["evidenceStatus"], "unknown")
+                self.assertEqual(safe["stdout"], "")
+                self.assertNotIn("private", json.dumps(safe))
+
+    def test_health_state_survives_independent_stalled_package_owned_capture(self):
+        sdk = self.health_fixture()
+        fixture = self.directory / "state-bin"
+        fixture.mkdir()
+        state = "system_server=123\nlogd=124\n[init.svc.zygote]: [running]\n[init.svc.logd]: [running]\n[sys.boot_completed]: [1]\n[sys.system_server.start_count]: [2]\n[sys.system_server.start_elapsed]: [120]\n[sys.system_server.start_uptime]: [120]\n"
+        for name, body in {"pidof":"print('123' if sys.argv[1]=='system_server' else '124')",
+                           "getprop":"print("+repr(state.split('logd=124\n')[1])+",end='')",
+                           "service":"import time;time.sleep(30)"}.items():
+            path=fixture/name;path.write_text("#!"+sys.executable+"\nimport sys\n"+body+"\n");path.chmod(0o755)
+        capture = D.capture
+        def offline(argv, cancel, deadline, limit):
+            self.assertEqual(argv[1:4], ["-s",D.SERIAL,"shell"])
+            return capture(["/bin/sh","-c", "exec service check package" if argv[-1]=="service check package" else argv[-1]],cancel,deadline,limit)
+        with patch.dict(os.environ, {"ANDROID_HOME":str(sdk),"PATH":str(fixture)+os.pathsep+os.environ["PATH"]}), patch.object(D,"capture",side_effect=offline):
+            report=D.health(self.directory,"universal","before-factory",duration=2.2)
+        self.assertEqual(report["commands"]["state"]["stdout"],state.rstrip())
+        self.assertEqual(report["commands"]["state"]["evidenceStatus"],"selected-fragment")
+        self.assertEqual(report["commands"]["package"]["evidenceStatus"],"unknown")
+        self.assertTrue(report["commands"]["package"]["joined"])
+        self.assertLess(report["elapsedSeconds"],2.2)
+        self.assertLessEqual(sum(len(v["stdout"].encode()) for v in report["commands"].values()),1024)
+
+    def test_health_per_command_deadlines_order_and_metadata_fit(self):
+        sdk=self.health_fixture()
+        calls=[]
+        def capture(argv,cancel,deadline,limit):
+            calls.append((argv,deadline-time.monotonic(),limit))
+            return {"outcome":"completed","exit":0,"joined":True,"truncated":False,"droppedBytes":{"stdout":0,"stderr":0},"stdout":"","stderr":""}
+        with patch.dict(os.environ,{"ANDROID_HOME":str(sdk)}),patch.object(D,"capture",side_effect=capture):
+            report=D.health(self.directory,"macos-aarch64","after-failure")
+        self.assertEqual(list(report["commands"]),["state","package","watchdog","kernel"])
+        for (_argv,budget,limit),expected in zip(calls,[4,2,3,2]):
+            self.assertGreater(budget,expected-.1);self.assertLessEqual(budget,expected);self.assertEqual(limit,1024)
+        self.assertLessEqual((self.directory.parent/"android-health/health-macos-aarch64-after-failure.json").stat().st_size,4096)
+        self.assertNotIn('service check package',calls[0][0][-1])
+        self.assertFalse(report['qualification'])
 
     def first_marker_fixture(self):
         fixture = self.directory / "first-marker-bin"

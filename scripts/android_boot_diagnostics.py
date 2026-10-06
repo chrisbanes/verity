@@ -442,9 +442,12 @@ KERNEL_MARKER = r"^(\[[ ]*[0-9]+\.[0-9]+\][ ]*)?(Out of memory: )?Killed process
 
 def health_commands(phase):
     prefix = [str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"), "-s", SERIAL, "shell"]
-    state = "service check package; printf 'system_server='; pidof system_server || printf '\n'; printf 'logd='; pidof logd || printf '\n'; getprop | grep -E '" + HEALTH_PROPERTIES + "'"
-    commands = [("state", prefix + [state])]
+    state = "printf 'system_server='; pidof system_server || printf '\n'; printf 'logd='; pidof logd || printf '\n'; getprop | grep -E '" + HEALTH_PROPERTIES + "'"
+    commands = [("state", prefix + [state]), ("package", prefix + ["service check package"])]
     if phase == "after-failure":
+        # Event tag2802 precedes Watchdog's later conditional kill. Retain writer PID only.
+        watchdog = r'''marker=$(logcat -b events -d -v brief -s watchdog:I -m 1); reader_status=$?; printf '%s\n' "$marker" | sed -nE 's/^I\/watchdog[ ]*\([ ]*([1-9][0-9]{0,9})\)[ ]*: .*$/watchdog_pid=\1/p'; filter_status=$?; [ "$reader_status" -eq 0 ] && [ "$filter_status" -eq 0 ]'''
+        commands.append(("watchdog", prefix + [watchdog]))
         commands.append(("kernel", prefix + ["kernel=$(dmesg); reader_status=$?; printf '%s\\n' \"$kernel\" | grep -E '" + KERNEL_MARKER + "'; filter_status=$?; [ \"$reader_status\" -eq 0 ] && [ \"$filter_status\" -eq 0 ]"]))
     return commands
 
@@ -457,9 +460,16 @@ def safe_health_result(name, result):
     if clean:
         for line in result["stdout"].splitlines():
             if name == "state":
-                if re.fullmatch(r"Service package: (found|not found)", line) or re.fullmatch(r"(system_server|logd)=([1-9][0-9]{0,9})?", line) or re.fullmatch(r"\[(init\.svc\.(zygote|logd))\]: \[(running|stopped|restarting)\]", line) or re.fullmatch(r"\[(sys\.boot_completed|sys\.system_server\.(start_count|start_elapsed|start_uptime))\]: \[[0-9]+\]", line):
+                if re.fullmatch(r"(system_server|logd)=([1-9][0-9]{0,9})?", line) or re.fullmatch(r"\[(init\.svc\.(zygote|logd))\]: \[(running|stopped|restarting)\]", line) or re.fullmatch(r"\[(sys\.boot_completed|sys\.system_server\.(start_count|start_elapsed|start_uptime))\]: \[[0-9]+\]", line):
                     safe.append(line)
-            else:
+            elif name == "package":
+                if re.fullmatch(r"Service package: (found|not found)", line):
+                    safe.append(line)
+            elif name == "watchdog":
+                match = re.fullmatch(r"watchdog_pid=([1-9][0-9]{0,9})", line)
+                if match and int(match[1]) <= 2147483647:
+                    safe.append(line)
+            elif name == "kernel":
                 # Retain only the exact process marker, never the surrounding kernel message.
                 match = re.match(KERNEL_MARKER, line)
                 if match:
@@ -471,14 +481,18 @@ def safe_health_result(name, result):
         output = ""
     missing = []
     if name == "state":
-        required = ("Service package: ", "system_server=", "logd=", "[init.svc.zygote]: [", "[init.svc.logd]: [",
+        required = ("system_server=", "logd=", "[init.svc.zygote]: [", "[init.svc.logd]: [",
                     "[sys.boot_completed]: [", "[sys.system_server.start_count]: [", "[sys.system_server.start_elapsed]: [", "[sys.system_server.start_uptime]: [")
         missing = [prefix for prefix in required if not any(line.startswith(prefix) and line != prefix for line in safe)]
+    elif name == "package":
+        missing = [] if len(safe) == 1 else ["Service package: "]
+    elif name == "watchdog" and len(safe) != 1:
+        output = ""
     return {"outcome": result["outcome"], "exit": result["exit"], "joined": result["joined"],
             "truncated": result["truncated"] or overflow, "droppedBytes": result["droppedBytes"],
             "stderrBytes": len(result["stderr"].encode()),
             "evidenceStatus": "selected-fragment" if clean and output and not overflow and not missing else "unknown", "stdout": output, "missingObservations": missing,
-            "limitations": "point-in-time selected health/kernel fragment; incomplete or absent data unknown; no cause, qualification or ownership authority"}
+            "limitations": "selected historical watchdog PID only; later guards can prevent kill; not current identity/cause/qualification" if name == "watchdog" else "point-in-time selected health/kernel fragment; incomplete or absent data unknown; no cause, qualification or ownership authority"}
 
 
 def health(directory, variant, phase, duration=13):
@@ -507,7 +521,9 @@ def health(directory, variant, phase, duration=13):
         for name, argv in health_commands(phase):
             if terminate[0] or time.monotonic() >= deadline:
                 break
-            report["commands"][name] = safe_health_result(name, capture(argv, lambda: terminate[0], deadline, limit=1024))
+            budget = ({"state": 5, "package": 5} if phase == "before-factory" else {"state": 4, "package": 2, "watchdog": 3, "kernel": 2})[name]
+            command_deadline = min(deadline, time.monotonic() + budget)
+            report["commands"][name] = safe_health_result(name, capture(argv, lambda: terminate[0], command_deadline, limit=1024))
         report["status"] = "stopped" if terminate[0] else "deadline" if time.monotonic() >= deadline else "completed"
     except Exception as failure:
         report["status"] = "unknown"
