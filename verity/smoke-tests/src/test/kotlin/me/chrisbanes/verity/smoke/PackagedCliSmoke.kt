@@ -127,6 +127,79 @@ private fun packagedVariants(platform: Platform): List<org.junit.jupiter.api.Dyn
   }
 }
 
+private suspend fun <T> beforePackagedFactory(variant: String, health: suspend (String, String) -> Unit, record: (String) -> Unit, factory: suspend () -> T): T {
+  try {
+    health("before-factory", variant)
+  } catch (cancel: kotlinx.coroutines.CancellationException) {
+    throw cancel
+  } catch (failure: SupplementaryHealthCleanupFailure) {
+    throw failure
+  } catch (failure: Exception) {
+    runCatching { record("supplementary_health=unknown phase=before-factory failure=${failure.javaClass.simpleName}") }
+  }
+  return factory()
+}
+
+private class SupplementaryHealthCleanupFailure : IllegalStateException("Supplementary owned process did not join within the phase deadline")
+
+private suspend fun supplementaryHealth(phase: String, variant: String, record: (String) -> Unit) {
+  val script = System.getenv("VERITY_PACKAGED_ANDROID_HEALTH_SCRIPT")
+  val directory = System.getenv("VERITY_PACKAGED_ANDROID_HEALTH_DIRECTORY")
+  if (script == null || directory == null) {
+    runCatching { record("supplementary_health=unknown phase=$phase binding=missing") }
+    return
+  }
+  runSupplementaryHealth(listOf("python3", script, "health", directory, variant, "--phase", phase), phase, record)
+}
+
+private suspend fun runSupplementaryHealth(command: List<String>, phase: String, record: (String) -> Unit, phaseMs: Long = 15_000, workMs: Long = 13_000) {
+  val mark = TimeSource.Monotonic.markNow()
+  var process: Process? = null
+  var cancellation: kotlinx.coroutines.CancellationException? = null
+  val descendants = mutableMapOf<Long, ProcessHandle>()
+  fun remaining() = (phaseMs - mark.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)
+  fun observe() {
+    process?.descendants()?.use { stream -> stream.forEach { descendants[it.pid()] = it } }
+  }
+  try {
+    withContext(Dispatchers.IO) {
+      process = ProcessBuilder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+    }
+    while (process!!.isAlive && mark.elapsedNow().inWholeMilliseconds < workMs) {
+      withContext(Dispatchers.IO) { observe() }
+      delay(20)
+    }
+    runCatching { record("supplementary_health=${if (!process!!.isAlive && process!!.exitValue() == 0) "retained" else "unknown"} phase=$phase") }
+  } catch (cancel: kotlinx.coroutines.CancellationException) {
+    cancellation = cancel
+    throw cancel
+  } catch (failure: Exception) {
+    runCatching { record("supplementary_health=unknown phase=$phase failure=${failure.javaClass.simpleName}") }
+  } finally {
+    withContext(NonCancellable + Dispatchers.IO) {
+      observe()
+      if (process?.isAlive == true) {
+        process!!.destroy()
+        process!!.waitFor(minOf(1000, remaining()), TimeUnit.MILLISECONDS)
+      }
+      // Only the exact handles observed beneath this owned helper are eligible.
+      descendants.values.filter { it.isAlive }.forEach { it.destroy() }
+      if (process?.isAlive == true) process!!.destroyForcibly()
+      descendants.values.filter { it.isAlive }.forEach { it.destroyForcibly() }
+      process?.waitFor(remaining(), TimeUnit.MILLISECONDS)
+      descendants.values.forEach { handle ->
+        if (handle.isAlive && remaining() > 0) runCatching { handle.onExit().get(remaining(), TimeUnit.MILLISECONDS) }
+      }
+      val joined = process?.isAlive != true && descendants.values.none { it.isAlive }
+      runCatching { record("supplementary_health_joined=$joined phase=$phase elapsed_ms=${mark.elapsedNow().inWholeMilliseconds}") }
+      if (!joined || mark.elapsedNow().inWholeMilliseconds > phaseMs) {
+        val failure = SupplementaryHealthCleanupFailure()
+        if (cancellation != null) cancellation!!.addSuppressed(failure) else throw failure
+      }
+    }
+  }
+}
+
 private data class PackagedInputs(val variant: String, val jar: File, val expectedJarHash: String, val probe: File, val expectedProbeHash: String) {
   fun validate(os: String, arch: String, platform: Platform) {
     val mac = os.lowercase().contains("mac") && arch in listOf("aarch64", "arm64")
@@ -189,7 +262,13 @@ private class PackagedQualification {
     }
     try {
       if (platform == Platform.IOS) withContext(Dispatchers.IO) { requireDriverPortClosed() }
-      val factory = start(directory, owned, "factory", listOf("-cp", "${jar.absolutePath}${File.pathSeparator}${probe.absolutePath}", "me.chrisbanes.verity.smoke.PackagedRuntimeProbe", if (platform == Platform.IOS) "ios" else "android", target))
+      val factory = beforePackagedFactory(input.variant, { phase, variant ->
+        if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
+          supplementaryHealth(phase, variant, ::record)
+        }
+      }, ::record) {
+        start(directory, owned, "factory", listOf("-cp", "${jar.absolutePath}${File.pathSeparator}${probe.absolutePath}", "me.chrisbanes.verity.smoke.PackagedRuntimeProbe", if (platform == Platform.IOS) "ios" else "android", target))
+      }
       val mappings = if (platform == Platform.IOS) listOf(Platform.IOS) else listOf(Platform.ANDROID_MOBILE, Platform.ANDROID_TV)
       for (mapping in mappings) {
         withTimeout(600_000) { marker(factory, "PACKAGED_FACTORY_CONNECTED platform=$mapping") }
@@ -240,6 +319,17 @@ private class PackagedQualification {
       http(directory, options, target, platform, owned, ::record)
       withContext(Dispatchers.IO) { record("mcp_http=initialize tools-list open capture key diff close snapshot-rejection") }
       assertThat(requests.get()).isEqualTo(0)
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+      throw cancel
+    } catch (failure: Throwable) {
+      if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
+        try {
+          supplementaryHealth("after-failure", input.variant, ::record)
+        } catch (diagnosticFailure: Throwable) {
+          failure.addSuppressed(diagnosticFailure)
+        }
+      }
+      throw failure
     } finally {
       withContext(NonCancellable) { observer.cancelAndJoin() }
       withContext(NonCancellable + Dispatchers.IO) {
@@ -609,6 +699,86 @@ class PackagedCliPlatformOptionTest {
         trap.stop(0)
         check(directory.deleteRecursively())
       }
+    }
+  }
+}
+
+class PackagedSupplementaryHealthTest {
+  @Test
+  fun `both variant snapshots immediately precede real factory entry and unknown never replaces outcome`() = runTest {
+    for (variant in listOf("macos-aarch64", "universal")) {
+      val events = mutableListOf<String>()
+      val result = beforePackagedFactory(variant, { phase, selected ->
+        events += "$phase:$selected"
+        error("offline diagnostic denied")
+      }, { events += "unknown" }) {
+        events += "factory:$variant"
+        "real-result"
+      }
+      assertThat(result).isEqualTo("real-result")
+      assertThat(events).isEqualTo(listOf("before-factory:$variant", "unknown", "factory:$variant"))
+      val primary = IllegalStateException("actual factory failure")
+      val caught = assertFailsWith<IllegalStateException> {
+        beforePackagedFactory(variant, { _, _ -> error("unknown diagnostic") }, {}) { throw primary }
+      }
+      assertThat(caught === primary).isTrue()
+    }
+  }
+
+  @Test
+  fun `actual record publication denial is supplementary and preserves original factory result`() = runBlocking {
+    val directory = Files.createTempDirectory("health-record-denied").toFile()
+    try {
+      val deniedRecord: (String) -> Unit = { directory.appendText(it) }
+      val result = beforePackagedFactory("universal", { _, _ ->
+        runSupplementaryHealth(listOf("python3", "-c", "pass"), "before-factory", deniedRecord, phaseMs = 2500, workMs = 1500)
+      }, deniedRecord) { "actual-factory-result" }
+      assertThat(result).isEqualTo("actual-factory-result")
+      val original = IllegalStateException("original factory error")
+      val failure = assertFailsWith<IllegalStateException> {
+        beforePackagedFactory("universal", { _, _ -> error("diagnostic publication failed") }, deniedRecord) { throw original }
+      }
+      assertThat(failure === original).isTrue()
+    } finally {
+      check(directory.deleteRecursively())
+    }
+  }
+
+  @Test
+  fun `diagnostic cleanup failure or cancellation cannot authorize a factory`() = runTest {
+    var entered = false
+    assertFailsWith<SupplementaryHealthCleanupFailure> {
+      beforePackagedFactory("universal", { _, _ -> throw SupplementaryHealthCleanupFailure() }, {}) { entered = true }
+    }
+    assertFailsWith<kotlinx.coroutines.CancellationException> {
+      beforePackagedFactory("universal", { _, _ -> throw kotlinx.coroutines.CancellationException() }, {}) { entered = true }
+    }
+    assertThat(entered).isFalse()
+  }
+
+  @Test
+  fun `finite helper deadline joins exact owned callback and discards private output`() = runBlocking {
+    val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("health-child-fixture").toFile() }
+    val pid = File(directory, "callback.pid")
+    try {
+      val source = """
+        import signal,subprocess,sys,time
+        child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'])
+        open(sys.argv[1],'w').write(str(child.pid))
+        def stop(*args):
+          child.terminate();child.wait(timeout=1);sys.exit(0)
+        signal.signal(signal.SIGTERM,stop)
+        print('private unrelated fixture text',flush=True)
+        time.sleep(30)
+      """.trimIndent()
+      val records = mutableListOf<String>()
+      runSupplementaryHealth(listOf("python3", "-c", source, pid.absolutePath), "before-factory", records::add, phaseMs = 2500, workMs = 700)
+      assertThat(records.any { it.startsWith("supplementary_health_joined=true") }).isTrue()
+      assertThat(records.none { it.contains("private") }).isTrue()
+      val handle = ProcessHandle.of(pid.readText().toLong())
+      assertThat(handle.isEmpty || !handle.get().isAlive).isTrue()
+    } finally {
+      withContext(Dispatchers.IO) { check(directory.deleteRecursively()) }
     }
   }
 }

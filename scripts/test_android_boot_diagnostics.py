@@ -281,6 +281,139 @@ class DiagnosticsTest(unittest.TestCase):
         self.assertEqual(report["gradleExit"], 17)
         self.assertFalse(report["qualification"])
 
+    def test_health_workflow_is_mac_only_with_path_import_before_bindings_and_original_exit(self):
+        import re
+        import shlex
+        text = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+        linux, mac = text.split("  smoke-ios:\n", 1)
+        self.assertNotIn("VERITY_PACKAGED_ANDROID_HEALTH", linux)
+        hook = next(line for line in mac.splitlines() if "pre-emulator-launch-script:" in line)
+        self.assertLess(hook.index("verify-emulator"), hook.index(" prelaunch "))
+        self.assertLess(hook.index(" prelaunch "), hook.index(" start "))
+        block = re.search(r"script: >-\n(.*?)(?:\n\n)", mac, re.S)[1]
+        command = shlex.split(" ".join(line.strip() for line in block.splitlines()))
+        self.assertEqual(command[:2], ["python3", "-c"])
+        tree = ast.parse(command[2])
+        imported = next(i for i, n in enumerate(tree.body) if isinstance(n, ast.ImportFrom) and n.module == "pathlib")
+        selected = [i for i,n in enumerate(tree.body) if isinstance(n,ast.Assign) and "VERITY_PACKAGED_ANDROID_HEALTH" in ast.dump(n)]
+        self.assertEqual(len(selected),2)
+        self.assertTrue(all(i > imported for i in selected))
+        native = next(i for i,n in enumerate(tree.body) if isinstance(n,ast.Assign) and "./gradlew" in ast.dump(n))
+        self.assertTrue(all(i < native for i in selected))
+        self.assertIn("SystemExit(result)", ast.unparse(tree.body[-1]))
+        self.assertIn("value='stop'", ast.dump(tree.body[2]))
+
+    def health_fixture(self):
+        if self.directory.name != "bootstrap":
+            self.directory = self.directory / "bootstrap"
+            self.directory.mkdir()
+        self.startup_fixture()
+        sdk = self.directory / "health-sdk"
+        (sdk / "emulator").mkdir(parents=True)
+        (sdk / "emulator/source.properties").write_text("Pkg.Revision=37.2.12\nPkg.BuildId=16428233\n")
+        with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}):
+            D.verify_emulator(self.directory.parent / "android-emulator-identity.json")
+        return sdk
+
+    def test_emulator_properties_drift_and_ambiguity_refuse_before_launch(self):
+        sdk = self.directory / "identity-sdk"
+        (sdk / "emulator").mkdir(parents=True)
+        for text in ("Pkg.Revision=37.1.11\nPkg.BuildId=16428233\n", "Pkg.Revision=37.2.12\nPkg.BuildId=other\n",
+                     "Pkg.Revision=37.2.12\nPkg.Revision=37.2.12\nPkg.BuildId=16428233\n", "x"*4097):
+            (sdk / "emulator/source.properties").write_text(text)
+            with self.subTest(text=text[:40]), patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}), patch.object(D, "capture", side_effect=AssertionError("executable probe")):
+                with self.assertRaises(RuntimeError):
+                    D.verify_emulator(self.directory / "identity.json")
+            self.assertFalse((self.directory / "identity.json").exists())
+
+    def test_health_host_filter_discards_private_and_incomplete_or_denied_is_unknown(self):
+        state = "Service package: found\nsystem_server=123\nlogd=124\n[init.svc.zygote]: [running]\n[init.svc.logd]: [running]\n[sys.boot_completed]: [1]\n[sys.system_server.start_count]: [1]\n[sys.system_server.start_elapsed]: [120]\n[sys.system_server.start_uptime]: [120]\n"
+        base = {"outcome": "completed", "exit": 0, "joined": True, "truncated": False,
+                "droppedBytes": {"stdout": 0, "stderr": 0}, "stderr": "", "stdout": state}
+        observed = D.safe_health_result("state", {**base, "stdout": state+"[init.svc.logd.private]: [private]\nprivate application\n"})
+        self.assertEqual(observed["stdout"], state.rstrip())
+        self.assertEqual(observed["evidenceStatus"], "selected-fragment")
+        self.assertNotIn("private", json.dumps(observed))
+        for change in ({"stdout": "Service package: found\nsystem_server=\n"}, {"stderr": "private permission denied"},
+                       {"outcome": "timeout"}, {"exit": 1}, {"joined": False}, {"truncated": True},
+                       {"droppedBytes": {"stdout": 1, "stderr": 0}}):
+            result = D.safe_health_result("state", {**base, **change})
+            self.assertEqual(result["evidenceStatus"], "unknown")
+            self.assertNotIn("private", json.dumps(result))
+        kernel = D.safe_health_result("kernel", {**base, "stdout": "[ 123.456] Killed process 123 (system_server) private surrounding text\nKilled process 124 (private_app)\nprivate Killed process 123 (system_server)\nKilled process 123 (system_server_private)\n"})
+        self.assertEqual(kernel["stdout"], "Killed process 123 (system_server)")
+        self.assertNotIn("private", json.dumps(kernel))
+        huge = D.safe_health_result("kernel", {**base, "stdout": "Killed process 123 (system_server)\n"*1000})
+        self.assertEqual(huge["evidenceStatus"], "unknown")
+        self.assertFalse(huge["stdout"])
+
+    def test_health_guest_filters_and_kernel_reader_failure_are_not_masked(self):
+        fixture = self.directory / "health-bin"
+        fixture.mkdir()
+        outputs = {"service": "Service package: found\n", "pidof": "123\n", "getprop": "[init.svc.logd]: [running]\n[init.svc.logd.private]: [private]\n",
+                   "dmesg": "[ 1.234] Killed process 123 (system_server) total-vm:123kB\nKilled process 123 (private_app)\n"}
+        for name, output in outputs.items():
+            path = fixture / name
+            path.write_text("#!"+sys.executable+"\nimport os,sys\nprint("+repr(output)+",end='')\nif os.environ.get('DENIED') and sys.argv[0].endswith('dmesg'):\n print('private denied path',file=sys.stderr);sys.exit(1)\n")
+            path.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(fixture)+os.pathsep+os.environ["PATH"], "ANDROID_HOME": "/offline/sdk"}):
+            self.assertEqual([n for n,_ in D.health_commands("before-factory")], ["state"])
+            commands = dict(D.health_commands("after-failure"))
+            state = D.capture(["/bin/sh", "-c", commands["state"][-1]])
+            self.assertNotIn("private", state["stdout"])
+            self.assertIn("logd=123", state["stdout"])
+            kernel = D.capture(["/bin/sh", "-c", commands["kernel"][-1]])
+            self.assertEqual(kernel["exit"], 0)
+            self.assertNotIn("private_app", kernel["stdout"])
+            with patch.dict(os.environ, {"DENIED": "1"}):
+                denied = D.capture(["/bin/sh", "-c", commands["kernel"][-1]])
+            self.assertNotEqual(denied["exit"], 0)
+            retained = D.safe_health_result("kernel", denied)
+            self.assertEqual(retained["evidenceStatus"], "unknown")
+            self.assertFalse(retained["stdout"])
+            self.assertNotIn("private", json.dumps(retained))
+
+    def test_health_binding_refusal_and_both_variant_isolated_phase_receipts(self):
+        sdk = self.health_fixture()
+        result = {"outcome": "completed", "exit": 0, "joined": True, "truncated": False,
+                  "droppedBytes": {"stdout": 0, "stderr": 0}, "stdout": "Service package: not found\n", "stderr": ""}
+        with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}), patch.object(D, "capture", return_value=result):
+            for variant in ("macos-aarch64", "universal"):
+                report = D.health(self.directory, variant, "before-factory")
+                self.assertEqual(list(report["commands"]), ["state"])
+                self.assertEqual(report["commands"]["state"]["evidenceStatus"], "unknown")
+                self.assertFalse(report["qualification"])
+                self.assertLessEqual(sum(len(r["stdout"].encode()) for r in report["commands"].values()), 1024)
+                self.assertLessEqual((self.directory.parent/"android-health"/("health-"+variant+"-before-factory.json")).stat().st_size,4096)
+        control = json.loads((self.directory/"control.json").read_text())
+        control["binding"]["GITHUB_SHA"] = "stale"
+        D.write_json(self.directory/"control.json", control)
+        with patch.dict(os.environ, {"ANDROID_HOME": str(sdk)}), patch.object(D, "capture", side_effect=AssertionError("unbound probe")):
+            with self.assertRaisesRegex(RuntimeError,"binding mismatch"):
+                D.health(self.directory,"universal","after-failure")
+
+    def test_health_deadline_and_signal_join_owned_callback_and_skip_kernel(self):
+        for cancel in (False, True):
+            self.health_fixture()
+            seen = []
+            original = D.capture
+            def slow(argv, stop, deadline, limit):
+                seen.append(argv)
+                if cancel: os.kill(os.getpid(), signal.SIGTERM)
+                result = original([sys.executable,"-c","import time;time.sleep(30)"],stop,deadline,limit)
+                if not cancel: time.sleep(max(0,deadline-time.monotonic()))
+                return result
+            with patch.dict(os.environ,{"ANDROID_HOME":"/offline/sdk"}),patch.object(D,"capture",side_effect=slow):
+                report = D.health(self.directory,"universal","after-failure",duration=1.2)
+            self.assertEqual(len(seen),1)
+            self.assertTrue(report["commands"]["state"]["joined"])
+            self.assertEqual(report["commands"]["state"]["evidenceStatus"],"unknown")
+            self.assertLess(report["elapsedSeconds"],1.2)
+            (self.directory.parent/"android-emulator-identity.json").unlink()
+            (self.directory.parent/"android-health/health-universal-after-failure.json").unlink()
+            import shutil
+            shutil.rmtree(self.directory/"health-sdk")
+
     def first_marker_fixture(self):
         fixture = self.directory / "first-marker-bin"
         fixture.mkdir(exist_ok=True)

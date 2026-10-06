@@ -384,18 +384,13 @@ def historical_system_server_command(pid):
     return [str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"), "-s", SERIAL, "shell", script]
 
 
-def startup(directory, gradle_exit, duration=45, commands=startup_commands):
-    """One bounded post-failure observation after the original observer has joined."""
-    started = time.monotonic()
-    if (directory / "startup.json").exists():
-        raise RuntimeError("Duplicate startup collection refused; existing startup.json is prior evidence, not a new invocation")
-    deadline = started + duration - min(2, duration / 4)
+def joined_observer(directory):
+    """Reuse the original failed-suite source/target/completed-observer refusal gates."""
     names = ("control", "ready", "report", "done", "stop", "joined")
     original = {}
     size = 0
     for name in names:
-        path = directory / (name + ".json")
-        with path.open("rb") as stream:
+        with (directory / (name + ".json")).open("rb") as stream:
             data = stream.read(MAX_REPORT + 1)
         size += len(data)
         if size > MAX_REPORT - 1024:
@@ -415,6 +410,140 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
         raise RuntimeError("Startup requires successful observer stop/join")
     if original["report"]["binding"] != control or original["report"]["target"] != {"serial": SERIAL, "avd": AVD}:
         raise RuntimeError("Startup original report binding mismatch")
+    return original, size
+
+
+def verify_emulator(path):
+    source = Path(os.environ["ANDROID_HOME"]) / "emulator/source.properties"
+    with source.open("rb") as stream:
+        data = stream.read(4097)
+    if len(data) > 4096:
+        raise RuntimeError("Oversized emulator identity")
+    values = {}
+    for line in data.decode("ascii").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if key in values:
+                raise RuntimeError("Ambiguous emulator identity")
+            values[key] = value
+    if values.get("Pkg.Revision") != "37.2.12" or values.get("Pkg.BuildId") != "16428233":
+        raise RuntimeError("Configured emulator identity drift")
+    receipt = {"binding": binding(), "scriptSha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+               "nonce": uuid.uuid4().hex, "revision": values["Pkg.Revision"], "build": values["Pkg.BuildId"],
+               "sourceSha256": hashlib.sha256(data).hexdigest(), "target": {"serial": SERIAL, "avd": AVD}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x") as stream:
+        stream.write(json.dumps(receipt) + "\n")
+
+
+HEALTH_PROPERTIES = r"^\[(init\.svc\.(zygote|logd)|sys\.boot_completed|sys\.system_server\.(start_count|start_elapsed|start_uptime))\]: \["
+KERNEL_MARKER = r"^(\[[ ]*[0-9]+\.[0-9]+\][ ]*)?(Out of memory: )?Killed process [0-9]+ \(system_server\)( |$)"
+
+
+def health_commands(phase):
+    prefix = [str(Path(os.environ["ANDROID_HOME"]) / "platform-tools/adb"), "-s", SERIAL, "shell"]
+    state = "service check package; printf 'system_server='; pidof system_server || printf '\n'; printf 'logd='; pidof logd || printf '\n'; getprop | grep -E '" + HEALTH_PROPERTIES + "'"
+    commands = [("state", prefix + [state])]
+    if phase == "after-failure":
+        commands.append(("kernel", prefix + ["kernel=$(dmesg); reader_status=$?; printf '%s\\n' \"$kernel\" | grep -E '" + KERNEL_MARKER + "'; filter_status=$?; [ \"$reader_status\" -eq 0 ] && [ \"$filter_status\" -eq 0 ]"]))
+    return commands
+
+
+def safe_health_result(name, result):
+    # Classify status before projecting ANY guest output; stderr is never retained.
+    clean = (result["outcome"] == "completed" and result["exit"] == 0 and result["joined"] is True and
+             not result["truncated"] and not result["stderr"] and result["droppedBytes"] == {"stdout": 0, "stderr": 0})
+    safe = []
+    if clean:
+        for line in result["stdout"].splitlines():
+            if name == "state":
+                if re.fullmatch(r"Service package: (found|not found)", line) or re.fullmatch(r"(system_server|logd)=([1-9][0-9]{0,9})?", line) or re.fullmatch(r"\[(init\.svc\.(zygote|logd))\]: \[(running|stopped|restarting)\]", line) or re.fullmatch(r"\[(sys\.boot_completed|sys\.system_server\.(start_count|start_elapsed|start_uptime))\]: \[[0-9]+\]", line):
+                    safe.append(line)
+            else:
+                # Retain only the exact process marker, never the surrounding kernel message.
+                match = re.match(KERNEL_MARKER, line)
+                if match:
+                    safe.append(re.search(r"Killed process [0-9]+ \(system_server\)", match[0])[0])
+    output = "\n".join(safe)
+    encoded = output.encode()
+    overflow = len(encoded) > 1024
+    if overflow:
+        output = ""
+    missing = []
+    if name == "state":
+        required = ("Service package: ", "system_server=", "logd=", "[init.svc.zygote]: [", "[init.svc.logd]: [",
+                    "[sys.boot_completed]: [", "[sys.system_server.start_count]: [", "[sys.system_server.start_elapsed]: [", "[sys.system_server.start_uptime]: [")
+        missing = [prefix for prefix in required if not any(line.startswith(prefix) and line != prefix for line in safe)]
+    return {"outcome": result["outcome"], "exit": result["exit"], "joined": result["joined"],
+            "truncated": result["truncated"] or overflow, "droppedBytes": result["droppedBytes"],
+            "stderrBytes": len(result["stderr"].encode()),
+            "evidenceStatus": "selected-fragment" if clean and output and not overflow and not missing else "unknown", "stdout": output, "missingObservations": missing,
+            "limitations": "point-in-time selected health/kernel fragment; incomplete or absent data unknown; no cause, qualification or ownership authority"}
+
+
+def health(directory, variant, phase, duration=13):
+    started = time.monotonic()
+    deadline = started + duration - min(2, duration / 4)
+    if variant not in ("macos-aarch64", "universal") or phase not in ("before-factory", "after-failure"):
+        raise RuntimeError("Invalid supplementary health phase")
+    original, _ = joined_observer(directory)
+    control = original["control"]
+    with (directory.parent / "android-emulator-identity.json").open("rb") as stream:
+        identity = json.loads(stream.read(4097))
+    if identity.get("binding") != binding() or identity.get("scriptSha256") != control["scriptSha256"] or identity.get("target") != {"serial": SERIAL, "avd": AVD} or identity.get("revision") != "37.2.12" or identity.get("build") != "16428233" or not re.fullmatch(r"[0-9a-f]{32}", identity.get("nonce", "")):
+        raise RuntimeError("Unbound emulator identity")
+    sidecar = directory.parent / "android-health"
+    sidecar.mkdir(exist_ok=True)
+    path = sidecar / ("health-" + variant + "-" + phase + ".json")
+    if path.exists():
+        raise RuntimeError("Duplicate supplementary health phase")
+    report = {"binding": control, "emulatorIdentityNonce": identity["nonce"], "variant": variant, "phase": phase,
+              "qualification": False, "commands": {}, "status": "running"}
+    terminate = [False]
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        previous[sig] = signal.signal(sig, lambda *_: terminate.__setitem__(0, True))
+    try:
+        for name, argv in health_commands(phase):
+            if terminate[0] or time.monotonic() >= deadline:
+                break
+            report["commands"][name] = safe_health_result(name, capture(argv, lambda: terminate[0], deadline, limit=1024))
+        report["status"] = "stopped" if terminate[0] else "deadline" if time.monotonic() >= deadline else "completed"
+    except Exception as failure:
+        report["status"] = "unknown"
+        report["errorClass"] = type(failure).__name__
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        report["elapsedSeconds"] = round(time.monotonic() - started, 3)
+        # Combined safe output across the phase is capped, without partial/private lines.
+        remaining = 1024
+        for result in report["commands"].values():
+            size = len(result["stdout"].encode())
+            if size > remaining:
+                result["stdout"] = ""
+                result["truncated"] = True
+                result["evidenceStatus"] = "unknown"
+            else:
+                remaining -= size
+        if time.monotonic() >= started + duration:
+            raise RuntimeError("Supplementary phase publication deadline")
+        encoded = (json.dumps(report) + "\n").encode()
+        if len(encoded) > 4096:
+            raise RuntimeError("Supplementary sidecar metadata allowance")
+        with path.open("xb") as stream:
+            stream.write(encoded)
+    return report
+
+
+def startup(directory, gradle_exit, duration=45, commands=startup_commands):
+    """One bounded post-failure observation after the original observer has joined."""
+    started = time.monotonic()
+    if (directory / "startup.json").exists():
+        raise RuntimeError("Duplicate startup collection refused; existing startup.json is prior evidence, not a new invocation")
+    deadline = started + duration - min(2, duration / 4)
+    original, size = joined_observer(directory)
+    control = original["control"]
     if gradle_exit == 0 or os.environ.get("MAESTRO_DRIVER_STARTUP_TIMEOUT") != "120000":
         raise RuntimeError("Startup requires original failed suite and exact SDK allowance")
     report = {"binding": control, "phase": "post-failed-packaged-android-suite", "gradleExit": gradle_exit,
@@ -483,12 +612,17 @@ def startup(directory, gradle_exit, duration=45, commands=startup_commands):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("start", "observe", "stop", "startup"))
+    parser.add_argument("mode", choices=("start", "observe", "stop", "startup", "verify-emulator", "health"))
     parser.add_argument("directory", type=Path)
     parser.add_argument("token", nargs="?")
     parser.add_argument("--ownership-directory", type=Path)
+    parser.add_argument("--phase", choices=("before-factory", "after-failure"))
     args = parser.parse_args()
-    if args.mode == "start":
+    if args.mode == "verify-emulator":
+        verify_emulator(args.directory)
+    elif args.mode == "health":
+        health(args.directory, args.token, args.phase)
+    elif args.mode == "start":
         start(args.directory, args.ownership_directory)
     elif args.mode == "stop":
         stop(args.directory)
