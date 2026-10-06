@@ -23,6 +23,7 @@ import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture
 import me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
+import me.chrisbanes.verity.device.ios.XCTestHierarchyIosDevice
 import util.IOSDeviceType
 import xcuitest.XCTestClient
 import xcuitest.XCTestDriverClient
@@ -141,10 +142,13 @@ object DeviceSessionFactory {
       client = driverClient,
       getInstalledApps = { emptySet() },
     )
-    val iosDevice = LocalIOSDevice(
-      deviceId = resolvedId,
-      xcTestDevice = xcTestDevice,
-      deviceController = simctlDevice,
+    val iosDevice = XCTestHierarchyIosDevice(
+      LocalIOSDevice(
+        deviceId = resolvedId,
+        xcTestDevice = xcTestDevice,
+        deviceController = simctlDevice,
+      ),
+      xcTestDevice,
     )
 
     val driver = IOSDriver(iosDevice)

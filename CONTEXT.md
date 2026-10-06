@@ -11,7 +11,7 @@ A named sequence of steps through a particular application on a target platform.
 _Avoid_: Flow, suite, run
 
 **Step**:
-An action, assertion, or loop within a journey.
+An action, assertion, loop, or wait within a journey.
 
 **Action**:
 An instruction to interact with the application.
@@ -31,8 +31,12 @@ _Avoid_: Assertion mode
 **Loop**:
 A repeated action with a stopping condition and a maximum number of repetitions.
 
+**Wait**:
+An action-free check of current state that repeats serially until satisfied or its elapsed time limit expires.
+_Avoid_: Loop, fixed delay
+
 **Segment**:
-A journey checkpoint consisting of a group of actions with an optional following assertion, or a single loop. Actions remaining at the end of a journey also form a segment.
+A journey checkpoint consisting of a group of actions with an optional following assertion, or a standalone loop or wait. Actions remaining at the end of a journey also form a segment.
 _Avoid_: Step, journey
 
 ### Execution

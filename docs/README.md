@@ -8,6 +8,7 @@ These specs describe implemented behavior and point to its source and tests. The
 
 | Specification | Covers | Original design |
 | --- | --- | --- |
+| [Host packaging](specs/host-packaging.md) | Host selection, native resource policy, release assets and qualification limits | Issue #103 |
 | [Directory suite runs](specs/directory-suite-runs.md) | Journey discovery, ordering, platform selection, and suite outcomes | 2026-07-07-directory-suite-runs-design.md, issue #48 |
 | [Preflight checks](specs/preflight-checks.md) | Local validation and CLI/MCP responsibility boundaries | 2026-07-07-preflight-checks-design.md, issue #45 |
 | [Project configuration](specs/project-configuration.md) | Defaults, precedence, compatibility, and assertion strategy | 2026-07-07-project-config-defaults-design.md, issue #46 |
@@ -16,6 +17,7 @@ These specs describe implemented behavior and point to its source and tests. The
 | [Hierarchy snapshot diff](specs/hierarchy-snapshot-diff.md) | MCP capture ordering, structural comparison, focus summaries and bounded JSON | Issue #51 |
 | [Focus-change waiting](specs/focus-change-waiting.md) | Reusable focus identities, serial deadlines and both MCP action results | Issue #53 |
 | [Loop conditions](specs/loop-conditions.md) | Semantic tiers, complete bodies, limits and model failures | Issue #88 |
+| [Wait conditions](specs/wait-conditions.md) | Action-free serial checks, one elapsed budget, cleanup and additive outcomes | Issue #89 |
 | [MCP skill workflows](specs/mcp-skills.md) | Run, author and debug choices, caller responsibilities, evidence and cleanup | Issue #55 |
 | [Run artifacts](specs/run-artifacts.md) | Result schema, artifact layout, evidence, and CI exit codes | 2026-07-08-suite-artifacts-design.md, issue #49 |
 

@@ -12,6 +12,44 @@ Verity is an end-to-end testing tool that combines device automation with LLM re
 - Android Mobile
 - iOS
 
+## Installation and host choice
+
+Verity requires Java 21 or later. Choose the archive for the computer running
+Verity, independently of the Android device's architecture:
+
+| Host | Archive |
+| --- | --- |
+| macOS ARM64 | `verity-V-macos-aarch64.jar` |
+| Linux x86-64 | `verity-V-linux-x86_64.jar` |
+| Existing universal fallback | `verity-V.jar` |
+
+`V` is the release version. The matching-host archives omit unrelated native
+resources; both retain the complete Android APKs. macOS and universal retain
+complete iOS driver bundles. The universal fallback does not qualify additional
+hosts or new physical-iOS support.
+
+The release workflow is wired for future version tags; this change has not
+published a release. To build the archives from this checkout:
+
+```sh
+./gradlew :verity:cli:hostJars --no-scan
+java -jar verity/cli/build/libs/verity-0.1.0.jar --help
+```
+
+For a published version, download the chosen JAR and
+`verity-V-checksums.sha256` from the same release. Compare `shasum -a 256 JAR`
+(on macOS) or `sha256sum JAR` (on Linux) with the manifest line bearing that exact
+filename before running `java -jar JAR --help`. Replace `JAR` with the downloaded
+filename; the checksum manifest lists all three archives.
+
+The Homebrew formula selects the macOS ARM64 or Linux x86-64 asset on matching
+hosts and otherwise uses the universal asset. It downloads the JAR without
+unpacking it, installs the selected basename as `libexec/verity.jar`, and launches
+that canonical file with Homebrew's Java 21. The future release workflow updates
+the tap only after verifying the published assets; it does not establish new
+host support. See the [host-packaging specification](docs/specs/host-packaging.md)
+for the matrix, checksums, measurements and qualification limits.
+
 ## How it works
 
 Journeys are YAML files that describe what a user does and what the app should show:
