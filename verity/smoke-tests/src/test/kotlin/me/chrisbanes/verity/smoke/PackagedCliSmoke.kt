@@ -13,6 +13,7 @@ import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.plugins.timeout
+import io.ktor.client.request.get
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
 import io.modelcontextprotocol.kotlin.sdk.client.StreamableHttpClientTransport
@@ -345,21 +346,23 @@ private suspend fun <T> withPackagedQualificationLifetime(body: suspend kotlinx.
 
 private suspend fun finishPackagedQualification(
   lifetime: PackagedQualificationLifetime,
-  observer: kotlinx.coroutines.Job,
+  observer: kotlinx.coroutines.Job?,
   owned: List<PackagedChild>,
-  trap: HttpServer,
+  trap: HttpServer?,
   requests: AtomicInteger,
   record: (String) -> Unit,
   driverCheck: () -> Unit,
   ownedCleanup: (PackagedChild) -> Unit = { it.stop() },
 ) {
-  lifetime.cleanup { withContext(NonCancellable) { observer.cancelAndJoin() } }
+  lifetime.cleanup { withContext(NonCancellable) { observer?.cancelAndJoin() } }
   lifetime.cleanup {
     withContext(NonCancellable + Dispatchers.IO) {
       val childFailures = owned.asReversed().mapNotNull { child -> lifetime.attempt { ownedCleanup(child) } }
-      val trapPort = trap.address.port
-      lifetime.attempt { trap.stop(0) }
-      lifetime.attempt { check(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", trapPort), 100) } }.isFailure) { "Owned model trap port remains open" } }
+      if (trap != null) {
+        val trapPort = trap.address.port
+        lifetime.attempt { trap.stop(0) }
+        lifetime.attempt { check(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", trapPort), 100) } }.isFailure) { "Owned model trap port remains open" } }
+      }
       var alive: Int? = null
       lifetime.attempt { alive = owned.sumOf { it.aliveOwnedCount() } }
       lifetime.attempt { record("model_requests=${requests.get()} children_alive=${alive ?: "unknown"} temporary_payloads=${if (childFailures.isEmpty()) "deleted" else "cleanup_failed"} cleanup_failures=${childFailures.size} cleanup=${if (childFailures.isEmpty() && alive == 0) "completed" else "failed"}") }
@@ -369,6 +372,25 @@ private suspend fun finishPackagedQualification(
       lifetime.attempt(driverCheck)
     }
   }
+}
+
+/** Register each acquisition before IO can return to a cancelled caller. */
+private suspend fun acquirePackagedModelTrap(requests: AtomicInteger, retain: (HttpServer) -> Unit, afterStart: (HttpServer) -> Unit = {}): HttpServer = withContext(Dispatchers.IO) {
+  HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).also { trap ->
+    retain(trap)
+    trap.createContext("/") { exchange ->
+      requests.incrementAndGet()
+      exchange.sendResponseHeaders(500, -1)
+      exchange.close()
+    }
+    trap.start()
+    afterStart(trap)
+  }
+}
+
+private fun acquirePackagedLifecycleChild(directory: File, stdout: File, stderr: File, spawnChild: Boolean, retain: (PackagedChild) -> Unit, afterStart: (PackagedChild) -> Unit = {}): PackagedChild = PackagedChild(ProcessBuilder(File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m", "-cp", directory.path, "PackagedLifecycleFixture", if (spawnChild) "spawn" else "child").redirectOutput(stdout).redirectError(stderr).start(), stdout, stderr).also {
+  retain(it)
+  afterStart(it)
 }
 
 private class PackagedQualification(private val healthSafety: SupplementaryHealthSafety) {
@@ -389,25 +411,18 @@ private class PackagedQualification(private val healthSafety: SupplementaryHealt
       targetReceipt.copyTo(File(directory, "target.json"), overwrite = true)
     }
     val requests = AtomicInteger()
-    val trap = withContext(NonCancellable + Dispatchers.IO) {
-      HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
-        createContext("/") { exchange ->
-          requests.incrementAndGet()
-          exchange.sendResponseHeaders(500, -1)
-          exchange.close()
-        }
-        start()
-      }
-    }
-    val endpoint = "http://127.0.0.1:${trap.address.port}"
+    var trap: HttpServer? = null
     val owned = java.util.concurrent.CopyOnWriteArrayList<PackagedChild>()
-    val observer = launch {
-      while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-        withContext(Dispatchers.IO) { owned.forEach { it.observeDescendants() } }
-        delay(20)
-      }
-    }
+    var observer: kotlinx.coroutines.Job? = null
     try {
+      val activeTrap = acquirePackagedModelTrap(requests, { trap = it })
+      val endpoint = "http://127.0.0.1:${activeTrap.address.port}"
+      observer = launch {
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+          withContext(Dispatchers.IO) { owned.forEach { it.observeDescendants() } }
+          delay(20)
+        }
+      }
       if (platform == Platform.IOS) withContext(Dispatchers.IO) { requireDriverPortClosed() }
       val factory = beforePackagedFactory(input.variant, { phase, variant ->
         if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
@@ -507,20 +522,13 @@ private class PackagedQualification(private val healthSafety: SupplementaryHealt
       }
     }
     val client = Client(Implementation("verity-packaged-smoke", "1"))
-    try {
+    withPackagedStdioCleanup(
+      { withTimeout(10_000) { client.close() } },
+      { withContext(Dispatchers.IO) { child.stop() } },
+      { withContext(Dispatchers.IO) { child.stdout.writeBytes(captured.toByteArray()) } },
+    ) {
       withTimeout(30_000) { client.connect(StdioClientTransport(input.asSource().buffered(), child.process.outputStream.asSink().buffered())) }
       tools(client, target, platform, record, "stdio")
-    } finally {
-      withContext(NonCancellable) {
-        try {
-          withTimeout(10_000) { client.close() }
-        } finally {
-          withContext(Dispatchers.IO) {
-            child.stop()
-            child.stdout.writeBytes(captured.toByteArray())
-          }
-        }
-      }
     }
     val frames = captured.toString(Charsets.UTF_8).lineSequence().filter { it.isNotBlank() }.toList()
     check(frames.isNotEmpty())
@@ -536,32 +544,35 @@ private class PackagedQualification(private val healthSafety: SupplementaryHealt
   private suspend fun http(directory: File, options: List<String>, target: String, platform: Platform, owned: MutableList<PackagedChild>, record: (String) -> Unit) {
     val port = withContext(Dispatchers.IO) { ServerSocket(0).use { it.localPort } }
     val child = start(directory, owned, "http", options + listOf("mcp", "--transport", "http", "--host", "127.0.0.1", "--port", port.toString()))
-    val http = packagedHttpClient(record)
+    val requestFailures = PackagedHttpFailureEvidence()
+    val http = packagedHttpClient(record, requestFailures::retain)
     val client = Client(Implementation("verity-packaged-http-smoke", "1"))
     val transport = packagedHttpTransport(http, "http://127.0.0.1:$port/mcp")
-    withPackagedCleanup({
+    withPackagedHttpFailureEvidence(requestFailures) {
       withPackagedCleanup({
-        withPackagedCleanup({ withContext(Dispatchers.IO) { child.stop() } }) { http.close() }
-      }) {
-        withPackagedCleanup({ withTimeout(10_000) { client.close() } }) {
-          withTimeout(10_000) { transport.terminateSession() }
-        }
-      }
-    }) {
-      withTimeout(30_000) {
-        while (!withContext(Dispatchers.IO) {
-            runCatching {
-              Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 100) }
-              true
-            }.getOrDefault(false)
+        withPackagedCleanup({
+          withPackagedCleanup({ withContext(Dispatchers.IO) { child.stop() } }) { closePackagedHttpClient(http, requestFailures) }
+        }) {
+          withPackagedCleanup({ withTimeout(10_000) { client.close() } }) {
+            withTimeout(10_000) { transport.terminateSession() }
           }
-        ) {
-          check(child.process.isAlive)
-          delay(20)
         }
+      }) {
+        withTimeout(30_000) {
+          while (!withContext(Dispatchers.IO) {
+              runCatching {
+                Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 100) }
+                true
+              }.getOrDefault(false)
+            }
+          ) {
+            check(child.process.isAlive)
+            delay(20)
+          }
+        }
+        withTimeout(30_000) { client.connect(transport) }
+        tools(client, target, platform, record, "http")
       }
-      withTimeout(30_000) { client.connect(transport) }
-      tools(client, target, platform, record, "http")
     }
     withContext(Dispatchers.IO) {
       check(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 100) } }.isFailure) { "Owned HTTP port remains open" }
@@ -613,7 +624,7 @@ private fun packagedHttpTimeoutMillis(method: String, name: String?, verb: Strin
 
 private fun packagedRequestOptions(name: String) = RequestOptions(timeout = (if (name == "open_session") 600_000 else 120_000).milliseconds)
 
-private fun packagedHttpClient(record: (String) -> Unit): HttpClient = HttpClient(CIO) {
+private fun packagedHttpClient(record: (String) -> Unit, retainFailure: (Throwable) -> Unit = {}): HttpClient = HttpClient(CIO) {
   install(SSE)
   install(HttpTimeout) { requestTimeoutMillis = 120_000 }
 }.apply {
@@ -630,10 +641,55 @@ private fun packagedHttpClient(record: (String) -> Unit): HttpClient = HttpClien
     try {
       execute(request).also { stage("response") }
     } catch (failure: Throwable) {
-      stage("failed type=${failure.javaClass.simpleName}")
-      throw failure
+      try {
+        retainPackagedStageFailure(failure) { stage("failed type=${failure.javaClass.simpleName}") }
+      } catch (retained: Throwable) {
+        try {
+          retainFailure(retained)
+        } catch (retention: Throwable) {
+          if (retention !== retained) retained.addSuppressed(retention)
+        }
+        throw retained
+      }
     }
   }
+}
+
+/** Only this owned client's failures survive Ktor's recovered-exception transforms. */
+private class PackagedHttpFailureEvidence {
+  private val failures = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
+  var joined = false
+  fun retain(failure: Throwable) {
+    failures += failure
+  }
+  fun attach(primary: Throwable) {
+    failures.forEach { if (it !== primary && it !in primary.suppressed) primary.addSuppressed(it) }
+    if (!joined) primary.addSuppressed(IllegalStateException("Owned HTTP client job not joined; retained request evidence may have late writers"))
+  }
+  fun clearJoined() {
+    if (joined) failures.clear()
+  }
+  fun retainedCount(): Int = failures.size
+}
+
+private suspend fun <T> withPackagedHttpFailureEvidence(evidence: PackagedHttpFailureEvidence, body: suspend () -> T): T = try {
+  body()
+} catch (failure: Throwable) {
+  evidence.attach(failure)
+  throw failure
+} finally {
+  // Failed join remains an explicit refusal; do not pretend late writers are quiescent.
+  evidence.clearJoined()
+}
+
+private suspend fun closePackagedHttpClient(http: HttpClient, evidence: PackagedHttpFailureEvidence, close: () -> Unit = { http.close() }, join: suspend () -> Unit = { http.coroutineContext.job.join() }) {
+  val started = TimeSource.Monotonic.markNow()
+  withPackagedCleanup({
+    withTimeout((10_000 - started.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)) {
+      join()
+      evidence.joined = true
+    }
+  }) { close() }
 }
 
 private fun packagedHttpTransport(http: HttpClient, url: String, limit: (String, String?, String) -> Long? = ::packagedHttpTimeoutMillis) = StreamableHttpClientTransport(http, url, requestBuilder = {
@@ -681,8 +737,7 @@ private suspend fun exercisePackagedTools(platform: Platform, target: String, re
       check(closed.isError != true) { text(closed) }
       stage("completed")
     } catch (failure: Throwable) {
-      stage("failed type=${failure.javaClass.simpleName}")
-      throw failure
+      retainPackagedStageFailure(failure) { stage("failed type=${failure.javaClass.simpleName}") }
     }
   }
   val id = open()
@@ -729,6 +784,20 @@ private suspend fun exercisePackagedTools(platform: Platform, target: String, re
       withContext(recordDispatcher) { record("snapshot_reuse=closed-session-rejected fresh-session-empty old-id-unavailable") }
     }
   }
+}
+
+/** The actual stdio consumer attempts all teardown layers without masking its body. */
+private suspend fun <T> withPackagedStdioCleanup(closeClient: suspend () -> Unit, stopChild: suspend () -> Unit, publishOutput: suspend () -> Unit, body: suspend () -> T): T = withPackagedCleanup({
+  withPackagedCleanup({ withPackagedCleanup(publishOutput, stopChild) }, closeClient)
+}, body)
+
+private suspend fun retainPackagedStageFailure(failure: Throwable, emit: suspend () -> Unit): Nothing {
+  try {
+    emit()
+  } catch (emission: Throwable) {
+    if (emission !== failure) failure.addSuppressed(emission)
+  }
+  throw failure
 }
 
 /** Cleanup gets the existing functional allowance and cannot replace a failed body. */
@@ -1014,6 +1083,350 @@ class PackagedSupplementaryHealthTest {
   }
 }
 
+class PackagedAcquisitionAndProtocolCleanupTest {
+  private fun hasFailure(root: Throwable, target: Throwable): Boolean {
+    val visited = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Throwable, Boolean>())
+    fun walk(value: Throwable): Boolean = visited.add(value) && (value === target || value.suppressed.any(::walk) || value.cause?.let(::walk) == true)
+    return walk(root)
+  }
+
+  @Test
+  fun `HTTP retention includes close-time requests only after joined cleanup and clears its client scope`() = runBlocking {
+    val http = HttpClient(CIO)
+    val evidence = PackagedHttpFailureEvidence()
+    val primary = IllegalStateException("HTTP body failure")
+    val lateRequest = IllegalArgumentException("request delivered during client close")
+    val stages = mutableListOf<String>()
+    try {
+      val actual = try {
+        withPackagedHttpFailureEvidence(evidence) {
+          withPackagedCleanup({
+            withPackagedCleanup({ stages += "child-stop" }) {
+              closePackagedHttpClient(http, evidence, {
+                stages += "client-close"
+                http.close()
+                evidence.retain(lateRequest)
+              }, {
+                stages += "client-join"
+                http.coroutineContext.job.join()
+              })
+            }
+          }) { throw primary }
+        }
+      } catch (failure: Throwable) {
+        failure
+      }
+      assertThat(actual === primary).isTrue()
+      assertThat(actual.suppressed.contains(lateRequest)).isTrue()
+      assertThat(stages).isEqualTo(listOf("client-close", "client-join", "child-stop"))
+      assertThat(evidence.joined).isTrue()
+      assertThat(evidence.retainedCount()).isEqualTo(0)
+      assertThat(PackagedHttpFailureEvidence().retainedCount()).isEqualTo(0)
+    } finally {
+      withContext(NonCancellable) {
+        http.close()
+        http.coroutineContext.job.join()
+      }
+    }
+  }
+
+  @Test
+  fun `HTTP failed join retains body cleanup errors and refuses to clear as quiescent`() = runBlocking {
+    val http = HttpClient(CIO)
+    val evidence = PackagedHttpFailureEvidence()
+    val primary = IllegalStateException("HTTP body failure")
+    val joinFailure = IllegalArgumentException("injected owned join failure")
+    val lateRequest = IllegalStateException("request delivered during close")
+    var childStopped = false
+    try {
+      val actual = try {
+        withPackagedHttpFailureEvidence(evidence) {
+          withPackagedCleanup({
+            withPackagedCleanup({ childStopped = true }) {
+              closePackagedHttpClient(http, evidence, {
+                http.close()
+                evidence.retain(lateRequest)
+              }, { throw joinFailure })
+            }
+          }) { throw primary }
+        }
+      } catch (failure: Throwable) {
+        failure
+      }
+      assertThat(actual === primary).isTrue()
+      assertThat(hasFailure(actual, joinFailure)).isTrue()
+      assertThat(hasFailure(actual, lateRequest)).isTrue()
+      assertThat(actual.suppressed.any { it.message?.startsWith("Owned HTTP client job not joined") == true }).isTrue()
+      assertThat(childStopped).isTrue()
+      assertThat(evidence.joined).isFalse()
+      assertThat(evidence.retainedCount()).isEqualTo(1)
+    } finally {
+      withContext(NonCancellable) {
+        http.close()
+        http.coroutineContext.job.join()
+        evidence.joined = true
+        evidence.clearJoined()
+      }
+    }
+  }
+
+  @Test
+  fun `trap cancellation at actual IO return closes its retained listener`() = trapAcquisition(true)
+
+  @Test
+  fun `partial trap initialization failure closes its retained listener`() = trapAcquisition(false)
+
+  private fun trapAcquisition(cancel: Boolean) = runBlocking {
+    val cancellation = kotlinx.coroutines.CancellationException("trap acquisition caller cancellation")
+    val partial = IllegalStateException("partial trap initialization")
+    var trap: HttpServer? = null
+    var port = 0
+    var delivered: Throwable? = null
+    var firstDelivered: Throwable? = null
+    var checked = false
+    var job: kotlinx.coroutines.Job? = null
+    try {
+      job = launch {
+        try {
+          withPackagedQualificationLifetime { lifetime ->
+            try {
+              acquirePackagedModelTrap(AtomicInteger(), { trap = it }) {
+                port = it.address.port
+                if (cancel) job!!.cancel(cancellation) else throw partial
+              }
+              error("failed acquisition reached operational body")
+            } catch (failure: Throwable) {
+              firstDelivered = failure
+              lifetime.failure(failure)
+              throw failure
+            } finally {
+              finishPackagedQualification(lifetime, null, emptyList(), trap, AtomicInteger(), {}, { checked = true })
+            }
+          }
+        } catch (failure: Throwable) {
+          delivered = failure
+        }
+      }
+      job.join()
+      assertThat(delivered === firstDelivered).isTrue()
+      assertThat(delivered is kotlinx.coroutines.CancellationException).isEqualTo(cancel)
+      assertThat(delivered!!.message).isEqualTo(if (cancel) cancellation.message else partial.message)
+      assertThat(checked).isTrue()
+      assertThat(port > 0).isTrue()
+      assertThat(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 100) } }.isFailure).isTrue()
+    } finally {
+      withContext(NonCancellable) { job?.cancelAndJoin() }
+      withContext(NonCancellable + Dispatchers.IO) { trap?.stop(0) }
+    }
+  }
+
+  @Test
+  fun `lifecycle fixture cancellation at IO return joins the registered process`() = runBlocking {
+    val directory = Files.createTempDirectory("lifecycle-acquisition-cancel").toFile()
+    val stdout = File(directory, "stdout")
+    val stderr = File(directory, "stderr")
+    var owned: PackagedChild? = null
+    var delivered: Throwable? = null
+    var firstDelivered: Throwable? = null
+    val cancellation = kotlinx.coroutines.CancellationException("lifecycle acquisition caller cancellation")
+    var job: kotlinx.coroutines.Job? = null
+    try {
+      withContext(Dispatchers.IO) {
+        val source = File(directory, "PackagedLifecycleFixture.java")
+        source.writeText("public class PackagedLifecycleFixture { public static void main(String[] args) throws Exception { Thread.sleep(300000); } }")
+        check(ToolProvider.getSystemJavaCompiler().run(null, null, null, source.path) == 0)
+      }
+      job = launch {
+        try {
+          withPackagedCleanup({ withContext(Dispatchers.IO) { owned?.stop() } }) {
+            try {
+              withContext(Dispatchers.IO) {
+                acquirePackagedLifecycleChild(directory, stdout, stderr, false, { owned = it }) { job!!.cancel(cancellation) }
+              }
+              error("cancelled lifecycle acquisition entered body")
+            } catch (failure: Throwable) {
+              firstDelivered = failure
+              throw failure
+            }
+          }
+        } catch (failure: Throwable) {
+          delivered = failure
+        }
+      }
+      job.join()
+      assertThat(delivered === firstDelivered).isTrue()
+      assertThat(delivered is kotlinx.coroutines.CancellationException).isTrue()
+      assertThat(owned != null && owned!!.aliveOwnedCount() == 0).isTrue()
+    } finally {
+      withContext(NonCancellable) { job?.cancelAndJoin() }
+      withContext(NonCancellable + Dispatchers.IO) {
+        owned?.stop()
+        check(directory.deleteRecursively())
+      }
+    }
+  }
+
+  @Test
+  fun `actual stdio teardown preserves body failure and all close stop publication failures`() = stdioFailure(false)
+
+  @Test
+  fun `actual stdio teardown preserves caller cancellation and all close stop publication failures`() = stdioFailure(true)
+
+  private fun stdioFailure(cancel: Boolean) = runBlocking {
+    val directory = Files.createTempDirectory("stdio-consumer-cleanup").toFile()
+    val primary: Throwable = if (cancel) kotlinx.coroutines.CancellationException("stdio body caller cancellation") else IllegalStateException("stdio body failure")
+    val clientClose = IllegalArgumentException("client close failure")
+    val childStop = IllegalStateException("failure after actual child join")
+    var publication: Throwable? = null
+    var owned: PackagedChild? = null
+    val stages = mutableListOf<String>()
+    try {
+      withContext(Dispatchers.IO) {
+        owned = PackagedChild(ProcessBuilder("python3", "-c", "import time;time.sleep(30)").redirectOutput(File(directory, "out")).redirectError(File(directory, "err")).start(), File(directory, "out"), File(directory, "err"))
+      }
+      val actual = try {
+        withPackagedStdioCleanup(
+          {
+            stages += "client-close"
+            throw clientClose
+          },
+          {
+            withContext(Dispatchers.IO) {
+              stages += "child-stop"
+              owned!!.stop()
+              throw childStop
+            }
+          },
+          {
+            withContext(Dispatchers.IO) {
+              stages += "stdout-publication"
+              try {
+                directory.writeBytes(byteArrayOf(1))
+              } catch (failure: Throwable) {
+                publication = failure
+                throw failure
+              }
+            }
+          },
+        ) { throw primary }
+      } catch (failure: Throwable) {
+        failure
+      }
+      assertThat(actual === primary).isTrue()
+      assertThat(stages).isEqualTo(listOf("client-close", "child-stop", "stdout-publication"))
+      assertThat(hasFailure(primary, clientClose)).isTrue()
+      assertThat(hasFailure(primary, childStop)).isTrue()
+      assertThat(publication != null && hasFailure(primary, publication!!)).isTrue()
+      assertThat(owned!!.aliveOwnedCount()).isEqualTo(0)
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) {
+        owned?.stop()
+        check(directory.deleteRecursively())
+      }
+    }
+  }
+
+  @Test
+  fun `actual HTTP failed request preserves operation when failed stage receipt is denied`() = runBlocking {
+    val directory = Files.createTempDirectory("http-failed-receipt").toFile()
+    var denied: Throwable? = null
+    val port = withContext(Dispatchers.IO) { ServerSocket(0).use { it.localPort } }
+    val evidence = PackagedHttpFailureEvidence()
+    val http = packagedHttpClient({ value ->
+      if ("state=failed" in value) {
+        try {
+          directory.appendText(value)
+        } catch (failure: Throwable) {
+          denied = failure
+          throw failure
+        }
+      }
+    }, evidence::retain)
+    try {
+      val actual = try {
+        withPackagedHttpFailureEvidence(evidence) {
+          withPackagedCleanup({ closePackagedHttpClient(http, evidence) }) {
+            withTimeout(5000) { http.get("http://127.0.0.1:$port") }
+            error("closed endpoint unexpectedly succeeded")
+          }
+        }
+      } catch (failure: Throwable) {
+        failure
+      }
+      assertThat(denied != null).isTrue()
+      assertThat(actual !== denied).isTrue()
+      assertThat(hasFailure(actual, checkNotNull(denied))).isTrue()
+      assertThat(evidence.joined).isTrue()
+      assertThat(evidence.retainedCount()).isEqualTo(0)
+    } finally {
+      withContext(NonCancellable) { http.close() }
+      withContext(NonCancellable + Dispatchers.IO) { check(directory.deleteRecursively()) }
+    }
+  }
+
+  @Test
+  fun `failed stage emission retains the first delivered request or close object`() = runBlocking {
+    for (cancel in listOf(false, true)) {
+      val operation: Throwable = if (cancel) kotlinx.coroutines.CancellationException("operation caller cancellation") else IllegalStateException("operation failure")
+      val firstDelivered = try {
+        withContext(Dispatchers.IO) { throw operation }
+      } catch (failure: Throwable) {
+        failure
+      }
+      val denied = IllegalArgumentException("receipt emission denied")
+      val actual = try {
+        retainPackagedStageFailure(firstDelivered) { throw denied }
+      } catch (failure: Throwable) {
+        failure
+      }
+      assertThat(actual === firstDelivered).isTrue()
+      assertThat(actual.suppressed.single() === denied).isTrue()
+    }
+  }
+
+  @Test
+  fun `actual protocol close preserves operation and caller cancellation when failed receipt is denied`() = runTest {
+    for (cancel in listOf(false, true)) {
+      val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("close-failed-receipt").toFile() }
+      val close: Throwable = if (cancel) kotlinx.coroutines.CancellationException("close caller cancellation") else IllegalStateException("close operation failure")
+      var denied: Throwable? = null
+      val calls = mutableListOf<String>()
+      try {
+        val actual = try {
+          exercisePackagedTools(Platform.IOS, "owned-target", { value ->
+            if ("close=failed" in value) {
+              try {
+                directory.appendText(value)
+              } catch (failure: Throwable) {
+                denied = failure
+                throw failure
+              }
+            }
+          }, { name, _ ->
+            calls += name
+            when (name) {
+              "open_session" -> CallToolResult(content = listOf(TextContent("session_id: 11111111-1111-1111-1111-111111111111")))
+              "capture_hierarchy" -> CallToolResult(content = listOf(TextContent("snapshot_id: 22222222-2222-2222-2222-222222222222\n\nSettings")))
+              "close_session" -> throw close
+              else -> CallToolResult(content = listOf(TextContent("ok")))
+            }
+          }, "fixture-stdio", StandardTestDispatcher(testScheduler))
+          error("failed close passed")
+        } catch (failure: Throwable) {
+          failure
+        }
+        // withTimeout may recover the exception; both original operation and actual denial remain reachable.
+        assertThat(hasFailure(actual, close)).isTrue()
+        assertThat(actual is kotlinx.coroutines.CancellationException).isEqualTo(cancel)
+        assertThat(denied != null && hasFailure(actual, denied!!)).isTrue()
+        assertThat(calls).isEqualTo(listOf("open_session", "capture_hierarchy", "press_key", "diff_hierarchy", "close_session"))
+      } finally {
+        withContext(NonCancellable + Dispatchers.IO) { check(directory.deleteRecursively()) }
+      }
+    }
+  }
+}
+
 class PackagedQualificationLifetimeTest {
   @Test
   fun `successful helper cancellation retains delivered identity outside qualification scope and final IO`() = cancelledHelper(false, false)
@@ -1260,7 +1673,7 @@ class PackagedChildLifecycleTest {
     val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("packaged-child-cleanup").toFile() }
     var child: PackagedChild? = null
     try {
-      child = withContext(Dispatchers.IO) {
+      withContext(Dispatchers.IO) {
         val source = File(directory, "PackagedLifecycleFixture.java")
         source.writeText(
           """
@@ -1278,7 +1691,7 @@ class PackagedChildLifecycleTest {
         check(ToolProvider.getSystemJavaCompiler().run(null, null, null, source.path) == 0)
         val stdout = File(directory, "stdout")
         val stderr = File(directory, "stderr")
-        PackagedChild(ProcessBuilder(File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m", "-cp", directory.path, "PackagedLifecycleFixture", if (spawnChild) "spawn" else "child").redirectOutput(stdout).redirectError(stderr).start(), stdout, stderr)
+        acquirePackagedLifecycleChild(directory, stdout, stderr, spawnChild, { child = it })
       }
       val active = checkNotNull(child)
       withTimeout(10_000) {
