@@ -679,6 +679,7 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
   data class Child(val process: Process, val directory: Path, val command: List<String>, val environment: Map<String, String>)
   val children = CopyOnWriteArrayList<Child>()
   val directories = CopyOnWriteArraySet<Path>()
+  var failCleanup = false
   private var launches = 0
   private val receipts = CopyOnWriteArrayList<Path>()
   private val releases = CopyOnWriteArrayList<Path>()
@@ -700,8 +701,31 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
       environment().putAll(environment)
     }.start()
     val owned = if (scenario == "model-callback-blocked") ObservedProcess(process, largeWriteEntered, largeWriteFinished) else process
-    children.add(Child(owned, directory, command, environment))
-    return owned
+    val cleanupObserved = CleanupObservedProcess(owned) { failCleanup }
+    children.add(Child(cleanupObserved, directory, command, environment))
+    return cleanupObserved
+  }
+
+  /** Fail after the real exact child has exited, without leaving a live process. */
+  private class CleanupObservedProcess(private val child: Process, private val fail: () -> Boolean) : Process() {
+    override fun getOutputStream() = child.outputStream
+    override fun getInputStream() = child.inputStream
+    override fun getErrorStream() = child.errorStream
+    override fun waitFor() = child.waitFor()
+    override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean {
+      val exited = child.waitFor(timeout, unit)
+      if (exited && fail()) throw java.io.IOException("secret-cleanup-cause")
+      return exited
+    }
+    override fun exitValue() = child.exitValue()
+    override fun destroy() = child.destroy()
+    override fun destroyForcibly(): Process {
+      child.destroyForcibly()
+      return this
+    }
+    override fun isAlive() = child.isAlive
+    override fun pid() = child.pid()
+    override fun toHandle() = child.toHandle()
   }
 
   /** The wrapper observes entry to the real child's pipe; every process operation

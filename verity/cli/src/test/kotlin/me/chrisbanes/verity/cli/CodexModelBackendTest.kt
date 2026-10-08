@@ -27,6 +27,11 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import me.chrisbanes.verity.agent.ModelFailureException
+import me.chrisbanes.verity.agent.ModelFailureKind
+import me.chrisbanes.verity.agent.ModelRequestStage
+import me.chrisbanes.verity.agent.NavigatorAgent
+import me.chrisbanes.verity.core.model.Platform
 
 class CodexModelBackendTest {
   private class CallerCancellation(val marker: Any) : CancellationException("caller-owned")
@@ -56,6 +61,148 @@ class CodexModelBackendTest {
         } finally {
           fake.cleanupReceipts()
         }
+      }
+    }
+  }
+
+  private fun assertSafeCleanup(primary: Throwable) {
+    assertThat(primary.cause).isEqualTo(null)
+    assertThat(primary.suppressed.isNotEmpty()).isTrue()
+    primary.suppressed.forEach { secondary ->
+      assertThat((secondary as CodexFailure).kind).isEqualTo(CodexFailureKind.CLEANUP)
+      assertThat(secondary.cause).isEqualTo(null)
+      assertThat(secondary.message).isEqualTo("Codex cleanup failure")
+    }
+  }
+
+  @Test
+  fun `callback protocol rejection retains backend primary and navigator invalid response despite cleanup failure`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture("model-callback-unknown") { fake, backend ->
+        var primary: CodexFailure? = null
+        val navigator = NavigatorAgent("") { _, _ ->
+          try {
+            backend.execute(request())
+          } catch (failure: CodexFailure) {
+            primary = failure
+            throw failure
+          }
+        }
+        supervisorScope {
+          val result = async { runCatching { navigator.generate(listOf("launch"), "test.app", Platform.ANDROID_TV) } }
+          withTimeout(3_000) { while (!backend.client.ownsTurn("thread-1", "turn-1")) delay(5) }
+          fake.releaseCallbacks()
+          val failure = result.await().exceptionOrNull() as ModelFailureException
+          assertThat(failure.stage).isEqualTo(ModelRequestStage.NAVIGATOR_FLOW)
+          assertThat(failure.failure).isEqualTo(ModelFailureKind.INVALID_RESPONSE)
+          assertThat(failure.cause).isEqualTo(null)
+          val backendFailure = checkNotNull(primary)
+          assertThat(backendFailure.kind).isEqualTo(CodexFailureKind.PROTOCOL)
+          assertSafeCleanup(backendFailure)
+        }
+      }
+    }
+  }
+
+  @Test
+  fun `preparation protocol rejection and owned timeout retain safe primary with cleanup diagnostic`() = runTest {
+    withContext(Dispatchers.Default) {
+      listOf("callback" to CodexFailureKind.PROTOCOL, "version-timeout" to CodexFailureKind.STARTUP_TIMEOUT).forEach { (scenario, kind) ->
+        val fake = FakeCodexLauncher(scenario).also { it.failCleanup = true }
+        try {
+          val failure = assertFailsWith<CodexFailure> { fake.prepare(startupMillis = 1_000) }
+          assertThat(failure.kind).isEqualTo(kind)
+          assertSafeCleanup(failure)
+          fake.verifyCleanup()
+        } finally {
+          fake.cleanupReceipts()
+        }
+      }
+    }
+  }
+
+  @Test
+  fun `unknown preparation error normalizes before secondary cleanup without retaining raw cause`() = runTest {
+    withContext(Dispatchers.Default) {
+      val fake = FakeCodexLauncher()
+      var launches = 0
+      try {
+        val failure = assertFailsWith<CodexFailure> {
+          CodexModelBackend.prepare(
+            executable = { Path.of("injected-jvm-fake") },
+            host = "Mac OS X",
+            environment = emptyMap(),
+            launch = { command, directory, environment ->
+              if (++launches == 4) {
+                fake.failCleanup = true
+                throw java.io.IOException("secret-primary-cause")
+              }
+              fake.launch(command, directory, environment)
+            },
+          )
+        }
+        assertThat(failure.kind).isEqualTo(CodexFailureKind.PROTOCOL)
+        assertSafeCleanup(failure)
+        fake.verifyCleanup()
+      } finally {
+        fake.cleanupReceipts()
+      }
+    }
+  }
+
+  @Test
+  fun `caller preparation and active request cancellation retain identity and fixed secondary cleanup`() = runTest {
+    withContext(Dispatchers.Default) {
+      supervisorScope {
+        val fake = FakeCodexLauncher("version-timeout").also { it.failCleanup = true }
+        val cancellation = CallerCancellation(Any())
+        var observed: CancellationException? = null
+        val caller = launch {
+          try {
+            fake.prepare()
+          } catch (failure: CancellationException) {
+            observed = failure
+            throw failure
+          }
+        }
+        withTimeout(3_000) { while (fake.children.isEmpty()) delay(5) }
+        caller.cancel(cancellation)
+        caller.join()
+        assertThat(observed).isSameInstanceAs(cancellation)
+        assertSafeCleanup(cancellation)
+        fake.verifyCleanup()
+        fake.cleanupReceipts()
+      }
+      fixture("model-hang") { fake, backend ->
+        fake.failCleanup = true
+        supervisorScope {
+          val cancellation = CallerCancellation(Any())
+          var observed: CancellationException? = null
+          val caller = launch {
+            try {
+              backend.execute(request())
+            } catch (failure: CancellationException) {
+              observed = failure
+              throw failure
+            }
+          }
+          awaitMethod(fake, "turn/start")
+          caller.cancel(cancellation)
+          caller.join()
+          assertThat(observed).isSameInstanceAs(cancellation)
+          assertSafeCleanup(cancellation)
+        }
+      }
+    }
+  }
+
+  @Test
+  fun `successful request with failed unsubscribe still reports cleanup as primary`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture("model-unsubscribe-failed") { _, backend ->
+        val failure = assertFailsWith<CodexFailure> { backend.execute(request()) }
+        assertThat(failure.kind).isEqualTo(CodexFailureKind.CLEANUP)
+        assertThat(failure.cause).isEqualTo(null)
       }
     }
   }
@@ -176,7 +323,9 @@ class CodexModelBackendTest {
               val result = async { runCatching { backend.execute(request()) } }
               withTimeout(3_000) { while (!backend.client.ownsTurn("thread-1", "turn-1")) delay(5) }
               fake.releaseCallbacks()
-              assertThat(result.await().exceptionOrNull() is CodexFailure).isTrue()
+              val failure = result.await().exceptionOrNull() as CodexFailure
+              assertThat(failure.kind).isEqualTo(CodexFailureKind.PROTOCOL)
+              assertSafeCleanup(failure)
             }
           } else {
             assertFailsWith<CodexFailure> { backend.execute(request()) }

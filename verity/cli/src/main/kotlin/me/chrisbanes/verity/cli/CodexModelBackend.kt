@@ -78,7 +78,9 @@ internal class CodexModelBackend private constructor(
     withTimeoutOrNull(minOf(400L, deadline.remainingMillis())) { owned.join() }
     try {
       resources.close(deadline)
-    } catch (_: Exception) { /* Caller cancellation keeps ownership. */ }
+    } catch (_: Exception) {
+      cancellation.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
+    }
     withTimeoutOrNull(deadline.remainingMillis()) { owned.join() }
   }
 
@@ -185,16 +187,19 @@ internal class CodexModelBackend private constructor(
       synchronized(stateLock) { closed = true }
       try {
         resources.close(resources.beginCleanup()) { session?.cleanup() }
-      } catch (_: Exception) { /* Preserve caller cancellation. */ }
+      } catch (_: Exception) {
+        e.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
+      }
       throw e
     } catch (e: Exception) {
+      val primary = if (e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
       synchronized(stateLock) { closed = true }
       try {
         resources.close(resources.beginCleanup()) { session?.cleanup() }
       } catch (_: Exception) {
-        throw CodexFailure(CodexFailureKind.CLEANUP)
+        primary.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
       }
-      throw if (e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
+      throw primary
     }
   }
 
@@ -570,22 +575,21 @@ internal class CodexModelBackend private constructor(
           CodexModelBackend(final, discoveredPolicy, finalDirectory, resources, echoFields)
         }
       } catch (e: CancellationException) {
-        var cleanupFailed = false
+        val primary = if (e is TimeoutCancellationException && currentCoroutineContext().isActive) CodexFailure(CodexFailureKind.STARTUP_TIMEOUT) else e
         try {
           resources.close()
         } catch (_: Exception) {
-          cleanupFailed = true
+          primary.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
         }
-        if (e is TimeoutCancellationException && !currentCoroutineContext().isActive) throw e
-        if (e is TimeoutCancellationException) throw CodexFailure(if (cleanupFailed) CodexFailureKind.CLEANUP else CodexFailureKind.STARTUP_TIMEOUT)
-        throw e
+        throw primary
       } catch (e: Exception) {
+        val primary = if (e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
         try {
           resources.close()
         } catch (_: Exception) {
-          throw CodexFailure(CodexFailureKind.CLEANUP)
+          primary.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
         }
-        throw if (e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
+        throw primary
       }
     }
 
