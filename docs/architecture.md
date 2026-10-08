@@ -51,17 +51,17 @@ and `futureware-tech/simulator-action` to select an available iOS simulator,
 erase it, wait for boot and shut it down after the job. No simulator model or
 runtime version is pinned. The macOS pre-native build uses `--no-daemon`.
 
-`scripts/ci_target_receipt.py` validates the action-managed device and binds its
-serial or UUID to the CI job, commit and attempt. Gradle commands run directly
-in the workflow. Packaged and ordinary tagged smoke tests are explicitly forced
-to execute; native tests are excluded from the default offline `check`.
+Gradle commands run directly in the workflow. Android tests use the emulator
+action's `ANDROID_SERIAL`; iOS tests receive the simulator action's UUID through
+`IOS_SIMULATOR_UDID`. Packaged and ordinary tagged smoke tests are explicitly
+forced to execute; native tests are excluded from the default offline `check`.
 
 Linux Android tests exercise the Linux and universal JARs; macOS iOS tests
 exercise the macOS and universal JARs. Normal CI does not test macOS-specific
 Android interoperability. There is no shared Android-to-iOS runner or handoff,
 and no bootstrap observer or supplementary health diagnostics. The packaged
-harness retains its own process cleanup, caller cancellation and qualification
-receipts.
+harness retains its own process cleanup, caller cancellation and functional test
+reports.
 
 `:verity:cli:hostJars` builds universal, macOS ARM64 and Linux x86-64 archives.
 `verifyHostJars` checks their resource inventories and packaged ABI;

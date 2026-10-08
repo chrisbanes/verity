@@ -42,7 +42,7 @@ tasks.test {
   )) {
     inputs.property(name, providers.environmentVariable(name).orElse(""))
   }
-  providers.environmentVariable("VERITY_PACKAGED_IOS_UDID").orNull?.let {
+  providers.environmentVariable("IOS_SIMULATOR_UDID").orNull?.let {
     inputs.property("jobOwnedIosUdid", it)
     systemProperty("verity.smoke.ios.udid", it)
   }
@@ -132,7 +132,7 @@ val productionJars = mapOf(
   "linux-x86_64" to packagedLinux.elements.map { it.single().asFile },
 )
 val selectedVariants = providers.gradleProperty("packagedVariant").orElse("universal")
-val packagedReceipts = layout.buildDirectory.dir("reports/packaged")
+val packagedReports = layout.buildDirectory.dir("reports/packaged")
 fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
   dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", packagedProbeJar)
   testClassesDirs = sourceSets.test.get().output.classesDirs
@@ -142,16 +142,13 @@ fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
   for ((variant, archive) in productionJars) inputs.file(archive).withPropertyName("productionJar.$variant")
   inputs.file(packagedProbeJar.flatMap { it.archiveFile }).withPropertyName("probeJar")
   inputs.property("packagedVariants", selectedVariants)
-  for (name in listOf("VERITY_PACKAGED_ANDROID_SERIAL", "VERITY_PACKAGED_IOS_UDID", "VERITY_PACKAGED_TARGET_RECEIPT", "VERITY_PACKAGED_CANDIDATE_HEAD", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_JOB")) {
+  for (name in listOf("ANDROID_SERIAL", "IOS_SIMULATOR_UDID")) {
     inputs.property(name, providers.environmentVariable(name).orElse(""))
-  }
-  providers.environmentVariable("VERITY_PACKAGED_TARGET_RECEIPT").orNull?.let {
-    inputs.file(it).withPropertyName("jobOwnedTargetReceipt")
   }
   val probeArchive = packagedProbeJar.flatMap { it.archiveFile }
   val archives = productionJars
   val variants = selectedVariants
-  val receiptDirectory = packagedReceipts
+  val reportDirectory = packagedReports
   doFirst {
     val selected = variants.get().split(',')
     check(selected.isNotEmpty() && selected.distinct().size == selected.size && selected.all { it in archives }) { "Unknown or duplicate packaged variant: $selected" }
@@ -177,7 +174,7 @@ fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
     systemProperty("verity.packaged.variants", selected.joinToString(","))
     systemProperty("verity.packaged.probe", probe.absolutePath)
     systemProperty("verity.packaged.probe.sha", digest(probe))
-    systemProperty("verity.packaged.receipts", receiptDirectory.get().asFile.absolutePath)
+    systemProperty("verity.packaged.reports", reportDirectory.get().asFile.absolutePath)
   }
 }
 val packagedAndroidTest = packagedTest("packagedAndroidTest", "packaged-android")

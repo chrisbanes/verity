@@ -105,25 +105,16 @@ private val Platform.wireName: String get() = when (this) {
 private fun packagedVariants(platform: Platform): List<org.junit.jupiter.api.DynamicTest> {
   val variants = System.getProperty("verity.packaged.variants").split(',')
   check(variants.isNotEmpty() && variants.distinct().size == variants.size)
-  val target = checkNotNull(System.getenv(if (platform == Platform.IOS) "VERITY_PACKAGED_IOS_UDID" else "VERITY_PACKAGED_ANDROID_SERIAL"))
+  val target = checkNotNull(System.getenv(if (platform == Platform.IOS) "IOS_SIMULATOR_UDID" else "ANDROID_SERIAL"))
   val probe = File(System.getProperty("verity.packaged.probe"))
   val inputs = variants.map { variant ->
     val jar = File(System.getProperty("verity.packaged.jar.$variant"))
     PackagedInputs(variant, jar, System.getProperty("verity.packaged.sha.$variant"), probe, System.getProperty("verity.packaged.probe.sha"))
       .also { it.validate(System.getProperty("os.name"), System.getProperty("os.arch"), platform) }
   }
-  check(System.getenv("GITHUB_ACTIONS") == "true" && System.getenv("GITHUB_JOB") in listOf("smoke-android", "smoke-ios")) { "Native qualification requires configured job-owned CI" }
-  if (platform == Platform.IOS) java.util.UUID.fromString(target) else check(target.startsWith("emulator-"))
-  val targetReceipt = File(checkNotNull(System.getenv("VERITY_PACKAGED_TARGET_RECEIPT")))
-  val binding = Json.parseToJsonElement(targetReceipt.readText()).jsonObject
-  check(
-    binding["target"]!!.jsonPrimitive.content == target && binding["run"]!!.jsonPrimitive.content == System.getenv("GITHUB_RUN_ID") &&
-      binding["job"]!!.jsonPrimitive.content == System.getenv("GITHUB_JOB") && binding["head"]!!.jsonPrimitive.content == System.getenv("GITHUB_SHA") &&
-      binding["attempt"]!!.jsonPrimitive.content == System.getenv("GITHUB_RUN_ATTEMPT") && binding["kind"]!!.jsonPrimitive.content == if (platform == Platform.IOS) "ios" else "android",
-  ) { "Target is not bound to this CI job/head/attempt" }
   return inputs.map { input ->
     org.junit.jupiter.api.DynamicTest.dynamicTest("${input.variant} $platform packaged runtime") {
-      runBlocking { PackagedQualification().qualify(input, platform, target, targetReceipt) }
+      runBlocking { PackagedQualification().qualify(input, platform, target) }
     }
   }
 }
@@ -266,20 +257,22 @@ private fun acquirePackagedLifecycleChild(directory: File, stdout: File, stderr:
 }
 
 private class PackagedQualification {
-  suspend fun qualify(input: PackagedInputs, platform: Platform, target: String, targetReceipt: File) = withPackagedQualificationLifetime { lifetime ->
+  suspend fun qualify(input: PackagedInputs, platform: Platform, target: String) = withPackagedQualificationLifetime { lifetime ->
     // Recheck immediately before any setup, not only during dynamic-test discovery.
     withContext(Dispatchers.IO) { input.validate(System.getProperty("os.name"), System.getProperty("os.arch"), platform) }
     val jar = input.jar
     val probe = input.probe
-    val directory = File(System.getProperty("verity.packaged.receipts"), "${System.getenv("GITHUB_RUN_ID")}-${System.getenv("GITHUB_RUN_ATTEMPT")}/${System.getenv("GITHUB_JOB")}/${input.variant}-${platform.wireName}")
-    withContext(Dispatchers.IO) { directory.mkdirs() }
-    val receipt = File(directory, "qualification.txt")
+    val directory = File(System.getProperty("verity.packaged.reports"), "${input.variant}-${platform.wireName}")
+    withContext(Dispatchers.IO) {
+      check(!directory.exists() || directory.deleteRecursively()) { "Could not clear previous packaged results" }
+      check(directory.mkdirs()) { "Could not create packaged report directory" }
+    }
+    val report = File(directory, "qualification.txt")
     fun record(text: String) {
-      receipt.appendText(text + "\n")
+      report.appendText(text + "\n")
     }
     withContext(Dispatchers.IO) {
-      receipt.writeText("host=${System.getProperty("os.name")}/${System.getProperty("os.arch")}\ntested_head=${System.getenv("GITHUB_SHA")}\ncandidate_head=${System.getenv("VERITY_PACKAGED_CANDIDATE_HEAD")}\nrun=${System.getenv("GITHUB_RUN_ID")}\nattempt=${System.getenv("GITHUB_RUN_ATTEMPT")}\njob=${System.getenv("GITHUB_JOB")}\ntarget=$target\nplatform=$platform\nvariant=${input.variant}\njar=${jar.name}\nsha256=${input.expectedJarHash}\nprobe_sha256=${input.expectedProbeHash}\n")
-      targetReceipt.copyTo(File(directory, "target.json"), overwrite = true)
+      report.writeText("host=${System.getProperty("os.name")}/${System.getProperty("os.arch")}\ntarget=$target\nplatform=$platform\nvariant=${input.variant}\njar=${jar.name}\nsha256=${input.expectedJarHash}\nprobe_sha256=${input.expectedProbeHash}\n")
     }
     val requests = AtomicInteger()
     var trap: HttpServer? = null

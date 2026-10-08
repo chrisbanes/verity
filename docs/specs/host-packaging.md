@@ -166,8 +166,8 @@ Historical observations use different inputs and are not subtraction baselines:
 The `smoke-android` job tests Linux and universal JARs against an action-managed
 API 34 Android emulator. The independent `smoke-ios` job tests macOS and universal
 JARs against an available, erased iOS simulator on `macos-latest`. The actions
-handle boot and shutdown; a target receipt binds each selected device to the job,
-commit and attempt. No macOS Android job runs in normal CI, so macOS-specific
+handle boot and shutdown, and their selected device IDs are passed directly to
+Gradle. No macOS Android job runs in normal CI, so macOS-specific
 Android interoperability is outside that CI coverage. The supported host matrix
 is unchanged. The packaged harness still owns and joins its child processes.
 
