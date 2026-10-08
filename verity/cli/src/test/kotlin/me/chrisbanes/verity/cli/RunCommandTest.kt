@@ -57,12 +57,57 @@ import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.ActionFlowPreparationPhase
+import me.chrisbanes.verity.device.CaptureDeadlineExceededException
+import me.chrisbanes.verity.device.CaptureOperation
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.validateActionFlow
 
 class RunCommandTest {
+  @Test fun `early device capture expiry persists execution failure for single journeys and suites`() {
+    for (operation in CaptureOperation.entries) {
+      for (suite in listOf(false, true)) {
+        val dir = createTempDirectory("verity-early-capture-expiry").toFile()
+        try {
+          val condition = if (operation == CaptureOperation.SCREENSHOT) "visually Ready" else "Ready"
+          val file = writeJourneyWithSteps(dir, "a.journey.yaml", "Early capture", steps = listOf("Wait until $condition up to 3 seconds"))
+          if (suite) writeJourneyWithSteps(dir, "b.journey.yaml", "Later", steps = listOf("Wait until Ready"))
+          val outputDir = File(dir, "output")
+          val seen = mutableListOf<String>()
+          val command = runCommand(clock = fixedClock(), journeyRunner = { resolved, recorder ->
+            seen += resolved.journey.name
+            val session = object : DeviceSession by FakeDeviceSession() {
+              override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = throw CaptureDeadlineExceededException(operation)
+              override suspend fun captureScreenshot(output: Path, timeout: kotlin.time.Duration): Unit = throw CaptureDeadlineExceededException(operation)
+            }
+            Orchestrator(
+              session,
+              { NavigatorAgent("unused") { _, _ -> error("wait cannot navigate") } },
+              { InspectorAgent({ _, _, _ -> error("capture failed before model work") }, { _, _, _, _ -> error("capture failed before model work") }) },
+              artifactRecorder = recorder,
+              nowNanos = { 0L },
+            ).run(resolved.journey)
+          }) { error("unused suite runner") }
+          val input = if (suite) dir else file
+          val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${input.absolutePath}")
+          assertThat(result.statusCode).isEqualTo(4)
+          assertThat(seen).isEqualTo(listOf("Early capture"))
+          val runDir = File(outputDir, "runs").listFiles()!!.single()
+          val summary = readSummary(File(runDir, "summary.json"))
+          assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+          val journey = readJourney(File(runDir, "journeys/001-early-capture.json"))
+          assertThat(journey.passed).isFalse()
+          assertThat(journey.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+          assertThat(journey.error?.message).isEqualTo("${operation.name.lowercase()} capture deadline expired")
+          assertThat(File(runDir, "journeys/002-later.json").exists()).isFalse()
+        } finally {
+          dir.deleteRecursively()
+        }
+      }
+    }
+  }
+
   @Test fun `incomplete later wait poll cannot replace last completed evidence`() {
     val dir = createTempDirectory("verity-wait-evidence").toFile()
     try {

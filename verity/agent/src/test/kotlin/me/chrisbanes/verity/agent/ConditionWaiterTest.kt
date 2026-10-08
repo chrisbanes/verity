@@ -110,8 +110,15 @@ class ConditionWaiterTest {
   @Test fun `early typed expiry ordinary capture errors and foreign cancellations remain failures`() = runTest {
     val session = Session()
     val waiter = ConditionWaiter(evaluator(session)) { testScheduler.currentTime * 1_000_000 }
-    session.tree = { throw CaptureDeadlineExceededException(CaptureOperation.HIERARCHY) }
-    assertFailsWith<CaptureDeadlineExceededException> { waiter.await("Settings", 3.seconds) }
+    for (operation in CaptureOperation.entries) {
+      val expiry = CaptureDeadlineExceededException(operation)
+      session.tree = { throw expiry }
+      session.screenshot = { throw expiry }
+      val condition = if (operation == CaptureOperation.SCREENSHOT) "visually Settings" else "Settings"
+      val failure = assertFailsWith<IllegalStateException> { waiter.await(condition, 3.seconds) }
+      assertThat(failure.message).isEqualTo(expiry.message)
+      assertThat(generateSequence(failure as Throwable) { it.cause }.any { it === expiry }).isEqualTo(true)
+    }
     session.tree = { throw IOException("capture") }
     assertThat(assertFailsWith<IOException> { waiter.await("Settings") }.message).isEqualTo("capture")
     session.tree = { throw CancellationException("foreign") }

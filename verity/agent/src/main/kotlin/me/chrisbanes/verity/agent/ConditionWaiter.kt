@@ -54,7 +54,7 @@ class ConditionWaiter(
       // An early device-owned expiry is an execution failure, not a false condition.
       if (elapsed() < timeout) {
         parent.ensureActive()
-        throw expiry
+        throw IllegalStateException(expiry.message, expiry)
       }
     } catch (failure: ModelFailureException) {
       parent.ensureActive()
