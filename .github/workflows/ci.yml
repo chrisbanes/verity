@@ -136,6 +136,12 @@ jobs:
         id: mac_sdk_tools
         run: sdkmanager --version
 
+      - name: Install AppleSimulatorUtils
+        run: |
+          brew tap wix/brew
+          brew install applesimutils
+          applesimutils --version
+
       - name: Prepare job-owned Android handoff boundary
         id: android_owner_prepare
         env:
