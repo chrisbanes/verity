@@ -105,155 +105,18 @@ private val Platform.wireName: String get() = when (this) {
 private fun packagedVariants(platform: Platform): List<org.junit.jupiter.api.DynamicTest> {
   val variants = System.getProperty("verity.packaged.variants").split(',')
   check(variants.isNotEmpty() && variants.distinct().size == variants.size)
-  val target = checkNotNull(System.getenv(if (platform == Platform.IOS) "VERITY_PACKAGED_IOS_UDID" else "VERITY_PACKAGED_ANDROID_SERIAL"))
+  val target = checkNotNull(System.getenv(if (platform == Platform.IOS) "IOS_SIMULATOR_UDID" else "ANDROID_SERIAL"))
   val probe = File(System.getProperty("verity.packaged.probe"))
   val inputs = variants.map { variant ->
     val jar = File(System.getProperty("verity.packaged.jar.$variant"))
     PackagedInputs(variant, jar, System.getProperty("verity.packaged.sha.$variant"), probe, System.getProperty("verity.packaged.probe.sha"))
       .also { it.validate(System.getProperty("os.name"), System.getProperty("os.arch"), platform) }
   }
-  check(System.getenv("GITHUB_ACTIONS") == "true" && System.getenv("GITHUB_JOB") in listOf("smoke-android", "smoke-ios")) { "Native qualification requires configured job-owned CI" }
-  if (platform == Platform.IOS) java.util.UUID.fromString(target) else check(target.startsWith("emulator-"))
-  val targetReceipt = File(checkNotNull(System.getenv("VERITY_PACKAGED_TARGET_RECEIPT")))
-  val binding = Json.parseToJsonElement(targetReceipt.readText()).jsonObject
-  check(
-    binding["target"]!!.jsonPrimitive.content == target && binding["run"]!!.jsonPrimitive.content == System.getenv("GITHUB_RUN_ID") &&
-      binding["job"]!!.jsonPrimitive.content == System.getenv("GITHUB_JOB") && binding["head"]!!.jsonPrimitive.content == System.getenv("GITHUB_SHA") &&
-      binding["attempt"]!!.jsonPrimitive.content == System.getenv("GITHUB_RUN_ATTEMPT") && binding["kind"]!!.jsonPrimitive.content == if (platform == Platform.IOS) "ios" else "android",
-  ) { "Target is not bound to this CI job/head/attempt" }
-  val healthSafety = SupplementaryHealthSafety()
   return inputs.map { input ->
     org.junit.jupiter.api.DynamicTest.dynamicTest("${input.variant} $platform packaged runtime") {
-      runBlocking { PackagedQualification(healthSafety).qualify(input, platform, target, targetReceipt) }
+      runBlocking { PackagedQualification().qualify(input, platform, target) }
     }
   }
-}
-
-private suspend fun <T> beforePackagedFactory(variant: String, health: suspend (String, String) -> Unit, record: (String) -> Unit, safety: SupplementaryHealthSafety = SupplementaryHealthSafety(), factory: suspend () -> T): T {
-  safety.requireVerified()
-  try {
-    health("before-factory", variant)
-  } catch (cancel: kotlinx.coroutines.CancellationException) {
-    throw cancel
-  } catch (failure: SupplementaryHealthCleanupFailure) {
-    safety.refuse(failure)
-    throw failure
-  } catch (failure: Exception) {
-    runCatching { record("supplementary_health=unknown phase=before-factory failure=${failure.javaClass.simpleName}") }
-  }
-  return factory()
-}
-
-private class SupplementaryHealthCleanupFailure : IllegalStateException("Supplementary owned process did not join within the phase deadline")
-
-private class SupplementaryHealthSafety {
-  private val refusal = java.util.concurrent.atomic.AtomicReference<SupplementaryHealthCleanupFailure?>()
-  fun refuse(failure: SupplementaryHealthCleanupFailure) {
-    refusal.compareAndSet(null, failure)
-  }
-  fun requireVerified() {
-    refusal.get()?.let { throw it }
-  }
-}
-
-private suspend fun afterPackagedFailure(failure: Throwable, diagnostic: suspend () -> Unit): Nothing {
-  try {
-    diagnostic()
-  } catch (cancel: kotlinx.coroutines.CancellationException) {
-    cancel.addSuppressed(failure)
-    throw cancel
-  } catch (diagnosticFailure: Throwable) {
-    if (diagnosticFailure !== failure) failure.addSuppressed(diagnosticFailure)
-  }
-  throw failure
-}
-
-private suspend fun supplementaryHealth(phase: String, variant: String, record: (String) -> Unit, safety: SupplementaryHealthSafety) {
-  safety.requireVerified()
-  val script = System.getenv("VERITY_PACKAGED_ANDROID_HEALTH_SCRIPT")
-  val directory = System.getenv("VERITY_PACKAGED_ANDROID_HEALTH_DIRECTORY")
-  if (script == null || directory == null) {
-    runCatching { record("supplementary_health=unknown phase=$phase binding=missing") }
-    return
-  }
-  runSupplementaryHealth(listOf("python3", script, "health", directory, variant, "--phase", phase), phase, record, safety = safety)
-}
-
-private suspend fun runSupplementaryHealth(command: List<String>, phase: String, record: (String) -> Unit, phaseMs: Long = 15_000, workMs: Long = 13_000, safety: SupplementaryHealthSafety = SupplementaryHealthSafety(), cleanupOperation: (String, () -> Unit) -> Unit = { _, operation -> operation() }) {
-  safety.requireVerified()
-  val mark = TimeSource.Monotonic.markNow()
-  var process: Process? = null
-  var cancellation: kotlinx.coroutines.CancellationException? = null
-  val descendants = mutableMapOf<Long, ProcessHandle>()
-  fun remaining() = (phaseMs - mark.elapsedNow().inWholeMilliseconds).coerceAtLeast(0)
-  fun observe() {
-    process?.descendants()?.use { stream -> stream.forEach { descendants[it.pid()] = it } }
-  }
-  try {
-    withContext(Dispatchers.IO) {
-      process = ProcessBuilder(command).redirectOutput(ProcessBuilder.Redirect.DISCARD).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-    }
-    while (process!!.isAlive && mark.elapsedNow().inWholeMilliseconds < workMs) {
-      withContext(Dispatchers.IO) { observe() }
-      delay(20)
-    }
-    runCatching { record("supplementary_health=${if (!process!!.isAlive && process!!.exitValue() == 0) "retained" else "unknown"} phase=$phase") }
-  } catch (cancel: kotlinx.coroutines.CancellationException) {
-    cancellation = cancel
-  } catch (failure: Exception) {
-    runCatching { record("supplementary_health=unknown phase=$phase failure=${failure.javaClass.simpleName}") }
-  } finally {
-    var cleanupFailure: SupplementaryHealthCleanupFailure? = null
-    var cleanupCompleted = false
-    try {
-      withContext(NonCancellable + Dispatchers.IO) {
-        val errors = mutableListOf<Throwable>()
-        fun attempt(name: String, operation: () -> Unit) {
-          try {
-            cleanupOperation(name, operation)
-          } catch (failure: Throwable) {
-            errors += failure
-          }
-        }
-        attempt("observe", ::observe)
-        // Each exact owned handle is attempted even when another operation fails.
-        attempt("parent-terminate") { if (process?.isAlive == true) process!!.destroy() }
-        attempt("parent-graceful-join") { process?.waitFor(minOf(1000, remaining()), TimeUnit.MILLISECONDS) }
-        descendants.values.forEach { handle -> attempt("descendant-terminate") { if (handle.isAlive) handle.destroy() } }
-        attempt("parent-kill") { if (process?.isAlive == true) process!!.destroyForcibly() }
-        descendants.values.forEach { handle -> attempt("descendant-kill") { if (handle.isAlive) handle.destroyForcibly() } }
-        attempt("parent-join") { process?.waitFor(remaining(), TimeUnit.MILLISECONDS) }
-        descendants.values.forEach { handle ->
-          attempt("descendant-join") { if (handle.isAlive && remaining() > 0) handle.onExit().get(remaining(), TimeUnit.MILLISECONDS) }
-        }
-        var joined = false
-        attempt("verify-joined") { joined = process?.isAlive != true && descendants.values.none { it.isAlive } }
-        runCatching { record("supplementary_health_joined=$joined phase=$phase elapsed_ms=${mark.elapsedNow().inWholeMilliseconds}") }
-        if (errors.isNotEmpty() || !joined || mark.elapsedNow().inWholeMilliseconds > phaseMs) {
-          val failure = SupplementaryHealthCleanupFailure()
-          errors.forEach(failure::addSuppressed)
-          safety.refuse(failure)
-          cleanupFailure = failure
-        }
-        cleanupCompleted = true
-      }
-    } catch (failure: Throwable) {
-      // Returning from IO cleanup can deliver caller cancellation after the block completed.
-      // Preserve the first cancellation and publish cleanup evidence outside that boundary.
-      if (failure is kotlinx.coroutines.CancellationException && cleanupCompleted) {
-        if (cancellation == null) cancellation = failure
-      } else {
-        val refusal = cleanupFailure ?: SupplementaryHealthCleanupFailure().also { cleanupFailure = it }
-        refusal.addSuppressed(failure)
-        if (failure is kotlinx.coroutines.CancellationException && cancellation == null) cancellation = failure
-      }
-    }
-    cleanupFailure?.let { failure ->
-      safety.refuse(failure)
-      if (cancellation != null) cancellation!!.addSuppressed(failure) else throw failure
-    }
-  }
-  cancellation?.let { throw it }
 }
 
 private data class PackagedInputs(val variant: String, val jar: File, val expectedJarHash: String, val probe: File, val expectedProbeHash: String) {
@@ -393,22 +256,23 @@ private fun acquirePackagedLifecycleChild(directory: File, stdout: File, stderr:
   afterStart(it)
 }
 
-private class PackagedQualification(private val healthSafety: SupplementaryHealthSafety) {
-  suspend fun qualify(input: PackagedInputs, platform: Platform, target: String, targetReceipt: File) = withPackagedQualificationLifetime { lifetime ->
-    healthSafety.requireVerified()
+private class PackagedQualification {
+  suspend fun qualify(input: PackagedInputs, platform: Platform, target: String) = withPackagedQualificationLifetime { lifetime ->
     // Recheck immediately before any setup, not only during dynamic-test discovery.
     withContext(Dispatchers.IO) { input.validate(System.getProperty("os.name"), System.getProperty("os.arch"), platform) }
     val jar = input.jar
     val probe = input.probe
-    val directory = File(System.getProperty("verity.packaged.receipts"), "${System.getenv("GITHUB_RUN_ID")}-${System.getenv("GITHUB_RUN_ATTEMPT")}/${System.getenv("GITHUB_JOB")}/${input.variant}-${platform.wireName}")
-    withContext(Dispatchers.IO) { directory.mkdirs() }
-    val receipt = File(directory, "qualification.txt")
+    val directory = File(System.getProperty("verity.packaged.reports"), "${input.variant}-${platform.wireName}")
+    withContext(Dispatchers.IO) {
+      check(!directory.exists() || directory.deleteRecursively()) { "Could not clear previous packaged results" }
+      check(directory.mkdirs()) { "Could not create packaged report directory" }
+    }
+    val report = File(directory, "qualification.txt")
     fun record(text: String) {
-      receipt.appendText(text + "\n")
+      report.appendText(text + "\n")
     }
     withContext(Dispatchers.IO) {
-      receipt.writeText("host=${System.getProperty("os.name")}/${System.getProperty("os.arch")}\ntested_head=${System.getenv("GITHUB_SHA")}\ncandidate_head=${System.getenv("VERITY_PACKAGED_CANDIDATE_HEAD")}\nrun=${System.getenv("GITHUB_RUN_ID")}\nattempt=${System.getenv("GITHUB_RUN_ATTEMPT")}\njob=${System.getenv("GITHUB_JOB")}\ntarget=$target\nplatform=$platform\nvariant=${input.variant}\njar=${jar.name}\nsha256=${input.expectedJarHash}\nprobe_sha256=${input.expectedProbeHash}\n")
-      targetReceipt.copyTo(File(directory, "target.json"), overwrite = true)
+      report.writeText("host=${System.getProperty("os.name")}/${System.getProperty("os.arch")}\ntarget=$target\nplatform=$platform\nvariant=${input.variant}\njar=${jar.name}\nsha256=${input.expectedJarHash}\nprobe_sha256=${input.expectedProbeHash}\n")
     }
     val requests = AtomicInteger()
     var trap: HttpServer? = null
@@ -424,13 +288,7 @@ private class PackagedQualification(private val healthSafety: SupplementaryHealt
         }
       }
       if (platform == Platform.IOS) withContext(Dispatchers.IO) { requireDriverPortClosed() }
-      val factory = beforePackagedFactory(input.variant, { phase, variant ->
-        if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
-          supplementaryHealth(phase, variant, ::record, healthSafety)
-        }
-      }, ::record, healthSafety) {
-        start(directory, owned, "factory", listOf("-cp", "${jar.absolutePath}${File.pathSeparator}${probe.absolutePath}", "me.chrisbanes.verity.smoke.PackagedRuntimeProbe", if (platform == Platform.IOS) "ios" else "android", target))
-      }
+      val factory = start(directory, owned, "factory", listOf("-cp", "${jar.absolutePath}${File.pathSeparator}${probe.absolutePath}", "me.chrisbanes.verity.smoke.PackagedRuntimeProbe", if (platform == Platform.IOS) "ios" else "android", target))
       val mappings = if (platform == Platform.IOS) listOf(Platform.IOS) else listOf(Platform.ANDROID_MOBILE, Platform.ANDROID_TV)
       for (mapping in mappings) {
         withTimeout(600_000) { marker(factory, "PACKAGED_FACTORY_CONNECTED platform=$mapping") }
@@ -486,16 +344,7 @@ private class PackagedQualification(private val healthSafety: SupplementaryHealt
       throw cancel
     } catch (failure: Throwable) {
       lifetime.failure(failure)
-      try {
-        afterPackagedFailure(failure) {
-          if (platform != Platform.IOS && System.getenv("GITHUB_JOB") == "smoke-ios") {
-            supplementaryHealth("after-failure", input.variant, ::record, healthSafety)
-          }
-        }
-      } catch (delivered: Throwable) {
-        lifetime.failure(delivered)
-        throw delivered
-      }
+      throw failure
     } finally {
       finishPackagedQualification(lifetime, observer, owned, trap, requests, ::record, { if (platform == Platform.IOS) requireDriverPortClosed() })
     }
@@ -911,178 +760,6 @@ class PackagedCliPlatformOptionTest {
   }
 }
 
-class PackagedSupplementaryHealthTest {
-  @Test
-  fun `both variant snapshots immediately precede real factory entry and unknown never replaces outcome`() = runTest {
-    for (variant in listOf("macos-aarch64", "universal")) {
-      val events = mutableListOf<String>()
-      val result = beforePackagedFactory(variant, { phase, selected ->
-        events += "$phase:$selected"
-        error("offline diagnostic denied")
-      }, { events += "unknown" }) {
-        events += "factory:$variant"
-        "real-result"
-      }
-      assertThat(result).isEqualTo("real-result")
-      assertThat(events).isEqualTo(listOf("before-factory:$variant", "unknown", "factory:$variant"))
-      val primary = IllegalStateException("actual factory failure")
-      val caught = assertFailsWith<IllegalStateException> {
-        beforePackagedFactory(variant, { _, _ -> error("unknown diagnostic") }, {}) { throw primary }
-      }
-      assertThat(caught === primary).isTrue()
-    }
-  }
-
-  @Test
-  fun `actual record publication denial is supplementary and preserves original factory result`() = runBlocking {
-    val directory = Files.createTempDirectory("health-record-denied").toFile()
-    try {
-      val deniedRecord: (String) -> Unit = { directory.appendText(it) }
-      val result = beforePackagedFactory("universal", { _, _ ->
-        runSupplementaryHealth(listOf("python3", "-c", "pass"), "before-factory", deniedRecord, phaseMs = 2500, workMs = 1500)
-      }, deniedRecord) { "actual-factory-result" }
-      assertThat(result).isEqualTo("actual-factory-result")
-      val original = IllegalStateException("original factory error")
-      val failure = assertFailsWith<IllegalStateException> {
-        beforePackagedFactory("universal", { _, _ -> error("diagnostic publication failed") }, deniedRecord) { throw original }
-      }
-      assertThat(failure === original).isTrue()
-    } finally {
-      check(directory.deleteRecursively())
-    }
-  }
-
-  @Test
-  fun `diagnostic cleanup failure or cancellation cannot authorize a factory`() = runTest {
-    var entered = false
-    assertFailsWith<SupplementaryHealthCleanupFailure> {
-      beforePackagedFactory("universal", { _, _ -> throw SupplementaryHealthCleanupFailure() }, {}) { entered = true }
-    }
-    assertFailsWith<kotlinx.coroutines.CancellationException> {
-      beforePackagedFactory("universal", { _, _ -> throw kotlinx.coroutines.CancellationException() }, {}) { entered = true }
-    }
-    assertThat(entered).isFalse()
-  }
-
-  @Test
-  fun `exceptional owned termination still joins fallback and refuses the next variant`() = runBlocking {
-    val directory = Files.createTempDirectory("health-cleanup-operation").toFile()
-    val pid = File(directory, "helper.pid")
-    val safety = SupplementaryHealthSafety()
-    val operations = mutableListOf<String>()
-    try {
-      val failure = assertFailsWith<SupplementaryHealthCleanupFailure> {
-        runSupplementaryHealth(listOf("python3", "-c", "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(30)", pid.path), "before-factory", {}, phaseMs = 2500, workMs = 500, safety = safety, cleanupOperation = { name, operation ->
-          operations += name
-          if (name == "parent-terminate") throw UnsupportedOperationException("injected exact owned destroy failure")
-          operation()
-        })
-      }
-      assertThat(failure.suppressed.single() is UnsupportedOperationException).isTrue()
-      assertThat(operations.containsAll(listOf("parent-kill", "parent-join", "verify-joined"))).isTrue()
-      val handle = ProcessHandle.of(pid.readText().toLong())
-      assertThat(handle.isEmpty || !handle.get().isAlive).isTrue()
-      val events = mutableListOf<String>()
-      val next = assertFailsWith<SupplementaryHealthCleanupFailure> {
-        beforePackagedFactory("universal", { _, _ -> events += "helper" }, {}, safety) { events += "factory" }
-      }
-      assertThat(next === failure).isTrue()
-      assertThat(events.isEmpty()).isTrue()
-    } finally {
-      check(directory.deleteRecursively())
-    }
-  }
-
-  @Test
-  fun `ordinary diagnostic and factory failure leave the independent variant eligible`() = runTest {
-    val safety = SupplementaryHealthSafety()
-    val original = IllegalStateException("actual first factory failure")
-    val caught = assertFailsWith<IllegalStateException> {
-      beforePackagedFactory("macos-aarch64", { _, _ -> error("ordinary diagnostic denial") }, {}, safety) { throw original }
-    }
-    assertThat(caught === original).isTrue()
-    val events = mutableListOf<String>()
-    val result = beforePackagedFactory("universal", { _, _ -> events += "helper" }, {}, safety) {
-      events += "factory"
-      "independent-real-result"
-    }
-    assertThat(events).isEqualTo(listOf("helper", "factory"))
-    assertThat(result).isEqualTo("independent-real-result")
-  }
-
-  @Test
-  fun `cancellation during actual after-failure helper preserves caller identity and cleanup refusal`() = runBlocking {
-    val directory = Files.createTempDirectory("health-after-failure-cancel").toFile()
-    val pid = File(directory, "helper.pid")
-    val safety = SupplementaryHealthSafety()
-    val original = IllegalStateException("original factory error")
-    val cancel = kotlinx.coroutines.CancellationException("caller cancelled after factory failure")
-    val caught = kotlinx.coroutines.CompletableDeferred<Throwable>()
-    var deliveredCancellation: kotlinx.coroutines.CancellationException? = null
-    try {
-      val job = launch {
-        try {
-          afterPackagedFailure(original) {
-            try {
-              runSupplementaryHealth(listOf("python3", "-c", "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(30)", pid.path), "after-failure", {}, phaseMs = 2500, workMs = 1500, safety = safety, cleanupOperation = { name, operation ->
-                if (name == "parent-terminate") throw UnsupportedOperationException("injected cancellation cleanup failure")
-                operation()
-              })
-            } catch (delivered: kotlinx.coroutines.CancellationException) {
-              deliveredCancellation = delivered
-              throw delivered
-            }
-          }
-        } catch (failure: Throwable) {
-          caught.complete(failure)
-        }
-      }
-      withTimeout(2000) { while (!pid.isFile) delay(20) }
-      job.cancel(cancel)
-      job.join()
-      val actual = caught.await()
-      // Coroutine stack recovery can copy job.cancel input at suspension boundaries.
-      // The consumer must retain the exact cancellation delivered by the helper.
-      assertThat(actual === deliveredCancellation).isTrue()
-      assertThat(actual is kotlinx.coroutines.CancellationException).isTrue()
-      assertThat(actual.suppressed.contains(original)).isTrue()
-      val cleanup = actual.suppressed.filterIsInstance<SupplementaryHealthCleanupFailure>().single()
-      assertThat(cleanup.suppressed.single() is UnsupportedOperationException).isTrue()
-      assertThat(assertFailsWith<SupplementaryHealthCleanupFailure> { safety.requireVerified() } === cleanup).isTrue()
-      val handle = ProcessHandle.of(pid.readText().toLong())
-      assertThat(handle.isEmpty || !handle.get().isAlive).isTrue()
-    } finally {
-      check(directory.deleteRecursively())
-    }
-  }
-
-  @Test
-  fun `finite helper deadline joins exact owned callback and discards private output`() = runBlocking {
-    val directory = withContext(Dispatchers.IO) { Files.createTempDirectory("health-child-fixture").toFile() }
-    val pid = File(directory, "callback.pid")
-    try {
-      val source = """
-        import signal,subprocess,sys,time
-        child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'])
-        open(sys.argv[1],'w').write(str(child.pid))
-        def stop(*args):
-          child.terminate();child.wait(timeout=1);sys.exit(0)
-        signal.signal(signal.SIGTERM,stop)
-        print('private unrelated fixture text',flush=True)
-        time.sleep(30)
-      """.trimIndent()
-      val records = mutableListOf<String>()
-      runSupplementaryHealth(listOf("python3", "-c", source, pid.absolutePath), "before-factory", records::add, phaseMs = 2500, workMs = 700)
-      assertThat(records.any { it.startsWith("supplementary_health_joined=true") }).isTrue()
-      assertThat(records.none { it.contains("private") }).isTrue()
-      val handle = ProcessHandle.of(pid.readText().toLong())
-      assertThat(handle.isEmpty || !handle.get().isAlive).isTrue()
-    } finally {
-      withContext(Dispatchers.IO) { check(directory.deleteRecursively()) }
-    }
-  }
-}
-
 class PackagedAcquisitionAndProtocolCleanupTest {
   private fun hasFailure(root: Throwable, target: Throwable): Boolean {
     val visited = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Throwable, Boolean>())
@@ -1429,115 +1106,6 @@ class PackagedAcquisitionAndProtocolCleanupTest {
 
 class PackagedQualificationLifetimeTest {
   @Test
-  fun `successful helper cancellation retains delivered identity outside qualification scope and final IO`() = cancelledHelper(false, false)
-
-  @Test
-  fun `uncertain helper cancellation retains cleanup publication errors and refuses next variant after scope`() = cancelledHelper(true, true)
-
-  private fun cancelledHelper(failHelperCleanup: Boolean, failFinalCleanup: Boolean) = runBlocking {
-    val directory = Files.createTempDirectory("qualification-scope-cancel").toFile()
-    val helperPid = File(directory, "helper.pid")
-    val child = ProcessBuilder("python3", "-c", "import time;time.sleep(30)").redirectOutput(File(directory, "child.out")).redirectError(File(directory, "child.err")).start()
-    val owned = PackagedChild(child, File(directory, "child.out"), File(directory, "child.err"))
-    val trap = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply { start() }
-    val safety = SupplementaryHealthSafety()
-    val original = IllegalStateException("actual factory failure")
-    val ownedStopFailure = IllegalStateException("injected failure after exact owned stop")
-    var publicationFailure: Throwable? = null
-    var delivered: kotlinx.coroutines.CancellationException? = null
-    var observer: kotlinx.coroutines.Job? = null
-    var driverChecked = false
-    val caught = kotlinx.coroutines.CompletableDeferred<Throwable>()
-    var qualificationJob: kotlinx.coroutines.Job? = null
-    try {
-      val job = launch {
-        try {
-          withPackagedQualificationLifetime { lifetime ->
-            observer = launch {
-              while (kotlinx.coroutines.currentCoroutineContext().isActive) {
-                withContext(Dispatchers.IO) { owned.observeDescendants() }
-                delay(20)
-              }
-            }
-            try {
-              lifetime.failure(original)
-              try {
-                afterPackagedFailure(original) {
-                  try {
-                    runSupplementaryHealth(listOf("python3", "-c", "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(30)", helperPid.path), "after-failure", {}, phaseMs = 2500, workMs = 1500, safety = safety, cleanupOperation = { name, operation ->
-                      if (failHelperCleanup && name == "parent-terminate") throw UnsupportedOperationException("owned helper termination denied")
-                      operation()
-                    })
-                  } catch (cancel: kotlinx.coroutines.CancellationException) {
-                    delivered = cancel
-                    throw cancel
-                  }
-                }
-              } catch (failure: Throwable) {
-                lifetime.failure(failure)
-                throw failure
-              }
-            } finally {
-              finishPackagedQualification(lifetime, observer!!, listOf(owned), trap, AtomicInteger(), {
-                if (failFinalCleanup) {
-                  try {
-                    directory.appendText(it)
-                  } catch (failure: Throwable) {
-                    publicationFailure = failure
-                    throw failure
-                  }
-                }
-              }, { driverChecked = true }, {
-                it.stop()
-                if (failFinalCleanup) throw ownedStopFailure
-              })
-            }
-          }
-        } catch (failure: Throwable) {
-          caught.complete(failure)
-        }
-      }
-      qualificationJob = job
-      withTimeout(2000) { while (!helperPid.isFile) delay(20) }
-      job.cancel(kotlinx.coroutines.CancellationException("caller cancellation during after-failure helper"))
-      job.join()
-      val actual = caught.await()
-      assertThat(actual === delivered).isTrue()
-      assertThat(actual.suppressed.contains(original)).isTrue()
-      assertThat(observer!!.isCompleted).isTrue()
-      assertThat(child.isAlive).isFalse()
-      val helper = ProcessHandle.of(helperPid.readText().toLong())
-      assertThat(helper.isEmpty || !helper.get().isAlive).isTrue()
-      assertThat(driverChecked).isTrue()
-      if (failFinalCleanup) {
-        assertThat(actual.suppressed.contains(ownedStopFailure)).isTrue()
-        assertThat(publicationFailure != null && actual.suppressed.contains(publicationFailure)).isTrue()
-      }
-      val nextEvents = mutableListOf<String>()
-      if (failHelperCleanup) {
-        val refusal = actual.suppressed.filterIsInstance<SupplementaryHealthCleanupFailure>().single()
-        assertThat(refusal.suppressed.single() is UnsupportedOperationException).isTrue()
-        assertThat(
-          assertFailsWith<SupplementaryHealthCleanupFailure> {
-            beforePackagedFactory("universal", { _, _ -> nextEvents += "helper" }, {}, safety) { nextEvents += "factory" }
-          } === refusal,
-        ).isTrue()
-        assertThat(nextEvents.isEmpty()).isTrue()
-      } else {
-        beforePackagedFactory("universal", { _, _ -> nextEvents += "helper" }, {}, safety) { nextEvents += "factory" }
-        assertThat(nextEvents).isEqualTo(listOf("helper", "factory"))
-      }
-    } finally {
-      withContext(NonCancellable) { qualificationJob?.cancelAndJoin() }
-      withContext(NonCancellable + Dispatchers.IO) {
-        owned.stop()
-        trap.stop(0)
-        check(directory.deleteRecursively())
-      }
-    }
-  }
-
-  @Test
   fun `late cancellation during final IO retains factory and actual cleanup errors after scope exit`() = finalCleanup(true)
 
   @Test
@@ -1549,7 +1117,6 @@ class PackagedQualificationLifetimeTest {
     val owned = PackagedChild(child, File(directory, "child.out"), File(directory, "child.err"))
     val trap = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply { start() }
     val trapPort = trap.address.port
-    val safety = SupplementaryHealthSafety()
     val original = IllegalStateException("original ordinary factory failure")
     val cleanupError = UnsupportedOperationException("actual owned stop operation error")
     val reachedIO = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -1567,7 +1134,7 @@ class PackagedQualificationLifetimeTest {
             retainedLifetime = lifetime
             observer = launch { while (kotlinx.coroutines.currentCoroutineContext().isActive) delay(20) }
             try {
-              beforePackagedFactory("macos-aarch64", { _, _ -> error("ordinary diagnostic denied") }, {}, safety) { throw original }
+              throw original
             } catch (failure: Throwable) {
               lifetime.failure(failure)
               throw failure
@@ -1610,11 +1177,6 @@ class PackagedQualificationLifetimeTest {
       assertThat(observer!!.isCompleted).isTrue()
       assertThat(child.isAlive).isFalse()
       assertThat(runCatching { Socket().use { it.connect(InetSocketAddress("127.0.0.1", trapPort), 100) } }.isFailure).isTrue()
-      if (!cancelDuringCleanup) {
-        val events = mutableListOf<String>()
-        beforePackagedFactory("universal", { _, _ -> events += "helper" }, {}, safety) { events += "factory" }
-        assertThat(events).isEqualTo(listOf("helper", "factory"))
-      }
     } finally {
       releaseIO.countDown()
       withContext(NonCancellable) { qualificationJob?.cancelAndJoin() }
