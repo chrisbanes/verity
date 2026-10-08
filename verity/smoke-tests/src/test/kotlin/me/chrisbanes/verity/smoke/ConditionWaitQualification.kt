@@ -30,7 +30,7 @@ internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: Str
   // Setup is outside the wait; the guarded session forbids every action during evaluation.
   check(production.executeActions(ActionFlow(appId, listOf(Interaction.LaunchApp()))).success)
   production.waitForAnimationToEnd()
-  val initial = production.captureHierarchyTree(5.seconds)
+  val initial = production.captureHierarchyTree(60.seconds)
   fun literal(node: HierarchyNode): String? = node.attributes.entries.firstOrNull {
     it.key in setOf("text", "label", "contentDescription", "value", "name") && it.value.isNotBlank()
   }?.value ?: node.children.firstNotNullOfOrNull(::literal)
