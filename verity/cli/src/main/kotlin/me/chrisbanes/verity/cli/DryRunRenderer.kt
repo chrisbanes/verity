@@ -45,6 +45,10 @@ object DryRunRenderer {
           appendYaml(it)
         }
       }
+      segment.wait?.let { wait ->
+        appendLine()
+        appendLine("Wait until ${wait.condition}, up to ${wait.timeoutSeconds} seconds")
+      }
       segment.assertion?.let { assertion ->
         appendLine()
         appendLine("Assertion: [${assertion.mode}] ${assertion.description}")

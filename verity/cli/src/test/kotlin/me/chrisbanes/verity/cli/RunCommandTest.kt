@@ -57,12 +57,193 @@ import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
 import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.ActionFlowPreparationPhase
+import me.chrisbanes.verity.device.CaptureDeadlineExceededException
+import me.chrisbanes.verity.device.CaptureOperation
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.validateActionFlow
 
 class RunCommandTest {
+  @Test fun `early device capture expiry persists execution failure for single journeys and suites`() {
+    for (operation in CaptureOperation.entries) {
+      for (suite in listOf(false, true)) {
+        val dir = createTempDirectory("verity-early-capture-expiry").toFile()
+        try {
+          val condition = if (operation == CaptureOperation.SCREENSHOT) "visually Ready" else "Ready"
+          val file = writeJourneyWithSteps(dir, "a.journey.yaml", "Early capture", steps = listOf("Wait until $condition up to 3 seconds"))
+          if (suite) writeJourneyWithSteps(dir, "b.journey.yaml", "Later", steps = listOf("Wait until Ready"))
+          val outputDir = File(dir, "output")
+          val seen = mutableListOf<String>()
+          val command = runCommand(clock = fixedClock(), journeyRunner = { resolved, recorder ->
+            seen += resolved.journey.name
+            val session = object : DeviceSession by FakeDeviceSession() {
+              override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = throw CaptureDeadlineExceededException(operation)
+              override suspend fun captureScreenshot(output: Path, timeout: kotlin.time.Duration): Unit = throw CaptureDeadlineExceededException(operation)
+            }
+            Orchestrator(
+              session,
+              { NavigatorAgent("unused") { _, _ -> error("wait cannot navigate") } },
+              { InspectorAgent({ _, _, _ -> error("capture failed before model work") }, { _, _, _, _ -> error("capture failed before model work") }) },
+              artifactRecorder = recorder,
+              nowNanos = { 0L },
+            ).run(resolved.journey)
+          }) { error("unused suite runner") }
+          val input = if (suite) dir else file
+          val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${input.absolutePath}")
+          assertThat(result.statusCode).isEqualTo(4)
+          assertThat(seen).isEqualTo(listOf("Early capture"))
+          val runDir = File(outputDir, "runs").listFiles()!!.single()
+          val summary = readSummary(File(runDir, "summary.json"))
+          assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+          val journey = readJourney(File(runDir, "journeys/001-early-capture.json"))
+          assertThat(journey.passed).isFalse()
+          assertThat(journey.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
+          assertThat(journey.error?.message).isEqualTo("${operation.name.lowercase()} capture deadline expired")
+          assertThat(File(runDir, "journeys/002-later.json").exists()).isFalse()
+        } finally {
+          dir.deleteRecursively()
+        }
+      }
+    }
+  }
+
+  @Test fun `incomplete later wait poll cannot replace last completed evidence`() {
+    val dir = createTempDirectory("verity-wait-evidence").toFile()
+    try {
+      val file = writeJourneyWithSteps(dir, "wait.journey.yaml", "Wait evidence", steps = listOf("Wait until ready page up to 3 seconds"))
+      val outputDir = File(dir, "output")
+      var captures = 0
+      var inspections = 0
+      var now = 0L
+      val command = runCommand(clock = fixedClock(), journeyRunner = { resolved, recorder ->
+        val session = object : DeviceSession by FakeDeviceSession() {
+          override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = HierarchyNode(mapOf("text" to if (++captures == 1) "First loading tree" else "Later unfinished tree"))
+        }
+        Orchestrator(
+          session,
+          { NavigatorAgent("unused") { _, _ -> error("navigate") } },
+          {
+            InspectorAgent({ _, _, _ ->
+              if (++inspections == 2) now = 3_000_000_000
+              inspectionReply("""{"passed":false,"reasoning":"not ready"}""")
+            }, { _, _, _, _ -> error("visual") })
+          },
+          artifactRecorder = recorder,
+          nowNanos = { now },
+        ).run(resolved.journey)
+      }) { error("suite") }
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(4)
+      val runDir = File(outputDir, "runs").listFiles()!!.single()
+      val segment = readJourney(File(runDir, "journeys/001-wait-evidence.json")).segments.single()
+      assertThat(segment.wait?.checks).isEqualTo(1)
+      val evidence = segment.evidence.single().path
+      assertThat(evidence).contains("-wait-000-tree.txt")
+      assertThat(File(runDir, evidence).readText()).contains("First loading tree")
+      assertThat(File(runDir, evidence).readText()).doesNotContain("Later unfinished tree")
+      val screenshots = JourneyRunArtifactRecorder(runDir.toPath(), "001-wait-evidence")
+      kotlinx.coroutines.runBlocking {
+        assertThat(checkNotNull(screenshots.forWaitCheck(0).screenshotPath(0)).relativePath).contains("-wait-000-visual.png")
+        assertThat(checkNotNull(screenshots.forWaitCheck(1).screenshotPath(0)).relativePath).contains("-wait-001-visual.png")
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test fun `production wait timeout continues suite while model failure stops it and required write wins`() {
+    for (terminal in listOf("timeout", "model", "write")) {
+      val dir = createTempDirectory("verity-wait-suite").toFile()
+      try {
+        for ((file, name) in listOf("a" to "First", "b" to "Second", "c" to "Third")) {
+          writeJourneyWithSteps(dir, "$file.journey.yaml", name, steps = listOf("Wait until Ready up to 3 seconds"))
+        }
+        val seen = mutableListOf<String>()
+        val outputDir = File(dir, "output")
+        val command = runCommand(
+          clock = fixedClock(),
+          writeJourneyResult = { run, path, result ->
+            if (terminal == "write" && path.contains("002-second")) error("required wait result failed")
+            run.writeJourneyResult(path, result)
+          },
+          journeyRunner = { resolved, recorder ->
+            seen += resolved.journey.name
+            var now = 0L
+            val second = resolved.journey.name == "Second"
+            val session = object : DeviceSession by FakeDeviceSession() {
+              override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+                if (second && terminal != "model") {
+                  now = 3_000_000_000
+                  throw me.chrisbanes.verity.device.CaptureDeadlineExceededException(me.chrisbanes.verity.device.CaptureOperation.HIERARCHY)
+                }
+                return HierarchyNode(mapOf("text" to if (second) "Loading" else "Ready"))
+              }
+            }
+            Orchestrator(
+              session,
+              { NavigatorAgent("unused") { _, _ -> error("wait cannot navigate") } },
+              { InspectorAgent({ _, _, _ -> error("provider unavailable") }, { _, _, _, _ -> error("visual") }) },
+              artifactRecorder = recorder,
+              nowNanos = { now },
+            ).run(resolved.journey)
+          },
+        ) { error("unused suite runner") }
+        val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+        assertThat(result.statusCode).isEqualTo(
+          when (terminal) {
+            "timeout" -> 4
+            "model" -> 5
+            else -> 3
+          },
+        )
+        assertThat(seen).isEqualTo(if (terminal == "model") listOf("First", "Second") else listOf("First", "Second", "Third"))
+        val runDir = File(outputDir, "runs").listFiles()!!.single()
+        val summary = readSummary(File(runDir, "summary.json"))
+        assertThat(summary.formatVersion).isEqualTo(1)
+        if (terminal == "write") {
+          assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+        } else {
+          assertThat(readJourney(File(runDir, "journeys/001-first.json")).passed).isTrue()
+          if (terminal == "model") {
+            assertThat(summary.error?.kind).isEqualTo(ArtifactErrorKind.MODEL_FAILURE)
+            assertThat(File(runDir, "journeys/003-third.json").exists()).isFalse()
+          } else {
+            val segment = readJourney(File(runDir, "journeys/002-second.json")).segments.single()
+            assertThat(segment.executionMode).isEqualTo(SegmentExecutionMode.WAIT)
+            assertThat(segment.wait).isEqualTo(me.chrisbanes.verity.core.result.WaitArtifact("Ready", 3, 3000, 0))
+            assertThat(segment.reasoning).contains("Wait timed out")
+            assertThat(segment.actions).isEmpty()
+            assertThat(segment.generatedFlows).isEmpty()
+            assertThat(readJourney(File(runDir, "journeys/003-third.json")).passed).isTrue()
+            assertThat(summary.total).isEqualTo(3)
+          }
+        }
+      } finally {
+        dir.deleteRecursively()
+      }
+    }
+  }
+
+  @Test fun `production static wait suite previews stdout and saved Markdown without provider or device access`() {
+    val dir = createTempDirectory("verity-wait-preview").toFile()
+    try {
+      writeJourneyWithSteps(dir, "a.journey.yaml", "Default wait", steps = listOf("Wait until Home"))
+      writeJourneyWithSteps(dir, "b.journey.yaml", "Mixed wait", steps = listOf("Press back", "Wait until visually spinner disappears up to 3 seconds", "[?visible] Settings"))
+      val output = File(dir, "out")
+      val result = Verity().subcommands(RunCommand(loadConfig = { VerityConfig(provider = "definitely-not-real") }))
+        .test(listOf("--output-path", output.absolutePath, "run", "--dry-run", dir.absolutePath))
+      assertThat(result.statusCode).isEqualTo(0)
+      for ((file, expected) in listOf("a.md" to "Wait until Home, up to 20 seconds", "b.md" to "Wait until visually spinner disappears, up to 3 seconds")) {
+        assertThat(result.output).contains(expected)
+        assertThat(File(output, "dry-run/$file").readText()).contains(expected)
+      }
+      assertThat(result.output).contains("Assertion: [VISIBLE] Settings")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
   private val json = Json { ignoreUnknownKeys = true }
 
   @Test

@@ -13,15 +13,20 @@ class InspectorAgent(
   private val evaluateTreeContent: suspend (systemPrompt: String, userMessage: String, references: List<Path>) -> Message.Assistant,
   private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path, references: List<Path>) -> Message.Assistant,
 ) {
-  suspend fun evaluateTree(hierarchy: String, assertion: String, context: InspectionContext = InspectionContext()): InspectionVerdict = request(ModelRequestStage.INSPECTOR_TREE) {
+  suspend fun evaluateTree(hierarchy: String, assertion: String, context: InspectionContext = InspectionContext(), onFailure: ((ModelFailureException) -> Unit)? = null): InspectionVerdict = request(ModelRequestStage.INSPECTOR_TREE, onFailure) {
     evaluateTreeContent(SYSTEM_PROMPT, withReferences(buildTreeMessage(hierarchy, assertion), context), context.referenceScreenshots)
   }
 
-  suspend fun evaluateVisual(screenshotPath: Path, assertion: String, context: InspectionContext = InspectionContext()): InspectionVerdict = request(ModelRequestStage.INSPECTOR_VISUAL) {
+  suspend fun evaluateVisual(screenshotPath: Path, assertion: String, context: InspectionContext = InspectionContext(), onFailure: ((ModelFailureException) -> Unit)? = null): InspectionVerdict = request(ModelRequestStage.INSPECTOR_VISUAL, onFailure) {
     evaluateVisualContent(SYSTEM_PROMPT, withReferences(buildVisualMessage(assertion), context), screenshotPath, context.referenceScreenshots)
   }
 
-  private suspend fun request(stage: ModelRequestStage, execute: suspend () -> Message.Assistant): InspectionVerdict = parseVerdict(requestModelText(stage, execute), stage)
+  private suspend fun request(stage: ModelRequestStage, onFailure: ((ModelFailureException) -> Unit)?, execute: suspend () -> Message.Assistant): InspectionVerdict = try {
+    parseVerdict(requestModelText(stage, onFailure, execute), stage)
+  } catch (failure: ModelFailureException) {
+    onFailure?.invoke(failure)
+    throw failure
+  }
 
   private fun withReferences(message: String, context: InspectionContext): String = buildString {
     append(message)

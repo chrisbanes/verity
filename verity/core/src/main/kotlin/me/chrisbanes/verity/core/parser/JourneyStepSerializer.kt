@@ -17,9 +17,10 @@ import me.chrisbanes.verity.core.model.JourneyStep
  * Priority chain:
  * 1. [?mode] prefix — pinned assertion mode
  * 2. [?] prefix — inferred assertion mode
- * 3. Loop inference — NL "verb ... until condition"
- * 4. Assertion inference — NL "Verify/Ensure/Confirm/Check..."
- * 5. Default — Action
+ * 3. Wait inference — NL "Wait until condition"
+ * 4. Loop inference — NL "verb ... until condition"
+ * 5. Assertion inference — NL "Verify/Ensure/Confirm/Check..."
+ * 6. Default — Action
  */
 object JourneyStepParser {
 
@@ -68,17 +69,20 @@ object JourneyStepParser {
       return JourneyStep.Assert(description = description, mode = mode)
     }
 
-    // 3. Loop inference
+    // 3. Explicit action-less wait
+    WaitStepInferrer.infer(trimmed)?.let { return it }
+
+    // 4. Loop inference
     LoopStepInferrer.infer(trimmed)?.let { return it }
 
-    // 4. Assertion inference (NL keywords)
+    // 5. Assertion inference (NL keywords)
     AssertionStepInferrer.infer(trimmed)?.let { inferred ->
       return inferred.copy(
         mode = assertionStrategy.resolveMode(inferred.description),
       )
     }
 
-    // 5. Default: Action
+    // 6. Default: Action
     return JourneyStep.Action(instruction = trimmed)
   }
 }
@@ -103,6 +107,16 @@ object JourneyStepSerializer : KSerializer<JourneyStep> {
       is JourneyStep.Assert -> {
         val modeStr = value.mode.name.lowercase()
         "[?$modeStr] ${value.description}"
+      }
+
+      is JourneyStep.Wait -> {
+        val text = "Wait until ${value.until}"
+        val needsLimit = value.timeoutSeconds != 20 || try {
+          WaitStepInferrer.infer(text) != value
+        } catch (_: IllegalArgumentException) {
+          true
+        }
+        if (needsLimit) "$text up to ${value.timeoutSeconds} seconds" else text
       }
 
       is JourneyStep.Loop -> {

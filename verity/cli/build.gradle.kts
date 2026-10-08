@@ -1,3 +1,6 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import com.github.jengelman.gradle.plugins.shadow.transformers.Log4j2PluginsCacheFileTransformer
+
 plugins {
   id("verity.kotlin-jvm")
   application
@@ -9,13 +12,17 @@ application {
   mainClass.set("me.chrisbanes.verity.cli.VerityKt")
 }
 
-tasks.shadowJar {
+tasks.withType<ShadowJar>().configureEach {
   archiveBaseName.set("verity")
-  archiveClassifier.set("")
+  manifest.attributes["Main-Class"] = application.mainClass.get()
+  isPreserveFileTimestamps = false
+  isReproducibleFileOrder = true
+  exclude("module-info.class", "META-INF/versions/**/module-info.class", "META-INF/INDEX.LIST")
   isZip64 = true
   mergeServiceFiles()
-  // Let the transformers see every service descriptor and Kotlin module metadata file.
-  filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module")) {
+  transform<Log4j2PluginsCacheFileTransformer>()
+  // Preserve every binary Log4j plugin cache for merging, alongside service/module metadata.
+  filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module", "META-INF/org/apache/logging/log4j/core/config/plugins/Log4j2Plugins.dat")) {
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
   }
   failOnDuplicateEntries = true
@@ -27,7 +34,26 @@ tasks.shadowJar {
   }
 }
 
+tasks.shadowJar { archiveClassifier.set("") }
+
+fun hostJar(host: HostPackaging.Host) = tasks.register<ShadowJar>(
+  if (host == HostPackaging.Host.MACOS_ARM64) "macosArm64Jar" else "linuxX64Jar",
+) {
+  archiveClassifier.set(host.classifier)
+  from(sourceSets.main.map { it.output })
+  configurations = listOf(project.configurations.runtimeClasspath.get())
+  manifest.from(tasks.jar.get().manifest)
+  exclude { !HostPackaging.retain(it.path, host) }
+}
+
+val macosArm64Jar = hostJar(HostPackaging.Host.MACOS_ARM64)
+val linuxX64Jar = hostJar(HostPackaging.Host.LINUX_X64)
+val hostJars = tasks.register("hostJars") { dependsOn(tasks.shadowJar, macosArm64Jar, linuxX64Jar) }
+
 dependencies {
+  implementation(enforcedPlatform(libs.grpc.bom))
+  testImplementation(enforcedPlatform(libs.grpc.bom))
+  testImplementation(libs.mcp.kotlin.sdk)
   implementation(project(":verity:core"))
   implementation(project(":verity:device"))
   implementation(project(":verity:agent"))
@@ -49,4 +75,85 @@ dependencies {
 
   testImplementation(testFixtures(project(":verity:device")))
   testImplementation(testFixtures(project(":verity:agent")))
+}
+
+// Other projects consume this artifact through a variant, without cross-project model access.
+val packagedUniversal = configurations.create("packagedUniversal") {
+  isCanBeConsumed = true
+  isCanBeResolved = false
+}
+artifacts.add(packagedUniversal.name, tasks.shadowJar)
+// Host artifacts use the same isolated-project boundary as the universal archive.
+val packagedMacosArm64 = configurations.create("packagedMacosArm64") {
+  isCanBeConsumed = true
+  isCanBeResolved = false
+}
+val packagedLinuxX64 = configurations.create("packagedLinuxX64") {
+  isCanBeConsumed = true
+  isCanBeResolved = false
+}
+artifacts.add(packagedMacosArm64.name, macosArm64Jar)
+artifacts.add(packagedLinuxX64.name, linuxX64Jar)
+val runtime = configurations.runtimeClasspath
+val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc") {
+  dependsOn(tasks.shadowJar, ":verity:smoke-tests:verifySmokeGrpc")
+  archive.set(tasks.shadowJar.flatMap { it.archiveFile })
+  grpcArtifacts.from(
+    runtime.map { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.filter { it.moduleVersion.id.group == "io.grpc" }.map { it.file }
+    },
+  )
+  coordinates.set(
+    runtime.map { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.filter { it.moduleVersion.id.group == "io.grpc" }
+        .map { "${it.moduleVersion.id.name}:${it.moduleVersion.id.version}:${it.file.name}" }
+    },
+  )
+  receipt.set(layout.buildDirectory.file("reports/packaged-grpc.txt"))
+}
+
+// Keep module regressions and separately exercise actual archives with fixture output only.
+tasks.test {
+  systemProperty("verity.cli.test.classpath", sourceSets.test.get().runtimeClasspath.asPath)
+  dependsOn(hostJars)
+  val archives = files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  inputs.files(archives).withPropertyName("packagedLoggingArchives")
+  systemProperty("verity.cli.packaged.jars", archives.asPath)
+  systemProperty("verity.cli.fixture.classes", sourceSets.test.get().output.classesDirs.asPath)
+}
+
+val verifyHostJars = tasks.register<VerifyHostJars>("verifyHostJars") {
+  dependsOn(hostJars)
+  universal.set(tasks.shadowJar.flatMap { it.archiveFile })
+  macos.set(macosArm64Jar.flatMap { it.archiveFile })
+  linux.set(linuxX64Jar.flatMap { it.archiveFile })
+  runtimeArtifacts.from(runtime.map { it.resolvedConfiguration.resolvedArtifacts.map { artifact -> artifact.file } })
+  coordinates.set(
+    runtime.map { configuration ->
+      configuration.resolvedConfiguration.resolvedArtifacts.map {
+        "${it.moduleVersion.id}|${it.classifier ?: ""}|${it.file.name}"
+      }
+    },
+  )
+  receipt.set(layout.buildDirectory.file("reports/host-packaging.tsv"))
+}
+tasks.check { dependsOn(verifyHostJars, verifyPackagedGrpc) }
+
+// Release input generation is offline and consumes only the three verified archives.
+val releaseScript = layout.projectDirectory.file("../../scripts/release_artifacts.py")
+val releaseDirectory = layout.buildDirectory.dir("release")
+val releaseVersion = providers.gradleProperty("version").orElse(project.version.toString())
+tasks.register<Exec>("packageRelease") {
+  dependsOn(verifyHostJars, verifyPackagedGrpc)
+  inputs.file(releaseScript)
+  inputs.files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  inputs.property("releaseVersion", releaseVersion)
+  outputs.dir(releaseDirectory)
+  commandLine(
+    "python3", releaseScript.asFile.absolutePath, "build", "--version", releaseVersion.get(),
+    "--output", releaseDirectory.get().asFile.absolutePath,
+    tasks.shadowJar.get().archiveFile.get().asFile.absolutePath,
+    macosArm64Jar.get().archiveFile.get().asFile.absolutePath,
+    linuxX64Jar.get().archiveFile.get().asFile.absolutePath,
+  )
 }

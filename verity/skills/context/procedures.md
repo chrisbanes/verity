@@ -35,10 +35,12 @@ Pass the accepted YAML exactly as `run_flow(session_id, yaml)`. Read the returne
 Derive zero-based segments from the parsed steps as `JourneySegmenter` does:
 
 - Accumulate actions until the next assertion; those actions and that assertion form one segment.
-- Flush pending actions before a standalone loop, which forms its own segment.
+- Flush pending actions before a standalone loop or wait, each of which forms its own segment.
 - Preserve assertion-only segments and trailing actions without assertions.
 
 Batch consecutive static actions only within their segment. Evaluate its assertion before running the next segment's actions. A loop body keeps its authored action order and condition boundary. Parsing/generation remains the caller's responsibility; see [loop conditions](../../../docs/specs/loop-conditions.md).
+
+A typed `Wait` is a standalone, action-free segment with its parsed condition and timeout. `load_journey` displays it, but semantic wait execution and its deadline belong to normal CLI `verity run`. Do not turn a wait into Maestro action YAML or use `run_loop` as a replacement. In MCP run/debug, report the CLI requirement and leave the wait unexecuted; close any opened session. Author can save an approved wait while recording that MCP exploration has not verified it. See [wait conditions](../../../docs/specs/wait-conditions.md).
 
 <a id="loop-execution-overshoot-and-correct"></a>
 

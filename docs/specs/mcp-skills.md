@@ -5,7 +5,7 @@ Verity's repository provides three workflows for an external agent connected to 
 | Workflow | Use when | Interaction |
 | --- | --- | --- |
 | [Run](../../verity/skills/run/SKILL.md) | Execute an existing journey with assertion checkpoints | Confirm the journey first; choose continue or stop after a failure |
-| [Author](../../verity/skills/author/SKILL.md) | Explore an app and write a journey | Review, edit or skip suggested actions, assertions and loops; approve the final YAML and path |
+| [Author](../../verity/skills/author/SKILL.md) | Explore an app and write a journey | Review, edit or skip suggested actions, assertions, loops and waits; approve the final YAML and path |
 | [Debug](../../verity/skills/debug/SKILL.md) | Inspect a journey and investigate a segment | Preview each flow, then execute, skip, edit or stop; inspect current evidence and assertion reasoning |
 
 Invoke the workflow by providing its repository `SKILL.md` file to the agent. These files require a running `verity mcp` server and an agent able to call its tools. They share the same tool catalog through stdio and HTTP. Adding a workflow directory does not register a host slash command or install the files automatically.
@@ -15,6 +15,8 @@ Invoke the workflow by providing its repository `SKILL.md` file to the agent. Th
 The agent selects and loads a journey before opening a device session. `load_journey` returns the journey identity and typed steps. The agent derives segments, generates Maestro YAML and evaluates tree or visual assertions using current evidence. The server parses journeys, performs device preflight and exposes execution, capture, deterministic checks and session closure. Model execution stays outside the MCP module; see [ADR-0001](../adr/0001-mcp-device-boundary.md).
 
 All workflows use [shared procedures](../../verity/skills/context/procedures.md) for prerequisites, step classification, flow generation, loop execution, assertions, evidence freshness and cleanup. [Configuration](project-configuration.md) supplies applicable server defaults; [project context](project-context.md) supplies application guidance. Resolve the journey's name, app and platform before device work. A failed open returns [preflight remediation](preflight-checks.md); it creates no session for the caller to close.
+
+MCP `load_journey` also displays typed waits, but their semantic polling/deadline execution is CLI-only. Run reports the CLI requirement before opening/executing; debug leaves a wait unexecuted, and author can save an approved wait as unverified during exploration. Never substitute action YAML or the literal key-loop tool. See [wait conditions](wait-conditions.md).
 
 Actions remain inside their assertion checkpoint. Standalone loops and assertion-only or trailing-action segments remain visible. Loop execution checks the condition immediately and after each successfully completed ordered body, honouring the parsed maximum. Semantic or multi-action loops are controlled by the agent using the [loop contract](loop-conditions.md). The literal single-key `run_loop` shortcut is suitable only when its raw-key and visible-text semantics match, with the parsed maximum passed explicitly.
 

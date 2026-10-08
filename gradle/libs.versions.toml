@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 kotlinx-serialization = "1.11.0"
 kotlinx-coroutines = "1.11.0"
 kaml = "0.104.0"
@@ -10,12 +10,11 @@ ktor = "3.6.0"
 maestro-client = "2.11.0"
 maestro-ios = "2.11.0"
 dadb = "2.0.0"
-okhttp = "4.12.0"
-jackson = "2.17.1"
+okhttp = "5.5.0"
+jackson = "2.22.3"
 mcp-kotlin = "0.15.0"
-grpc = "1.84.0"
+grpc = "1.84.1"
 grpc-kotlin = "1.5.0"
-grpc-netty-shaded = "1.84.0"
 assertk = "0.28.1"
 ktlint = "1.8.0"
 shadow = "9.6.1"
@@ -48,7 +47,9 @@ jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", ver
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 dadb = { module = "dev.mobile:dadb", version.ref = "dadb" }
 mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = "mcp-kotlin" }
-grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc-netty-shaded" }
+grpc-bom = { module = "io.grpc:grpc-bom", version.ref = "grpc" }
+grpc-okhttp = { module = "io.grpc:grpc-okhttp", version.ref = "grpc" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc" }
 grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
 grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
 grpc-kotlin-stub = { module = "io.grpc:grpc-kotlin-stub", version.ref = "grpc-kotlin" }

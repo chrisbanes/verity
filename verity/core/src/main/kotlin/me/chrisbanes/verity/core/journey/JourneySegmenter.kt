@@ -26,6 +26,14 @@ object JourneySegmenter {
           pendingActions.clear()
         }
 
+        is JourneyStep.Wait -> {
+          if (pendingActions.isNotEmpty()) {
+            segments.add(JourneySegment(index = segments.size, actions = pendingActions.toList()))
+            pendingActions.clear()
+          }
+          segments.add(JourneySegment(index = segments.size, actions = emptyList(), wait = step))
+        }
+
         is JourneyStep.Loop -> {
           // Flush pending actions as a separate segment
           if (pendingActions.isNotEmpty()) {

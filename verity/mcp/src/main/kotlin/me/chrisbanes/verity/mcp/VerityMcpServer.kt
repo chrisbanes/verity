@@ -287,6 +287,7 @@ class VerityMcpServer(
           when (step) {
             is JourneyStep.Action -> appendLine("  ${i + 1}. [Action] ${step.instruction}")
             is JourneyStep.Assert -> appendLine("  ${i + 1}. [Assert:${step.mode}] ${step.description}")
+            is JourneyStep.Wait -> appendLine("  ${i + 1}. [Wait] ${step.until} (timeout: ${step.timeoutSeconds} seconds)")
             is JourneyStep.Loop -> appendLine("  ${i + 1}. [Loop] ${step.action} until '${step.until}' (max: ${step.max})")
           }
         }

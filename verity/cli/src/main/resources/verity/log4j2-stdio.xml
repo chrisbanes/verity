@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+  <Appenders>
+    <Console name="StdioDiagnostics" target="SYSTEM_ERR">
+      <PatternLayout pattern="%d{ISO8601} %t %-5level %msg%n%throwable" />
+    </Console>
+  </Appenders>
+  <Loggers>
+    <Root level="${sys:org.apache.logging.log4j.level:-ERROR}">
+      <AppenderRef ref="StdioDiagnostics" />
+    </Root>
+  </Loggers>
+</Configuration>

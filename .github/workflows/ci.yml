@@ -33,7 +33,7 @@ jobs:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Build
-        run: ./gradlew build --no-scan
+        run: ./gradlew build --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
   smoke-android:
     runs-on: ubuntu-latest
@@ -50,6 +50,9 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
+      - name: Verify Linux packaged inputs
+        run: ./gradlew :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -63,23 +66,26 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: >-
-            python3 -c 'import subprocess;
-            devices = subprocess.run(["adb", "devices"], check=True, capture_output=True, text=True);
-            online = [row.split()[0] for row in devices.stdout.splitlines()[1:] if len(row.split()) >= 2 and row.split()[1] == "device"];
-            assert len(online) == 1 and online[0].startswith("emulator-"), "Expected exactly one online job-owned emulator";
-            raise SystemExit(subprocess.run(["./gradlew", ":verity:smoke-tests:test", "-Pinclude.tags=android", "--rerun-tasks", "--no-scan"]).returncode)'
+          script: |
+            ./gradlew :verity:smoke-tests:packagedAndroidTest --rerun -PpackagedVariant=linux-x86_64,universal --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+            ./gradlew :verity:smoke-tests:test --rerun -Pinclude.tags=android --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain Android smoke results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: smoke-android-test-results
-          path: verity/smoke-tests/build/test-results/test/*.xml
+          path: |
+            verity/smoke-tests/build/test-results/test/*.xml
+            verity/smoke-tests/build/test-results/packagedAndroidTest/*.xml
+            verity/smoke-tests/build/reports/packaged/
+            verity/smoke-tests/build/reports/smoke-grpc.txt
+            verity/cli/build/reports/packaged-grpc.txt
+            verity/cli/build/reports/host-packaging.tsv
           if-no-files-found: error
 
   smoke-ios:
-    runs-on: xcode-27
+    runs-on: macos-latest
 
     steps:
       - uses: actions/checkout@v7
@@ -93,17 +99,43 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
+      - name: Verify macOS packaged inputs
+        run: ./gradlew :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-daemon --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+
+      - name: Install AppleSimulatorUtils
+        run: |
+          brew tap wix/brew
+          brew trust --formula wix/brew/applesimutils
+          brew install applesimutils
+          applesimutils --version
+
+      - name: Start iOS simulator
+        id: simulator
+        uses: futureware-tech/simulator-action@v6
+        with:
+          os: iOS
+          erase_before_boot: true
+          wait_for_boot: true
+          shutdown_after_job: true
+
       - name: iOS smoke tests
         env:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
-          VERITY_SMOKE_IOS_MODEL: iPhone 17
-          VERITY_SMOKE_IOS_RUNTIME: "27"
-        run: ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan
+          IOS_SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          ./gradlew :verity:smoke-tests:packagedIosTest --rerun -PpackagedVariant=macos-aarch64,universal --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          ./gradlew :verity:smoke-tests:test --rerun -Pinclude.tags=ios --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain iOS smoke results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: smoke-ios-test-results
-          path: verity/smoke-tests/build/test-results/test/*.xml
+          path: |
+            verity/smoke-tests/build/test-results/test/*.xml
+            verity/smoke-tests/build/test-results/packagedIosTest/*.xml
+            verity/smoke-tests/build/reports/packaged/
+            verity/smoke-tests/build/reports/smoke-grpc.txt
+            verity/cli/build/reports/packaged-grpc.txt
+            verity/cli/build/reports/host-packaging.tsv
           if-no-files-found: error

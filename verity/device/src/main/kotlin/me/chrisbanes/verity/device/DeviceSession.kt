@@ -80,6 +80,12 @@ interface DeviceSession : AutoCloseable {
   /** Save a screenshot to the specified path. */
   suspend fun captureScreenshot(output: Path)
 
+  /** Complete screenshot capture within a positive finite budget, preserving earlier output on failure. */
+  suspend fun captureScreenshot(output: Path, timeout: Duration) {
+    require(timeout.isPositive() && timeout.isFinite()) { "Capture timeout must be positive and finite" }
+    throw UnsupportedOperationException("This session does not support bounded screenshot capture")
+  }
+
   /** Check if text appears anywhere in the accessibility tree (node-level search). */
   suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean {
     val tree = captureHierarchyTree()
@@ -112,4 +118,4 @@ interface DeviceSession : AutoCloseable {
 }
 
 /** A capture exhausted its owned complete-capture budget. */
-internal class HierarchyCaptureTimeoutException : kotlinx.coroutines.CancellationException("Hierarchy capture deadline expired")
+internal class HierarchyCaptureTimeoutException : CaptureDeadlineExceededException(CaptureOperation.HIERARCHY)
