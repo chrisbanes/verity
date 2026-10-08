@@ -117,3 +117,13 @@ Minimal path to verify real-device integration:
 ### Wait for focus after an MCP action
 
 Both `press_key` and `run_flow` support `await_focus_change: true` and optional `focus_timeout_ms` (default 2,000). For example, pass `{"session_id":"<id>","key":"DPAD_DOWN","await_focus_change":true,"focus_timeout_ms":2000}` to `press_key`. The JSON response preserves the action outcome and reports the observed focus change or timeout, elapsed wait and focused path/resource evidence. See [focus-change waiting](docs/specs/focus-change-waiting.md) for errors, identity rules and flow-level observation limits.
+
+### OpenAI authentication
+
+OpenAI uses API-key authentication by default. To use an existing Codex ChatGPT login on macOS, select both the provider and auth mode:
+
+```bash
+verity --provider openai --openai-auth chatgpt run journeys/login.journey.yaml
+```
+
+Sign in through Codex first. Verity requires Codex CLI 0.159.0 or newer and checks the required app-server schema and isolation; a newer version alone does not establish compatibility. ChatGPT defaults both roles to `gpt-6-luna`, subject to the dynamic catalog. Explicit model IDs and efforts must match that catalog exactly. See [configuration](docs/specs/project-configuration.md#openai-authentication) and [preflight](docs/specs/preflight-checks.md#chatgpt-preflight) for support limits and remediation.

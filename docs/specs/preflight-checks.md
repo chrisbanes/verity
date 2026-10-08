@@ -21,7 +21,7 @@ Android preflight accepts an ADB serial, checks its state when specified, and ot
 
 ## CLI behavior
 
-Normal `run` resolves configuration and input, validates project context, and performs local preflight before creating the session and LLM client. Provider checks resolve supported names/model IDs, check credential presence, and validate any explicit reasoning effort against the selected model and backend. They do not contact providers to verify credentials, account entitlement, or remote availability.
+Normal `run` resolves configuration and input, validates project context, and performs local preflight before creating the session and LLM client. Provider checks resolve supported names/model IDs, check credential presence, and validate any explicit reasoning effort against the selected model and backend. API-key checks do not contact providers to verify credentials, account entitlement, or remote availability. ChatGPT mode performs the backend-specific preflight below.
 
 Input/parser failures and setup/preflight failures have different [exit codes](run-artifacts.md#exit-codes-and-failure-boundaries). Expected preflight errors include their codes, messages, and remediation in CLI output.
 
@@ -62,3 +62,13 @@ MCP tools do not validate provider, model, or credential configuration. The CLI 
 - [CliPreflightChecker](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/CliPreflightChecker.kt) and [VerityMcpServer](../../verity/mcp/src/main/kotlin/me/chrisbanes/verity/mcp/VerityMcpServer.kt): caller composition.
 - [CliPreflightCheckerTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/CliPreflightCheckerTest.kt) and [VerityMcpServerTest](../../verity/mcp/src/test/kotlin/me/chrisbanes/verity/mcp/VerityMcpServerTest.kt): fake checks, credential errors, and session rejection before connection.
 - [ReasoningEffort](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/ReasoningEffort.kt), [ReasoningEffortTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/ReasoningEffortTest.kt), and [VerityProviderTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/VerityProviderTest.kt): exact model/backend capabilities and native fields.
+
+## ChatGPT preflight
+
+ChatGPT mode checks readable local paths first, then prepares the isolated backend before device readiness or session creation. It reads the account with `refreshToken: false`, requires a ChatGPT account, and enumerates the dynamic model catalog with bounded pagination. The navigator requires verified text input; the inspector requires text and image input. Each role's explicit effort is checked independently. No-turn ephemeral role-validation threads verify exact model, provider, and isolation without inference or silent fallback. Catalog visibility does not guarantee continuing entitlement; inference failures follow the model-failure contract.
+
+Safe diagnostics use `codex.installation`, `codex.version`, `codex.host`, `codex.auth`, `codex.model`, `codex.modality`, `codex.effort`, `codex.protocol`, `codex.isolation`, `codex.startup_timeout`, or `codex.cleanup`. Invalid local auth configuration uses `codex.auth.invalid`. Messages and remediation are fixed; raw account, configuration, stderr, RPC failures and causes are excluded. Failed preparation or later device checks close any acquired backend. These are setup failures, exit `3`, before session creation.
+
+The conservative minimum is Codex CLI **0.159.0** on macOS, with required experimental raw events and schema/effective-policy checks. The [historical checkpoint](https://github.com/chrisbanes/verity/issues/92#issuecomment-5955708208) demonstrated text and synthetic screenshot inference on **macOS 26.7 arm64**, using **gpt-6-luna / low**. It did not qualify Linux, Windows, other hosts or all future versions. Offline fake-child tests cover client behavior and owned cleanup; they are not new real inference or entitlement evidence.
+
+See the [official app-server documentation](https://learn.chatgpt.com/docs/app-server) and [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) for the upstream interfaces. Verity's required isolation is version-specific and fails closed when it cannot verify the contract.

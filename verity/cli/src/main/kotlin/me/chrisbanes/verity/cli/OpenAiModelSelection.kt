@@ -3,7 +3,11 @@ package me.chrisbanes.verity.cli
 import ai.koog.prompt.llm.LLModel
 
 /** A role model whose representation stays native to its selected backend. */
-internal sealed interface SelectedRoleModel {
+sealed interface SelectedRoleModel {
+  val id: String get() = when (this) {
+    is Api -> model.id
+    is Codex -> modelId
+  }
   data class Api(val model: LLModel) : SelectedRoleModel
 
   data class Codex(val modelId: String) : SelectedRoleModel

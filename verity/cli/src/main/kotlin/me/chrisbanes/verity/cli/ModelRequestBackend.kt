@@ -9,18 +9,18 @@ import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-internal data class LabeledLocalImage(
+data class LabeledLocalImage(
   val label: String,
   val path: Path,
 )
 
-internal sealed interface ModelRequestSettings {
+sealed interface ModelRequestSettings {
   data class Api(val params: LLMParams) : ModelRequestSettings
 
   data class Codex(val reasoningEffort: String?) : ModelRequestSettings
 }
 
-internal data class ModelRequest(
+data class ModelRequest(
   val promptName: String,
   val systemText: String,
   val userText: String,
@@ -36,7 +36,7 @@ internal data class ModelRequest(
   }
 }
 
-internal interface ModelRequestBackend {
+interface ModelRequestBackend {
   suspend fun execute(request: ModelRequest): Message.Assistant
 
   suspend fun close()

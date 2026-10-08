@@ -69,3 +69,22 @@ For normal `run`, config loading/resolution and output validation failures are s
 - [VerityConfig](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/VerityConfig.kt) and [ResolvedProjectConfig](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/ResolvedProjectConfig.kt): schema, compatibility, and precedence.
 - [Verity](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/Verity.kt), [ListCommand](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/ListCommand.kt), and [McpCommand](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/McpCommand.kt): options and command wiring.
 - [VerityConfigTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/VerityConfigTest.kt), [ConfigResolverTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/ConfigResolverTest.kt), and [AssertionStrategyParserTest](../../verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertionStrategyParserTest.kt): parsing, precedence, and explicit modes.
+
+## OpenAI authentication
+
+`llm.openai-auth` and `--openai-auth` accept exactly `api-key` or `chatgpt`. The CLI value overrides YAML; omission selects `api-key`. An explicit auth setting requires `provider: openai`. Other providers retain their existing defaults.
+
+```yaml
+llm:
+  provider: openai
+  openai-auth: chatgpt
+  navigator-model: gpt-6-luna
+  inspector-model: gpt-6-luna
+  navigator-effort: low
+```
+
+API-key mode uses the static API model catalog and preserves the full native Koog parameters for each role. It never launches Codex. Choose ChatGPT mode to use an existing Codex ChatGPT login; it never reads or falls back to API keys. Codex owns sign-in and refresh, so sign in through Codex before running Verity.
+
+ChatGPT models are exact catalog IDs. Omitted roles default to `gpt-6-luna`, the model in the historical feasibility checkpoint; absence from the catalog is a setup error. Explicit effort must be present in that exact model's dynamic `supportedReasoningEfforts`; Verity preserves it unchanged and omits unset effort. It does not use the API effort table for ChatGPT.
+
+`list` and MCP perform pure configuration resolution without Codex startup, account checks, or catalog discovery. Fast-only preview also skips auth/model validation. Slow preview validates only its navigator. See [ChatGPT preflight](preflight-checks.md#chatgpt-preflight).

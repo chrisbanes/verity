@@ -103,6 +103,8 @@ data class SuiteArtifactSummary(
   val inspectorModel: String? = null,
   val navigatorEffort: EffortArtifactSetting? = null,
   val inspectorEffort: EffortArtifactSetting? = null,
+  @SerialName("openai_auth") val openaiAuth: String? = null,
+  @SerialName("model_backend") val modelBackend: String? = null,
 )
 
 @Serializable

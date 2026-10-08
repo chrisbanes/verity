@@ -17,9 +17,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-internal enum class CodexFailureKind { INSTALLATION, VERSION, HOST, PROTOCOL, ISOLATION, STARTUP_TIMEOUT, CLEANUP, REQUEST }
+internal typealias CodexFailureKind = me.chrisbanes.verity.agent.ModelBackendFailureKind
 
-internal class CodexFailure(val kind: CodexFailureKind) : Exception("Codex ${kind.name.lowercase()} failure")
+internal typealias CodexFailure = me.chrisbanes.verity.agent.ModelBackendFailure
 
 internal data class CodexThreadEchoFields(val responseArrays: Set<String>, val threadArrays: Set<String>)
 

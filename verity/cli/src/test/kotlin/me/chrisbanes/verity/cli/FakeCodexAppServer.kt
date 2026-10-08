@@ -213,6 +213,37 @@ internal object FakeCodexAppServer {
           }
         }
 
+        "account/read" -> buildJsonObject {
+          put(
+            "account",
+            if (scenario == "model-signed-out") {
+              kotlinx.serialization.json.JsonNull
+            } else {
+              buildJsonObject {
+                put("type", if (scenario == "model-api-account") "apiKey" else "chatgpt")
+                put("email", "sk-secret-account")
+              }
+            },
+          )
+        }
+
+        "model/list" -> buildJsonObject {
+          val cursor = frame["params"]?.jsonObject?.get("cursor")
+          val entry = buildJsonObject {
+            put("id", "gpt-6-luna")
+            if (scenario != "model-no-modality") put("inputModalities", JsonArray((if (scenario == "model-text-only") listOf("text") else listOf("text", "image")).map(::JsonPrimitive)))
+            if (scenario != "model-no-efforts") put("supportedReasoningEfforts", JsonArray(listOf(buildJsonObject { put("reasoningEffort", "low") })))
+          }
+          val entries = when {
+            scenario == "model-pagination" && cursor == null -> emptyList()
+            scenario == "model-cursor-loop" -> emptyList()
+            scenario == "model-duplicate" -> listOf(entry, entry)
+            else -> listOf(entry)
+          }
+          put("data", JsonArray(entries))
+          if (scenario != "model-missing-cursor") put("nextCursor", if ((scenario == "model-pagination" && cursor == null) || scenario == "model-cursor-loop") JsonPrimitive("page-two") else kotlinx.serialization.json.JsonNull)
+        }
+
         "thread/start" -> {
           if (activeThread != null) error("overlapping model requests")
           val params = frame.getValue("params").jsonObject
@@ -389,7 +420,7 @@ internal object FakeCodexAppServer {
 
   private fun record(frame: JsonObject) {
     val path = System.getProperty("verity.fake.receipt")?.let(Path::of) ?: return
-    if (frame["method"] !in listOf("thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe").map(::JsonPrimitive) && !frame.containsKey("error")) return
+    if (frame["method"] !in listOf("account/read", "model/list", "thread/start", "turn/start", "turn/interrupt", "thread/unsubscribe").map(::JsonPrimitive) && !frame.containsKey("error")) return
     if (frame.containsKey("error") && ((frame["id"] as? JsonPrimitive)?.content?.length ?: 0) > 1024) {
       Files.writeString(
         path,
@@ -660,7 +691,7 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
     directories.add(directory)
     if ("--out" in command) directories.add(Path.of(command[command.indexOf("--out") + 1]))
     if (launches == failLaunch) throw java.io.IOException("secret-launch-cause")
-    val sources = listOf(FakeCodexAppServer::class.java, CodexIsolation::class.java, Json::class.java, JsonElement::class.java, kotlinx.serialization.SerializationException::class.java, kotlin.Unit::class.java, kotlinx.coroutines.CoroutineScope::class.java)
+    val sources = listOf(FakeCodexAppServer::class.java, CodexIsolation::class.java, Json::class.java, JsonElement::class.java, me.chrisbanes.verity.agent.ModelBackendFailure::class.java, kotlinx.serialization.SerializationException::class.java, kotlin.Unit::class.java, kotlinx.coroutines.CoroutineScope::class.java)
     val classpath = sources.map { Path.of(it.protectionDomain.codeSource.location.toURI()).toString() }.distinct().joinToString(java.io.File.pathSeparator)
     val receipt = if (scenario.startsWith("model-")) Files.createTempFile("verity-fake-codex-", ".jsonl").also { receipts.add(it) } else null
     val release = if (scenario.startsWith("model-callback-") || scenario == "model-idle-callback") Files.createTempFile("verity-fake-release-", ".txt").also { releases.add(it) } else null
@@ -762,10 +793,11 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
   }
 }
 
-/** Receipt output is caller-owned and opt-in; ordinary test runs write no external journal. */
+/** Safe owned process/directory receipts are local build artifacts; an external path is opt-in. */
 internal suspend fun recordCodexTestEvidence(evidence: JsonObject) {
-  val path = System.getenv("VERITY_CODEX_TEST_EVIDENCE")?.let(Path::of) ?: return
+  val path = System.getenv("VERITY_CODEX_TEST_EVIDENCE")?.let(Path::of) ?: Path.of("build", "codex-test-cleanup.jsonl")
   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    Files.createDirectories(path.toAbsolutePath().parent)
     Files.writeString(path, evidence.toString() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
   }
 }

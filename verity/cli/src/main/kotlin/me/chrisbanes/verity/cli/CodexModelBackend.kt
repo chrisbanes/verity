@@ -108,6 +108,53 @@ internal class CodexModelBackend private constructor(
     }
   }
 
+  suspend fun validateRoles(roles: List<Pair<SelectedRoleModel.Codex, String?>>) {
+    val account = client.request("account/read", buildJsonObject { put("refreshToken", false) })["account"] as? JsonObject
+    if (account?.get("type") != JsonPrimitive("chatgpt")) throw CodexFailure(CodexFailureKind.AUTH)
+    val models = linkedMapOf<String, JsonObject>()
+    val cursors = mutableSetOf<String>()
+    var cursor: String? = null
+    var pages = 0
+    do {
+      if (++pages > 100) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val response = client.request(
+        "model/list",
+        buildJsonObject {
+          put("limit", 100)
+          put("includeHidden", true)
+          cursor?.let { put("cursor", it) }
+        },
+      )
+      val data = response["data"] as? JsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      for (value in data) {
+        val entry = value as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        val id = (entry["id"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+        if (id.isBlank() || models.put(id, entry) != null) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      }
+      val next = response["nextCursor"] ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      cursor = if (next == JsonNull) null else (next as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (cursor != null && (cursor.isBlank() || !cursors.add(cursor))) throw CodexFailure(CodexFailureKind.PROTOCOL)
+    } while (cursor != null)
+    for ((index, role) in roles.withIndex()) {
+      val (model, effort) = role
+      val entry = models[model.modelId] ?: throw CodexFailure(CodexFailureKind.MODEL)
+      val modalities = entry["inputModalities"] as? JsonArray ?: throw CodexFailure(CodexFailureKind.MODALITY)
+      val required = if (index == 0) setOf("text") else setOf("text", "image")
+      if (!modalities.containsAll(required.map(::JsonPrimitive))) throw CodexFailure(CodexFailureKind.MODALITY)
+      val supported = entry["supportedReasoningEfforts"] as? JsonArray ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+      val efforts = supported.map { ((it as? JsonObject)?.get("reasoningEffort") as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: throw CodexFailure(CodexFailureKind.PROTOCOL) }
+      if (efforts.any { it.isBlank() } || efforts.distinct().size != efforts.size) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (effort != null && effort !in efforts) throw CodexFailure(CodexFailureKind.EFFORT)
+      val session = RequestSession(ModelRequest("preflight", "", "", emptyList(), model, ModelRequestSettings.Codex(effort)))
+      try {
+        session.startThread()
+        session.unsubscribe()
+      } finally {
+        client.clearDiscardedCorrelation()
+      }
+    }
+  }
+
   private suspend fun executeOwned(request: ModelRequest): Message.Assistant {
     var session: RequestSession? = null
     try {
@@ -166,7 +213,7 @@ internal class CodexModelBackend private constructor(
     private var finalText: String? = null
     private var legacyText: String? = null
 
-    suspend fun execute(): Message.Assistant {
+    suspend fun startThread() {
       client.correlateDiscarded(null, null)
       val start = client.request(
         "thread/start",
@@ -200,6 +247,10 @@ internal class CodexModelBackend private constructor(
       acquiredThreadIds.add(candidateThreadId)
       threadId = candidateThreadId
       client.correlateDiscarded(threadId, turnId)
+    }
+
+    suspend fun execute(): Message.Assistant {
+      startThread()
       turnStartInitiated = true
       val response = client.request(
         "turn/start",

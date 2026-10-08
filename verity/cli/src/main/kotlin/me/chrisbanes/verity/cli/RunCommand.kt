@@ -1,6 +1,5 @@
 package me.chrisbanes.verity.cli
 
-import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import com.github.ajalt.clikt.core.CliktCommand
@@ -69,6 +68,8 @@ data class RunArtifactMetadata(
   val inspectorModel: String,
   val navigatorEffort: EffortArtifactSetting = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
   val inspectorEffort: EffortArtifactSetting = EffortArtifactSetting(EffortSettingMode.BACKEND_DEFAULT),
+  val openaiAuth: String? = null,
+  val modelBackend: String? = null,
 )
 
 data class SuiteRunResult(
@@ -271,7 +272,7 @@ class RunCommand(
           message = message,
           journeys = journeys,
           metadata = metadata,
-          failedJourney = e.resolvedJourney ?: journeys.singleOrNull(),
+          failedJourney = e.resolvedJourney ?: journeys.singleOrNull()?.takeIf { candidate -> e.completedResults.none { it.resolvedJourney == candidate } },
           failedAt = e.failedAt,
           completedResults = e.completedResults,
           kind = e.kind,
@@ -320,6 +321,7 @@ class RunCommand(
     config = config.copy(
       llm = config.llm?.copy(
         provider = null,
+        openaiAuth = null,
         navigatorModel = null,
         inspectorModel = null,
       ),
@@ -329,6 +331,7 @@ class RunCommand(
     ),
     cli = cli.copy(
       provider = "ollama",
+      openaiAuth = null,
       navigatorModel = null,
       inspectorModel = null,
     ),
@@ -352,21 +355,30 @@ class RunCommand(
     }
     projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
 
+    var backend: ModelRequestBackend? = null
     var dryRunNavigator: DryRunNavigator? = null
-    val planner = DryRunPlanner(
-      context = projectContext.text,
-      navigatorFactory = {
-        dryRunNavigator ?: createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform)
-          .also { dryRunNavigator = it }
-      },
-    )
-    val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
-    return try {
-      DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
-    } catch (error: CancellationException) {
+    var primary: Throwable? = null
+    try {
+      val planner = DryRunPlanner(
+        context = projectContext.text,
+        navigatorFactory = {
+          dryRunNavigator ?: createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform) { backend = it }
+            .also { dryRunNavigator = it }
+        },
+      )
+      val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
+      return try {
+        DryRunArtifactWriter().write(resolved.outputPath, suiteReport)
+      } catch (error: CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        throw CliktError("Dry-run report write failed", statusCode = EXIT_SETUP)
+      }
+    } catch (error: Exception) {
+      primary = error
       throw error
-    } catch (_: Exception) {
-      throw CliktError("Dry-run report write failed", statusCode = EXIT_SETUP)
+    } finally {
+      backend?.let { closeModelBackend(it, primary) }
     }
   }
 
@@ -376,10 +388,12 @@ class RunCommand(
     resolved: ResolvedProjectConfig,
     path: File,
     platform: Platform,
+    acquired: (ModelRequestBackend) -> Unit,
   ): DryRunNavigator {
     val preflight = preflightChecker(
       CliPreflightRequest(
         cliProvider = parent.provider,
+        cliOpenaiAuth = parent.openaiAuth,
         cliNavigatorModel = parent.navigatorModel,
         cliInspectorModel = parent.inspectorModel,
         cliNavigatorEffort = parent.navigatorEffort,
@@ -394,28 +408,29 @@ class RunCommand(
       false,
       false,
     )
-    if (!preflight.report.passed) {
-      throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
-    }
-
-    val provider = checkNotNull(preflight.provider)
-    val navigatorModel = checkNotNull(preflight.navigatorModel)
-    val executor = MultiLLMPromptExecutor(clientFactory(provider, preflight.apiKey.orEmpty()))
+    if (!preflight.report.passed) throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
+    val backend = backendFor(preflight).also(acquired)
     val navigatorAgent = NavigatorAgent(
       bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
-      executeRequest = { systemPrompt, userMessage ->
-        executor.execute(
-          prompt("navigator", params = preflight.navigatorParams) {
-            system(systemPrompt)
-            user(userMessage)
-          },
-          navigatorModel,
-        )
-      },
+      executeRequest = { systemPrompt, userMessage -> backend.execute(ModelRequest("navigator", systemPrompt, userMessage, emptyList(), checkNotNull(preflight.navigatorModel), navigatorSettings(preflight))) },
     )
-    return DryRunNavigator { actions, appId, targetPlatform, context ->
-      navigatorAgent.generate(actions, appId, targetPlatform, context)
-    }
+    return DryRunNavigator { actions, appId, targetPlatform, context -> navigatorAgent.generate(actions, appId, targetPlatform, context) }
+  }
+
+  private fun backendFor(preflight: CliPreflightResult): ModelRequestBackend {
+    preflight.backend?.let { return it }
+    check(preflight.openaiAuth != OpenAiAuth.CHATGPT) { "Prepared Codex backend is required" }
+    return ApiModelRequestBackend(MultiLLMPromptExecutor(clientFactory(checkNotNull(preflight.provider), preflight.apiKey.orEmpty())))
+  }
+
+  private fun navigatorSettings(preflight: CliPreflightResult): ModelRequestSettings = when (checkNotNull(preflight.navigatorModel)) {
+    is SelectedRoleModel.Api -> ModelRequestSettings.Api(preflight.navigatorParams)
+    is SelectedRoleModel.Codex -> ModelRequestSettings.Codex(preflight.navigatorEffort)
+  }
+
+  private fun inspectorSettings(preflight: CliPreflightResult): ModelRequestSettings = when (checkNotNull(preflight.inspectorModel)) {
+    is SelectedRoleModel.Api -> ModelRequestSettings.Api(preflight.inspectorParams)
+    is SelectedRoleModel.Codex -> ModelRequestSettings.Codex(preflight.inspectorEffort)
   }
 
   private suspend fun createRunArtifactsOrExit(
@@ -468,6 +483,8 @@ class RunCommand(
         inspectorModel = metadata?.inspectorModel,
         navigatorEffort = metadata?.navigatorEffort,
         inspectorEffort = metadata?.inspectorEffort,
+        openaiAuth = metadata?.openaiAuth,
+        modelBackend = metadata?.modelBackend,
       ),
     )
   }
@@ -506,6 +523,8 @@ class RunCommand(
           inspectorModel = summaryMetadata?.inspectorModel,
           navigatorEffort = summaryMetadata?.navigatorEffort,
           inspectorEffort = summaryMetadata?.inspectorEffort,
+          openaiAuth = summaryMetadata?.openaiAuth,
+          modelBackend = summaryMetadata?.modelBackend,
         ),
       )
     } catch (e: CancellationException) {
@@ -569,6 +588,8 @@ class RunCommand(
         inspectorModel = metadata?.inspectorModel,
         navigatorEffort = metadata?.navigatorEffort,
         inspectorEffort = metadata?.inspectorEffort,
+        openaiAuth = metadata?.openaiAuth,
+        modelBackend = metadata?.modelBackend,
       ),
     )
   }
@@ -611,6 +632,8 @@ class RunCommand(
         inspectorModel = summaryMetadata?.inspectorModel,
         navigatorEffort = summaryMetadata?.navigatorEffort,
         inspectorEffort = summaryMetadata?.inspectorEffort,
+        openaiAuth = summaryMetadata?.openaiAuth,
+        modelBackend = summaryMetadata?.modelBackend,
       ),
     )
   }
@@ -713,6 +736,7 @@ class RunCommand(
     val preflight = preflightChecker(
       CliPreflightRequest(
         cliProvider = parent.provider,
+        cliOpenaiAuth = parent.openaiAuth,
         cliNavigatorModel = parent.navigatorModel,
         cliInspectorModel = parent.inspectorModel,
         cliNavigatorEffort = parent.navigatorEffort,
@@ -731,93 +755,72 @@ class RunCommand(
       throw CliktError(preflight.report.renderPlainText(), statusCode = EXIT_SETUP)
     }
 
-    val provider = checkNotNull(preflight.provider)
-    val apiKey = preflight.apiKey.orEmpty()
-    val navigatorModel = checkNotNull(preflight.navigatorModel)
-    val inspectorModel = checkNotNull(preflight.inspectorModel)
-    echo("Provider: ${provider.name}")
-    echo("Navigator model: ${navigatorModel.id}")
-    echo("Inspector model: ${inspectorModel.id}")
-    projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
+    val backend = backendFor(preflight)
+    var primary: Throwable? = null
+    var completedResults: List<ResolvedJourneyResult> = emptyList()
+    val suiteResult = try {
+      val provider = checkNotNull(preflight.provider)
+      val navigatorModel = checkNotNull(preflight.navigatorModel)
+      val inspectorModel = checkNotNull(preflight.inspectorModel)
+      echo("Provider: ${provider.name}")
+      echo("Navigator model: ${navigatorModel.id}")
+      echo("Inspector model: ${inspectorModel.id}")
+      projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
 
-    val session = sessionFactory(
-      platform,
-      resolved.deviceId,
-      resolved.disableAnimations,
-    )
+      val session = sessionFactory(platform, resolved.deviceId, resolved.disableAnimations)
+      val navigatorFactory = {
+        NavigatorAgent(
+          bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
+          executeRequest = { systemPrompt, userMessage ->
+            backend.execute(ModelRequest("navigator", systemPrompt, userMessage, emptyList(), navigatorModel, navigatorSettings(preflight)))
+          },
+        )
+      }
+      val inspectorFactory = {
+        InspectorAgent(
+          evaluateTreeContent = { systemPrompt, userMessage, references ->
+            backend.execute(ModelRequest("tree-eval", systemPrompt, userMessage, references.mapIndexed { index, image -> LabeledLocalImage("Reference screenshot ${index + 1}", image) }, inspectorModel, inspectorSettings(preflight)))
+          },
+          evaluateVisualContent = { systemPrompt, userMessage, screenshotPath, references ->
+            backend.execute(ModelRequest("visual-eval", systemPrompt, userMessage, listOf(LabeledLocalImage("Current screenshot", screenshotPath)) + references.mapIndexed { index, image -> LabeledLocalImage("Reference screenshot ${index + 1}", image) }, inspectorModel, inspectorSettings(preflight)))
+          },
+        )
+      }
 
-    val executor = MultiLLMPromptExecutor(clientFactory(provider, apiKey))
-    val navigatorFactory = {
-      NavigatorAgent(
-        bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
-        executeRequest = { systemPrompt, userMessage ->
-          executor.execute(
-            prompt("navigator", params = preflight.navigatorParams) {
-              system(systemPrompt)
-              user(userMessage)
-            },
-            navigatorModel,
-          )
-        },
-      )
-    }
-    val inspectorFactory = {
-      InspectorAgent(
-        evaluateTreeContent = { systemPrompt, userMessage, references ->
-          executor.execute(
-            prompt("tree-eval", params = preflight.inspectorParams) {
-              system(systemPrompt)
-              user {
-                text(userMessage)
-                references.forEachIndexed { index, path ->
-                  text("Reference screenshot ${index + 1}")
-                  image(kotlinx.io.files.Path(path.toString()))
-                }
-              }
-            },
-            inspectorModel,
-          )
-        },
-        evaluateVisualContent = { systemPrompt, userMessage, screenshotPath, references ->
-          executor.execute(
-            prompt("visual-eval", params = preflight.inspectorParams) {
-              system(systemPrompt)
-              user {
-                text(userMessage)
-                text("Current screenshot")
-                image(kotlinx.io.files.Path(screenshotPath.toString()))
-                references.forEachIndexed { index, path ->
-                  text("Reference screenshot ${index + 1}")
-                  image(kotlinx.io.files.Path(path.toString()))
-                }
-              }
-            },
-            inspectorModel,
-          )
-        },
-      )
-    }
-
-    session.use {
-      return try {
-        runResolvedJourneysWithArtifacts(journeys, runArtifacts) { resolved, artifactRecorder ->
-          val orchestrator = Orchestrator(
-            session = session,
-            navigatorFactory = navigatorFactory,
-            inspectorFactory = inspectorFactory,
-            context = projectContext.text,
-            artifactRecorder = artifactRecorder,
-          )
-          orchestrator.run(resolved.journey)
-        }.copy(metadata = resolved.toRunArtifactMetadata())
-      } catch (e: CancellationException) {
-        throw e
-      } catch (e: JourneyExecutionFailure) {
-        throw e
-      } catch (e: Exception) {
-        throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e)
+      session.use {
+        try {
+          runResolvedJourneysWithArtifacts(journeys, runArtifacts) { resolved, artifactRecorder ->
+            val orchestrator = Orchestrator(
+              session = session,
+              navigatorFactory = navigatorFactory,
+              inspectorFactory = inspectorFactory,
+              context = projectContext.text,
+              artifactRecorder = artifactRecorder,
+            )
+            orchestrator.run(resolved.journey)
+          }.copy(metadata = resolved.toRunArtifactMetadata()).also { completedResults = it.results }
+        } catch (e: CancellationException) {
+          throw e
+        } catch (e: JourneyExecutionFailure) {
+          throw e
+        } catch (e: Exception) {
+          throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e)
+        }
+      }
+    } catch (error: Exception) {
+      primary = error
+      if (error !is CancellationException && error !is JourneyExecutionFailure && completedResults.isNotEmpty()) {
+        throw JourneyExecutionFailure("Device session cleanup failed", error, completedResults = completedResults, kind = ArtifactErrorKind.SETUP_FAILURE)
+      }
+      throw error
+    } finally {
+      try {
+        closeModelBackend(backend, primary)
+      } catch (cleanup: me.chrisbanes.verity.agent.ModelBackendFailure) {
+        throw JourneyExecutionFailure("Model backend cleanup failed", cleanup, completedResults = completedResults, kind = ArtifactErrorKind.SETUP_FAILURE)
       }
     }
+    return suiteResult
   }
 }
 

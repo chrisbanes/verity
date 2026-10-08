@@ -18,6 +18,7 @@ class Verity : CliktCommand(name = "verity") {
   val platform: Platform? by option("--platform", help = "Override target platform (defaults to journey platform)")
     .enum<Platform>()
   val provider: String? by option("--provider", help = "LLM provider (e.g., anthropic, openai, google, ollama)")
+  val openaiAuth: String? by option("--openai-auth", help = "OpenAI authentication: api-key or chatgpt")
   val navigatorModel: String? by option("--navigator-model", help = "Override navigator model ID")
   val inspectorModel: String? by option("--inspector-model", help = "Override inspector model ID")
   val navigatorEffort: String? by option("--navigator-effort", help = "Override navigator reasoning effort")
@@ -60,6 +61,7 @@ fun Verity.projectCliOptions(): ProjectCliOptions = ProjectCliOptions(
   deviceId = device,
   disableAnimations = noAnimations,
   provider = provider,
+  openaiAuth = openaiAuth,
   navigatorModel = navigatorModel,
   inspectorModel = inspectorModel,
   navigatorEffort = navigatorEffort,

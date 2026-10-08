@@ -63,6 +63,7 @@ data class VerityDeviceConfig(
 
 @Serializable
 data class VerityLlmConfig(
+  @SerialName("openai-auth") val openaiAuth: String? = null,
   val provider: String? = null,
   @SerialName("navigator-model") val navigatorModel: String? = null,
   @SerialName("inspector-model") val inspectorModel: String? = null,

@@ -13,6 +13,23 @@ import me.chrisbanes.verity.core.result.EffortArtifactSetting
 import me.chrisbanes.verity.core.result.EffortSettingMode
 
 class ConfigResolverTest {
+  @Test fun `ChatGPT CLI overrides YAML without consulting static API models`() {
+    val config = VerityConfig.fromYaml("llm:\n  provider: openai\n  openai-auth: api-key\n  navigator-model: yaml-exact\n  inspector-model: inspector-exact\n")
+    val resolved = ResolvedProjectConfig.resolve(config, ProjectCliOptions(openaiAuth = "chatgpt", navigatorModel = "cli-exact"))
+    assertThat(resolved.openaiAuth).isEqualTo(OpenAiAuth.CHATGPT)
+    assertThat(resolved.navigatorModel).isEqualTo(SelectedRoleModel.Codex("cli-exact"))
+    assertThat(resolved.inspectorModel).isEqualTo(SelectedRoleModel.Codex("inspector-exact"))
+    assertThat(resolved.toRunArtifactMetadata().openaiAuth).isEqualTo("chatgpt")
+    assertThat(resolved.toRunArtifactMetadata().modelBackend).isEqualTo("codex-app-server")
+  }
+
+  @Test fun `ChatGPT omitted roles use checkpoint defaults and rejects unrelated providers`() {
+    val resolved = ResolvedProjectConfig.resolve(VerityConfig(), ProjectCliOptions(provider = "openai", openaiAuth = "chatgpt"))
+    assertThat(resolved.navigatorModel.id).isEqualTo("gpt-6-luna")
+    assertThat(resolved.inspectorModel.id).isEqualTo("gpt-6-luna")
+    kotlin.test.assertFailsWith<IllegalArgumentException> { ResolvedProjectConfig.resolve(VerityConfig(), ProjectCliOptions(provider = "anthropic", openaiAuth = "chatgpt")) }
+  }
+
   @Test
   fun `defaults to anthropic when no config or flags`() {
     val resolved = resolveProvider(
@@ -144,6 +161,7 @@ class ConfigResolverTest {
 
     assertThat(resolved.toRunArtifactMetadata()).isEqualTo(
       RunArtifactMetadata(
+        modelBackend = "koog",
         provider = "anthropic",
         navigatorModel = "claude-haiku-4-5",
         inspectorModel = "claude-sonnet-4-5",
