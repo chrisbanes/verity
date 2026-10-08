@@ -18,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -49,14 +50,8 @@ class IosBoundedConditionCaptureSmoke {
         val model = System.getenv("VERITY_SMOKE_IOS_MODEL")
         val runtime = System.getenv("VERITY_SMOKE_IOS_RUNTIME")
         val requested = System.getProperty("verity.smoke.ios.udid")
-        val selected = devices.filter { (runtime == null || it.key.contains(runtime)) }.values.flatMap { it.jsonArray }
-          .map { it.jsonObject }.filter {
-            it["state"]?.jsonPrimitive?.content == "Booted" &&
-              (requested == null || it["udid"]?.jsonPrimitive?.content == requested) &&
-              (model == null || it["name"]?.jsonPrimitive?.content == model)
-          }
-        check(selected.size == 1) { "Expected one configured job-owned simulator for qualification" }
-        println("IosBoundedConditionCaptureSmoke device_identity=${selected.single()["udid"]!!.jsonPrimitive.content} platform=${session.platform}")
+        val selected = selectConditionCaptureIosTarget(devices, requested, model, runtime)
+        println("IosBoundedConditionCaptureSmoke device_identity=${selected["udid"]!!.jsonPrimitive.content} platform=${session.platform}")
       } finally {
         if (process.isAlive) {
           process.destroy()
@@ -145,4 +140,23 @@ class IosBoundedConditionCaptureSmoke {
       }
     }
   }
+}
+
+internal fun selectConditionCaptureIosTarget(devices: JsonObject, requested: String?, model: String?, runtime: String?): JsonObject {
+  val runtimePrefix = runtime?.let { "com.apple.CoreSimulator.SimRuntime.iOS-${it.replace('.', '-')}" }
+  val selected = devices.filter {
+    it.key.startsWith("com.apple.CoreSimulator.SimRuntime.iOS-") &&
+      (runtimePrefix == null || it.key == runtimePrefix || it.key.startsWith("$runtimePrefix-"))
+  }.values.flatMap { it.jsonArray }
+    .map { it.jsonObject }.filter {
+      it["state"]?.jsonPrimitive?.content == "Booted" &&
+        if (requested != null) {
+          // CI creates a named simulator of the verified model and passes its exact UDID.
+          it["udid"]?.jsonPrimitive?.content == requested
+        } else {
+          model == null || it["name"]?.jsonPrimitive?.content == model
+        }
+    }
+  check(selected.size == 1) { "Expected one configured job-owned simulator for qualification" }
+  return selected.single()
 }
