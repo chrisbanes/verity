@@ -127,7 +127,7 @@ jobs:
 
       - name: Set up Android SDK on macOS
         id: mac_sdk
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
