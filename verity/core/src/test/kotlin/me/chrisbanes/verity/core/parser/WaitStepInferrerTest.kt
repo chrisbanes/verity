@@ -36,6 +36,8 @@ class WaitStepInferrerTest {
       "Wait until Ready up to 0 seconds", "Wait until Ready up to -1 seconds",
       "Wait until Ready up to 2147483648 seconds", "Wait until Ready up to ten seconds",
       "Wait until Ready up to 1.5 seconds", "Wait until Ready up to 3 minutes", "Wait until Ready up to",
+      "Wait until Ready up to second", "Wait until Ready up to seconds",
+      "Wait until Ready UP TO SECONDS.", "Wait until Ready up  to   seconds",
     )) {
       assertFailure { JourneyStepParser.parse(source) }
     }

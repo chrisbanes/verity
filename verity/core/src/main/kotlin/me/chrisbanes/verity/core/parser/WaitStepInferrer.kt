@@ -6,7 +6,7 @@ import me.chrisbanes.verity.core.model.JourneyStep
 object WaitStepInferrer {
   private val PREFIX = Regex("""^wait\s+until\b\s*(.*)$""", RegexOption.IGNORE_CASE)
   private val LIMIT_START = Regex("""(?:^|\s+)up\s+to(?:\s+|$)""", RegexOption.IGNORE_CASE)
-  private val LIMIT_INTENT = Regex("""^up\s+to(?:\s+[+-]?[0-9].*|\s+.*\s+seconds?|\s*)$""", RegexOption.IGNORE_CASE)
+  private val LIMIT_INTENT = Regex("""^up\s+to(?:\s+[+-]?[0-9].*|\s+(?:.*\s+)?seconds?|\s*)$""", RegexOption.IGNORE_CASE)
   private val LIMIT = Regex("""up\s+to\s+([0-9]+)\s+seconds?""", RegexOption.IGNORE_CASE)
 
   fun infer(text: String): JourneyStep.Wait? {
