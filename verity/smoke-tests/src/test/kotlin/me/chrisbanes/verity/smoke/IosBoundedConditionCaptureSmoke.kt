@@ -151,7 +151,7 @@ internal fun selectConditionCaptureIosTarget(devices: JsonObject, requested: Str
     .map { it.jsonObject }.filter {
       it["state"]?.jsonPrimitive?.content == "Booted" &&
         if (requested != null) {
-          // CI creates a named simulator of the verified model and passes its exact UDID.
+          // Use the simulator selected by CI even when its display name differs.
           it["udid"]?.jsonPrimitive?.content == requested
         } else {
           model == null || it["name"]?.jsonPrimitive?.content == model

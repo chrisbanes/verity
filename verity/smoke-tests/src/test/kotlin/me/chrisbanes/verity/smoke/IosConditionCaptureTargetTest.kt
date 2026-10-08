@@ -17,6 +17,16 @@ class IosConditionCaptureTargetTest {
   }
 
   @Test
+  fun `action-selected UDID needs no model or runtime pin and cannot fall back`() {
+    val selected = selectConditionCaptureIosTarget(devices, "action-owned", null, null)
+    assertThat(selected["udid"]!!.jsonPrimitive.content).isEqualTo("action-owned")
+    for (target in listOf("missing", null)) {
+      assertFailure { selectConditionCaptureIosTarget(devices, target, null, null) }
+        .messageContains("Expected one configured job-owned simulator")
+    }
+  }
+
+  @Test
   fun `model selection remains available when no UDID is configured`() {
     val selected = selectConditionCaptureIosTarget(devices, null, "iPhone 17", "27")
     assertThat(selected["udid"]!!.jsonPrimitive.content).isEqualTo("default")
@@ -37,6 +47,9 @@ class IosConditionCaptureTargetTest {
         {"name": "Verity-packaged-run-attempt", "udid": "owned", "state": "Booted"},
         {"name": "iPhone 17", "udid": "default", "state": "Booted"},
         {"name": "iPhone 17", "udid": "shutdown", "state": "Shutdown"}
+      ],
+      "com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+        {"name": "iPhone 17", "udid": "action-owned", "state": "Booted"}
       ]
     }
     """.trimIndent(),
