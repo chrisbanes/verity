@@ -111,7 +111,7 @@ jobs:
 
       - name: Start iOS simulator
         id: simulator
-        uses: futureware-tech/simulator-action@v5
+        uses: futureware-tech/simulator-action@v6
         with:
           os: iOS
           erase_before_boot: true
