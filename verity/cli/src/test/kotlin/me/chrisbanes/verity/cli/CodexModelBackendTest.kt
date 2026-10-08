@@ -359,7 +359,7 @@ class CodexModelBackendTest {
   fun `wrong stale RPC thread turn and unknown echo semantics fail closed`() = runTest {
     withContext(Dispatchers.Default) {
       listOf("model-wrong-rpc", "model-wrong-thread", "model-wrong-turn", "model-stale-turn", "model-stale-delta", "model-echo-wrong-model", "model-echo-null-environments").forEach { scenario ->
-        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure> { backend.execute(request()) } }
+        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) } }
       }
     }
   }
@@ -469,7 +469,7 @@ class CodexModelBackendTest {
       fixture("model-final-priority") { _, backend -> assertThat(backend.execute(request()).textContent()).isEqualTo("selected-final") }
       fixture("model-latest-final") { _, backend -> assertThat(backend.execute(request()).textContent()).isEqualTo("latest-final") }
       fixture("model-legacy") { _, backend -> assertThat(Json.parseToJsonElement(backend.execute(request()).textContent()).jsonObject["threadId"] != null).isTrue() }
-      listOf("model-failed", "model-interrupted", "model-blank", "model-absent", "model-commentary-only", "model-unknown-phase").forEach { scenario -> fixture(scenario) { _, backend -> assertFailsWith<CodexFailure> { backend.execute(request()) } } }
+      listOf("model-failed", "model-interrupted", "model-blank", "model-absent", "model-commentary-only", "model-unknown-phase").forEach { scenario -> fixture(scenario) { _, backend -> assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) } } }
     }
   }
 
@@ -477,7 +477,7 @@ class CodexModelBackendTest {
   fun `malformed truncated overflow lost transport and unsubscribe failure cannot return success`() = runTest {
     withContext(Dispatchers.Default) {
       listOf("model-malformed-json", "model-invalid-utf8", "model-truncated", "model-frame-overflow", "model-text-overflow", "model-loss", "model-unsubscribe-failed", "model-unsubscribe-hang").forEach { scenario ->
-        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure> { backend.execute(request()) } }
+        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) } }
       }
     }
   }
@@ -653,7 +653,7 @@ class CodexModelBackendTest {
         fixture(scenario) { _, backend -> assertThat(backend.execute(request()).finishReason).isEqualTo("stop") }
       }
       listOf("model-status-active-approval", "model-status-active-user", "model-status-active-unknown", "model-status-active-null", "model-status-active-missing", "model-status-unknown", "model-status-systemError", "model-status-notLoaded", "model-status-unsubscribe-approval").forEach { scenario ->
-        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure> { backend.execute(request()) } }
+        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) } }
       }
     }
   }

@@ -19,6 +19,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
+import me.chrisbanes.verity.agent.ModelBackendFailure
+import me.chrisbanes.verity.agent.ModelBackendFailureKind
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
@@ -832,6 +834,7 @@ private class JourneyExecutionFailure(
   val completedResults: List<ResolvedJourneyResult> = emptyList(),
   val kind: ArtifactErrorKind = when (cause) {
     is ModelFailureException -> ArtifactErrorKind.MODEL_FAILURE
+    is ModelBackendFailure -> if (cause.kind == ModelBackendFailureKind.CLEANUP) ArtifactErrorKind.SETUP_FAILURE else ArtifactErrorKind.MODEL_FAILURE
     is ActionFlowPreparationException, is InvalidActionFlowException -> ArtifactErrorKind.SETUP_FAILURE
     else -> ArtifactErrorKind.JOURNEY_FAILURE
   },

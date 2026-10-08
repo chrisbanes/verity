@@ -78,7 +78,7 @@ class RunBackendWiringTest {
   @Test fun `production backend closes on connection failure model failure and caller cancellation`() {
     for (failure in listOf<Exception?>(null, ModelBackendFailure(ModelBackendFailureKind.PROTOCOL), CallerCancellation(Any()))) {
       val dir = createTempDirectory("verity-backend-fail").toFile()
-      val backend = Backend(failure)
+      val backend = Backend(failure, closeFailure = failure != null)
       try {
         val file = journey(dir, "complete onboarding wizard")
         val command = RunCommand(preflightChecker = { _, _, _, _ -> preflight(backend) }, sessionFactory = { _, _, _ -> if (failure == null) error("connect failed") else FakeDeviceSession() }, clientFactory = { _, _ -> error("API fallback") })
@@ -96,16 +96,17 @@ class RunBackendWiringTest {
   }
 
   @Test fun `production preview acquires navigator lazily and closes across success request and write failure`() {
-    for (mode in listOf("success", "model", "write", "cancel", "cleanup")) {
+    for (mode in listOf("success", "model", "write", "cancel", "cleanup", "request-cleanup")) {
       val dir = createTempDirectory("verity-backend-preview").toFile()
       val cancellation = CallerCancellation(Any())
       val backend = Backend(
         when (mode) {
           "model" -> ModelBackendFailure(ModelBackendFailureKind.PROTOCOL)
+          "request-cleanup" -> ModelBackendFailure(ModelBackendFailureKind.CLEANUP)
           "cancel" -> cancellation
           else -> null
         },
-        mode == "cleanup",
+        mode in listOf("cleanup", "model", "cancel"),
       )
       var acquisitions = 0
       try {
@@ -139,10 +140,11 @@ class RunBackendWiringTest {
             },
           )
         }
+        assertThat(output.walkTopDown().any { it.name == "summary.json" || it.name == "result.json" }).isEqualTo(false)
         assertThat(acquisitions).isEqualTo(1)
         if (mode == "success") assertThat(backend.requests.size).isEqualTo(2)
         assertThat(backend.closed).isTrue()
-        if (mode in listOf("model", "cancel")) assertThat(output.walkTopDown().any { it.extension == "md" }).isEqualTo(false)
+        if (mode in listOf("model", "cancel", "request-cleanup")) assertThat(output.walkTopDown().any { it.extension == "md" }).isEqualTo(false)
       } finally {
         dir.deleteRecursively()
       }
@@ -188,19 +190,19 @@ class RunBackendWiringTest {
   }
 
   @Test fun `mid suite model rejection preserves completed results stops later journeys and write failure wins`() {
-    for (writeFailure in listOf(false, true)) {
+    for ((failureKind, writeFailure) in listOf(ModelBackendFailureKind.PROTOCOL to false, ModelBackendFailureKind.PROTOCOL to true, ModelBackendFailureKind.CLEANUP to false)) {
       val dir = createTempDirectory("verity-backend-suite").toFile()
-      val backend = Backend(ModelBackendFailure(ModelBackendFailureKind.PROTOCOL), failAfter = 2)
+      val backend = Backend(ModelBackendFailure(failureKind), failAfter = 2)
       try {
         for (name in listOf("a", "b", "c")) journey(dir, "complete onboarding wizard").renameTo(File(dir, "$name.journey.yaml"))
         val output = File(dir, "output")
         val command = RunCommand(preflightChecker = { _, _, _, _ -> preflight(backend) }, sessionFactory = { _, _, _ -> FakeDeviceSession() }, writeJourneyResult = { run, path, result -> if (writeFailure) error("write failure") else run.writeJourneyResult(path, result) })
         val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run ${dir.path}")
-        assertThat(result.statusCode).isEqualTo(if (writeFailure) 3 else 5)
+        assertThat(result.statusCode).isEqualTo(if (writeFailure || failureKind == ModelBackendFailureKind.CLEANUP) 3 else 5)
         assertThat(backend.requests.size).isEqualTo(2)
         assertThat(backend.closed).isTrue()
         val summary = kotlinx.serialization.json.Json.decodeFromString<me.chrisbanes.verity.core.result.SuiteArtifactSummary>(output.walkTopDown().first { it.name == "summary.json" }.readText())
-        assertThat(summary.error?.kind).isEqualTo(if (writeFailure) me.chrisbanes.verity.core.result.ArtifactErrorKind.SETUP_FAILURE else me.chrisbanes.verity.core.result.ArtifactErrorKind.MODEL_FAILURE)
+        assertThat(summary.error?.kind).isEqualTo(if (writeFailure || failureKind == ModelBackendFailureKind.CLEANUP) me.chrisbanes.verity.core.result.ArtifactErrorKind.SETUP_FAILURE else me.chrisbanes.verity.core.result.ArtifactErrorKind.MODEL_FAILURE)
         if (!writeFailure) {
           assertThat(summary.total).isEqualTo(2)
           assertThat(summary.passed).isEqualTo(1)

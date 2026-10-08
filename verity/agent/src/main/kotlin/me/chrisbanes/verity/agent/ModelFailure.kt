@@ -57,6 +57,7 @@ internal suspend fun requestModelText(
       if (onFailure == null) throw ModelFailureException(stage, ModelFailureKind.REQUEST)
       throw failure
     } catch (failure: ModelBackendFailure) {
+      if (failure.kind == ModelBackendFailureKind.CLEANUP) throw failure
       throw ModelFailureException(stage, if (failure.kind == ModelBackendFailureKind.PROTOCOL) ModelFailureKind.INVALID_RESPONSE else ModelFailureKind.REQUEST)
     } catch (_: Exception) {
       throw ModelFailureException(stage, ModelFailureKind.REQUEST)

@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
+import assertk.assertions.isSameInstanceAs
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
@@ -11,13 +12,29 @@ import kotlinx.coroutines.test.runTest
 class ModelFailureTest {
   @Test fun `fixed backend failures preserve stage redact causes and notify observed requests`() = runTest {
     for (stage in ModelRequestStage.entries) {
-      for (kind in ModelBackendFailureKind.entries) {
+      for (kind in ModelBackendFailureKind.entries.filter { it != ModelBackendFailureKind.CLEANUP }) {
         val observed = mutableListOf<ModelFailureException>()
         val failure = assertFailsWith<ModelFailureException> { requestModelText(stage, { observed += it }) { throw ModelBackendFailure(kind) } }
         assertThat(failure.stage).isEqualTo(stage)
         assertThat(failure.failure).isEqualTo(if (kind == ModelBackendFailureKind.PROTOCOL) ModelFailureKind.INVALID_RESPONSE else ModelFailureKind.REQUEST)
         assertThat(failure.cause).isEqualTo(null)
         assertThat(observed.single()).isEqualTo(failure)
+      }
+    }
+  }
+
+  @Test fun `cleanup remains typed through every observed and unobserved request stage`() = runTest {
+    for (stage in ModelRequestStage.entries) {
+      for (observed in listOf(false, true)) {
+        val primary = ModelBackendFailure(ModelBackendFailureKind.CLEANUP)
+        val callbacks = mutableListOf<ModelFailureException>()
+        val failure = assertFailsWith<ModelBackendFailure> {
+          requestModelText(stage, if (observed) { error -> callbacks += error } else null) { throw primary }
+        }
+        assertThat(failure).isSameInstanceAs(primary)
+        assertThat(failure.kind).isEqualTo(ModelBackendFailureKind.CLEANUP)
+        assertThat(failure.cause).isEqualTo(null)
+        assertThat(callbacks).isEqualTo(emptyList())
       }
     }
   }

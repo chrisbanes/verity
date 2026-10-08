@@ -788,8 +788,8 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
   }
 
   suspend fun verifyCleanup() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-    children.forEach { child -> assertk.assertThat(child.process.isAlive).isEqualTo(false) }
-    directories.forEach { directory -> assertk.assertThat(Files.exists(directory)).isEqualTo(false) }
+    children.forEach { child -> assertk.assertThat(child.process.isAlive, "scenario=$scenario ownedPid=${child.process.pid()} childExited").isEqualTo(false) }
+    directories.forEach { directory -> assertk.assertThat(Files.exists(directory), "scenario=$scenario ownedDirectoryAbsent").isEqualTo(false) }
     val evidence = buildJsonObject {
       put("scenario", scenario)
       put(
