@@ -19,6 +19,7 @@ class WaitStepInferrerTest {
       "Wait until Ready" to JourneyStep.Wait("Ready"),
       "Wait until Up to date" to JourneyStep.Wait("Up to date"),
       "Wait until Progress goes up to five" to JourneyStep.Wait("Progress goes up to five"),
+      "Wait until Timer shows five minutes" to JourneyStep.Wait("Timer shows five minutes"),
       " wAiT  UnTiL  visually Loaded up to 3 seconds. " to JourneyStep.Wait("visually Loaded", 3),
       "Wait until Settings is focused up to 1 second" to JourneyStep.Wait("Settings is focused", 1),
       "Wait until Ready up to 2147483647 seconds" to JourneyStep.Wait("Ready", Int.MAX_VALUE),
@@ -27,6 +28,22 @@ class WaitStepInferrerTest {
     }
     assertThat(JourneyStepParser.parse("[?tree] Wait until Ready")).isEqualTo(JourneyStep.Assert("Wait until Ready", AssertMode.TREE))
     assertThat(JourneyStepParser.parse("Wait 5 seconds")).isEqualTo(JourneyStep.Action("Wait 5 seconds"))
+  }
+
+  @Test
+  fun `worded limits with unsupported time units are rejected`() {
+    for (source in listOf(
+      "Wait until Ready up to one minute", "Wait until Ready up to five minutes",
+      "Wait until Ready up to an hour", "Wait until Ready UP TO FIVE HOURS.",
+      "Wait until Ready up  to   five milliseconds", "Wait until Ready up to ten microseconds",
+      "Wait until Ready up to one nanosecond", "Wait until Ready up to a day",
+      "Wait until Ready up to two weeks", "Wait until Ready up to a month",
+      "Wait until Ready up to a year", "Wait until Ready up to minutes",
+      "Wait until Ready up to five ms", "Wait until Ready up to one min",
+      "Wait until Ready up to two hrs", "Wait until Ready up to one sec",
+    )) {
+      assertFailure { JourneyStepParser.parse(source) }
+    }
   }
 
   @Test
