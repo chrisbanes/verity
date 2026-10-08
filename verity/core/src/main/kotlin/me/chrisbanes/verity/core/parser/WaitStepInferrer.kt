@@ -4,9 +4,9 @@ import me.chrisbanes.verity.core.model.JourneyStep
 
 /** Explicit action-less waits; malformed recognized limits are authoring errors. */
 object WaitStepInferrer {
-  private val PREFIX = Regex("""^wait\s+until\b\s*(.*)$""", RegexOption.IGNORE_CASE)
+  private val PREFIX = Regex("""^wait\s+until\b\s*(.*)$""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
   private val LIMIT_START = Regex("""(?:^|\s+)up\s+to(?:\s+|$)""", RegexOption.IGNORE_CASE)
-  private val LIMIT_INTENT = Regex("""^up\s+to(?:\s+[+-]?[0-9].*|\s+(?:.*\s+)?(?:(?:nano|micro|milli)?seconds?|minutes?|hours?|days?|weeks?|months?|years?|[numµμ]?s|secs?|mins?|hrs?)|\s*)$""", RegexOption.IGNORE_CASE)
+  private val LIMIT_INTENT = Regex("""^up\s+to(?:\s+[+-]?[0-9].*|\s+(?:.*\s+)?(?:(?:nano|micro|milli)?seconds?|minutes?|hours?|days?|weeks?|months?|years?|[numµμ]?s|secs?|mins?|hrs?)|\s*)$""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
   private val LIMIT = Regex("""up\s+to\s+([0-9]+)\s+seconds?""", RegexOption.IGNORE_CASE)
 
   fun infer(text: String): JourneyStep.Wait? {

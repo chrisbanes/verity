@@ -13,7 +13,7 @@ steps:
 
 ## Syntax and evaluation
 
-`Wait until <condition>` is case-insensitive and defaults to 20 seconds. An optional trailing `up to N seconds` (or singular `second`) supplies a positive whole number of seconds; a final period is optional. Blank conditions, zero, negative, fractional, overflowing or malformed duration limits are rejected during parsing. Assertion prefixes retain priority, so `[?tree] Wait until Ready` is an assertion. Saved journeys retain scalar strings; the canonical serializer omits the default limit and includes an explicit nondefault limit.
+`Wait until <condition>` is case-insensitive and defaults to 20 seconds. An optional trailing `up to N seconds` (or singular `second`) supplies a positive whole number of seconds; a final period is optional. Conditions may span lines within a YAML scalar. Blank conditions (including a bare `visually` prefix), zero, negative, fractional, overflowing or malformed duration limits are rejected during parsing. Assertion prefixes retain priority, so `[?tree] Wait until Ready` is an assertion. Saved journeys retain scalar strings; the canonical serializer omits the default limit when the condition round-trips unchanged, and otherwise writes the explicit limit to preserve its meaning.
 
 A check uses the same tiers as [loop conditions](loop-conditions.md#one-current-state-check):
 

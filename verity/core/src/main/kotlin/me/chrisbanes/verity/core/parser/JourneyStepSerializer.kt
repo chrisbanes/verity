@@ -110,8 +110,13 @@ object JourneyStepSerializer : KSerializer<JourneyStep> {
       }
 
       is JourneyStep.Wait -> {
-        val limit = if (value.timeoutSeconds != 20) " up to ${value.timeoutSeconds} seconds" else ""
-        "Wait until ${value.until}$limit"
+        val text = "Wait until ${value.until}"
+        val needsLimit = value.timeoutSeconds != 20 || try {
+          WaitStepInferrer.infer(text) != value
+        } catch (_: IllegalArgumentException) {
+          true
+        }
+        if (needsLimit) "$text up to ${value.timeoutSeconds} seconds" else text
       }
 
       is JourneyStep.Loop -> {

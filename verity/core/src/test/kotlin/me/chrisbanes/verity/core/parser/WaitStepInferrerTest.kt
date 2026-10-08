@@ -2,6 +2,7 @@ package me.chrisbanes.verity.core.parser
 
 import assertk.assertFailure
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import com.charleskorn.kaml.Yaml
 import java.io.File
@@ -20,6 +21,9 @@ class WaitStepInferrerTest {
       "Wait until Up to date" to JourneyStep.Wait("Up to date"),
       "Wait until Progress goes up to five" to JourneyStep.Wait("Progress goes up to five"),
       "Wait until Timer shows five minutes" to JourneyStep.Wait("Timer shows five minutes"),
+      "Wait until Ready\nnow up to 3 seconds" to JourneyStep.Wait("Ready\nnow", 3),
+      "Wait until Ready up to 3\nseconds" to JourneyStep.Wait("Ready", 3),
+      "Wait until visuallyReady" to JourneyStep.Wait("visuallyReady"),
       " wAiT  UnTiL  visually Loaded up to 3 seconds. " to JourneyStep.Wait("visually Loaded", 3),
       "Wait until Settings is focused up to 1 second" to JourneyStep.Wait("Settings is focused", 1),
       "Wait until Ready up to 2147483647 seconds" to JourneyStep.Wait("Ready", Int.MAX_VALUE),
@@ -41,8 +45,27 @@ class WaitStepInferrerTest {
       "Wait until Ready up to a year", "Wait until Ready up to minutes",
       "Wait until Ready up to five ms", "Wait until Ready up to one min",
       "Wait until Ready up to two hrs", "Wait until Ready up to one sec",
+      "Wait until Ready up to five\nand a half minutes", "Wait until Ready up to 3\nhours",
     )) {
       assertFailure { JourneyStepParser.parse(source) }
+    }
+  }
+
+  @Test
+  fun `default limit omission preserves duration-like conditions on YAML reload`() {
+    for (condition in listOf("Progress goes up to five minutes", "Progress goes up to 3 seconds", "Ready.")) {
+      val expected = JourneyStep.Wait(condition)
+      assertThat(JourneyStepParser.parse("Wait until $condition up to 20 seconds")).isEqualTo(expected)
+      val encoded = Yaml.default.encodeToString(JourneyStepSerializer, expected)
+      assertThat(encoded).contains("up to 20 seconds")
+      assertThat(Yaml.default.decodeFromString(JourneyStepSerializer, encoded)).isEqualTo(expected)
+    }
+    val ordinary = Yaml.default.encodeToString(JourneyStepSerializer, JourneyStep.Wait("Ready"))
+    assertThat(ordinary.contains("up to")).isEqualTo(false)
+    for (timeout in listOf(20, 3)) {
+      val multiline = JourneyStep.Wait("Ready\nnow", timeout)
+      val encoded = Yaml.default.encodeToString(JourneyStepSerializer, multiline)
+      assertThat(Yaml.default.decodeFromString(JourneyStepSerializer, encoded)).isEqualTo(multiline)
     }
   }
 
@@ -50,6 +73,8 @@ class WaitStepInferrerTest {
   fun `recognized invalid conditions and limits cannot become actions`() {
     for (source in listOf(
       "Wait until", "Wait until .", "Wait until up to 3 seconds",
+      "Wait until visually", "Wait until VISUALLY.", "Wait until visually up to 3 seconds",
+      "Wait until visually  up  to  1 second.",
       "Wait until Ready up to 0 seconds", "Wait until Ready up to -1 seconds",
       "Wait until Ready up to 2147483648 seconds", "Wait until Ready up to ten seconds",
       "Wait until Ready up to 1.5 seconds", "Wait until Ready up to 3 minutes", "Wait until Ready up to",
@@ -59,6 +84,7 @@ class WaitStepInferrerTest {
       assertFailure { JourneyStepParser.parse(source) }
     }
     assertFailure { JourneyStep.Wait(" ") }
+    assertFailure { JourneyStep.Wait(" VISUALLY \t ") }
     assertFailure { JourneyStep.Wait("Ready", 0) }
   }
 

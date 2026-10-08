@@ -4,6 +4,7 @@ sealed interface JourneyStep {
   data class Wait(val until: String, val timeoutSeconds: Int = 20) : JourneyStep {
     init {
       require(until.isNotBlank()) { "Wait condition must not be blank" }
+      require(!until.trim().equals("visually", ignoreCase = true)) { "Visual wait condition must not be blank" }
       require(timeoutSeconds > 0) { "Wait timeout must be positive" }
     }
   }

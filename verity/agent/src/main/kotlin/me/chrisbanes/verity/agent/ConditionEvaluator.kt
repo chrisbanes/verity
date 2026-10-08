@@ -28,8 +28,10 @@ class ConditionEvaluator(
   private val verifyScreenshot: suspend (Path) -> Unit = ::requireScreenshot,
 ) {
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext()): ConditionEvaluation {
+    require(condition.isNotBlank()) { "Condition must not be blank" }
     VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
       val description = condition.trim().substring(prefix.range.last + 1).trim()
+      require(description.isNotBlank()) { "Visual condition must not be blank" }
       val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot).visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
@@ -48,9 +50,12 @@ class ConditionEvaluator(
   }
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
+    require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot)
     VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
-      val evaluation = inspection.visual(condition.trim().substring(prefix.range.last + 1).trim(), context)
+      val description = condition.trim().substring(prefix.range.last + 1).trim()
+      require(description.isNotBlank()) { "Visual condition must not be blank" }
+      val evaluation = inspection.visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
     val tree = session.captureHierarchyTree(deadline.remaining())

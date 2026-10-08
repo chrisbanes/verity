@@ -7,7 +7,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
@@ -19,6 +21,26 @@ import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.device.DeviceSession
 
 class ConditionEvaluatorTest {
+  @Test
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun `blank conditions and bare visual prefixes fail before capture or inspection`() = runTest {
+    val session = StateSession()
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> error("unexpected tree inspection") },
+      evaluateVisualContent = { _, _, _, _ -> error("unexpected visual inspection") },
+    )
+    val evaluator = ConditionEvaluator(session, inspector)
+    val waiter = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }
+    for (condition in listOf("", " ", "visually", " VISUALLY \t ")) {
+      assertFailsWith<IllegalArgumentException> { evaluator.evaluate(condition) }
+      assertFailsWith<IllegalArgumentException> { waiter.await(condition, 1.seconds) }
+    }
+    assertThat(session.literalChecks).isEqualTo(emptyList())
+    assertThat(session.filters).isEqualTo(emptyList())
+    assertThat(session.screenshots).isEqualTo(emptyList())
+    assertThat(session.executedActionFlows).isEqualTo(emptyList())
+  }
+
   @Test
   fun `nonvisual checks use complete literal then deterministic focus then content tree`() = runTest {
     withContext(Dispatchers.Default) {
