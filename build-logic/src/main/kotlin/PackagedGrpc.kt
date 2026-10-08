@@ -16,7 +16,7 @@ import org.gradle.api.tasks.TaskAction
 
 /** Packaging prerequisite: one Java gRPC family and Maestro's exact public JVM ABI. */
 object PackagedGrpc {
-  const val VERSION = "1.84.0"
+  const val VERSION = "1.84.1"
 
   data class Artifact(val name: String, val version: String, val file: File)
 
