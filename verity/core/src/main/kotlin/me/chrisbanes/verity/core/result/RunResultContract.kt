@@ -46,6 +46,16 @@ data class LoopArtifact(
 )
 
 @Serializable
+data class WaitArtifact(
+  val condition: String,
+  val timeoutSeconds: Int,
+  val elapsedMs: Long,
+  val checks: Int,
+  val tier: ConditionTier? = null,
+  val reasoning: String = "",
+)
+
+@Serializable
 data class SegmentArtifactResult(
   val index: Int,
   val passed: Boolean,
@@ -57,6 +67,7 @@ data class SegmentArtifactResult(
   val evidence: List<EvidenceArtifact> = emptyList(),
   val error: ArtifactError? = null,
   val loop: LoopArtifact? = null,
+  val wait: WaitArtifact? = null,
 )
 
 @Serializable
@@ -128,6 +139,9 @@ enum class SegmentExecutionMode {
 
   @SerialName("loop")
   LOOP,
+
+  @SerialName("wait")
+  WAIT,
 
   @SerialName("assertion-only")
   ASSERTION_ONLY,

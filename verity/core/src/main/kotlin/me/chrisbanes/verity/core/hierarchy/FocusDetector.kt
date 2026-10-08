@@ -19,23 +19,27 @@ object FocusDetector {
   )
 
   /** Check focus/text relationship by walking a [HierarchyNode] tree directly. */
-  fun containsFocused(root: HierarchyNode, text: String): Boolean {
+  fun containsFocused(root: HierarchyNode, text: String, checkpoint: () -> Unit = {}): Boolean {
     val textLower = text.lowercase()
     val flat = mutableListOf<FlatEntry>()
 
     fun flatten(node: HierarchyNode, depth: Int) {
+      checkpoint()
       flat.add(
         FlatEntry(
           depth = depth,
           focused = isFocused(node),
-          hasText = node.attributes.values.any { it.lowercase().contains(textLower) },
+          hasText = node.attributes.values.any {
+            checkpoint()
+            it.lowercase().contains(textLower)
+          },
         ),
       )
       node.children.forEach { flatten(it, depth + 1) }
     }
     flatten(root, 0)
 
-    return checkRelationships(flat)
+    return checkRelationships(flat, checkpoint)
   }
 
   /**
@@ -61,40 +65,49 @@ object FocusDetector {
     return checkRelationships(flat)
   }
 
-  private fun checkRelationships(entries: List<FlatEntry>): Boolean {
-    val focusedIndices = entries.indices.filter { entries[it].focused }
-    val textIndices = entries.indices.filter { entries[it].hasText }
+  private fun checkRelationships(entries: List<FlatEntry>, checkpoint: () -> Unit = {}): Boolean {
+    val focusedIndices = entries.indices.filter {
+      checkpoint()
+      entries[it].focused
+    }
+    val textIndices = entries.indices.filter {
+      checkpoint()
+      entries[it].hasText
+    }
 
     if (focusedIndices.isEmpty() || textIndices.isEmpty()) return false
 
     for (fi in focusedIndices) {
       for (ti in textIndices) {
+        checkpoint()
         if (fi == ti) return true // Same node
-        if (isDescendant(entries, parent = fi, child = ti)) return true
-        if (isDescendant(entries, parent = ti, child = fi)) return true // Ancestor of focused
-        if (isSibling(entries, fi, ti)) return true
+        if (isDescendant(entries, parent = fi, child = ti, checkpoint)) return true
+        if (isDescendant(entries, parent = ti, child = fi, checkpoint)) return true // Ancestor of focused
+        if (isSibling(entries, fi, ti, checkpoint)) return true
       }
     }
     return false
   }
 
-  private fun isDescendant(entries: List<FlatEntry>, parent: Int, child: Int): Boolean {
+  private fun isDescendant(entries: List<FlatEntry>, parent: Int, child: Int, checkpoint: () -> Unit): Boolean {
     if (child <= parent) return false
     if (entries[child].depth <= entries[parent].depth) return false
     // Check that no node between parent and child is at parent's depth or shallower
     for (i in (parent + 1) until child) {
+      checkpoint()
       if (entries[i].depth <= entries[parent].depth) return false
     }
     return true
   }
 
-  private fun isSibling(entries: List<FlatEntry>, a: Int, b: Int): Boolean {
+  private fun isSibling(entries: List<FlatEntry>, a: Int, b: Int, checkpoint: () -> Unit): Boolean {
     if (entries[a].depth != entries[b].depth) return false
     // Top-level nodes (depth 0) don't share a meaningful parent
     if (entries[a].depth == 0) return false
     val (first, second) = if (a < b) a to b else b to a
     // Siblings share the same parent — no node between them is at a shallower depth
     for (i in (first + 1) until second) {
+      checkpoint()
       if (entries[i].depth < entries[first].depth) return false
     }
     return true

@@ -53,16 +53,18 @@ Effort metadata is suite-wide and is emitted when resolved run metadata is avail
 
 Each journey result contains `journey` identity (`name`, `file`, `app`, `platform`), `passed`, optional `failedAt`, `segments`, and an optional error. Each segment contains its `index`, `passed`, `executionMode`, source `actions`, optional assertion description/mode, `reasoning`, `generatedFlows`, `evidence`, and optional error. Evidence references contain `type` and `path`. Loop segments additionally contain optional `loop` metadata with `condition`, completed `iterations`, final `tier` and condition `reasoning`. An execution failure retains the previous evaluated condition metadata separately from the segment error. Non-loop segments omit `loop`. See [loop conditions](loop-conditions.md).
 
+Wait segments add `wait` metadata (`condition`, `timeoutSeconds`, `elapsedMs`, completed `checks`, optional `tier`, and last completed condition `reasoning`). Their mode is `wait`; actions/generated flows are empty. Before any completed check, tier/evidence are absent. Nonwait segments omit `wait`. Each production wait check uses distinct evidence paths to preserve the last completed evaluation through a later incomplete poll. See [wait conditions](wait-conditions.md).
+
 JSON property names use camelCase. Default values are included; null-valued properties are omitted. Stable wire values are:
 
 | Field | Values |
 | --- | --- |
 | Status | `passed`, `failed` |
-| Execution mode | `fast`, `slow`, `loop`, `assertion-only` |
+| Execution mode | `fast`, `slow`, `loop`, `wait`, `assertion-only` |
 | Assertion mode | `visible`, `focused`, `tree`, `visual` |
 | Evidence type | `flow`, `screenshot`, `hierarchy` |
 | Error kind | `parser_failure`, `setup_failure`, `journey_failure`, `model_failure` |
-| Loop condition tier | `literal`, `focus`, `tree`, `visual` |
+| Loop/wait condition tier | `literal`, `focus`, `tree`, `visual` |
 | Platform | `android-tv`, `android`, `ios` |
 | Effort setting mode | `explicit`, `backend-default` |
 

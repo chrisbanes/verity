@@ -5,4 +5,5 @@ data class JourneySegment(
   val actions: List<JourneyStep.Action>,
   val assertion: JourneyStep.Assert? = null,
   val loop: JourneyStep.Loop? = null,
+  val wait: JourneyStep.Wait? = null,
 )

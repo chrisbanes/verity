@@ -29,6 +29,35 @@ import me.chrisbanes.verity.device.ActionFlowPreparationPhase
 import me.chrisbanes.verity.device.validateActionFlow
 
 class DryRunPlannerTest {
+  @Test fun `wait previews preserve segment order and authored condition without navigator or YAML generation`() = runTest {
+    val planner = DryRunPlanner(navigatorFactory = { error("Wait preview must not initialize navigator") })
+    val journey = Journey(
+      "Static waits",
+      "example.app",
+      Platform.ANDROID_MOBILE,
+      listOf(
+        JourneyStep.Action("Press back"),
+        JourneyStep.Wait("Home"),
+        JourneyStep.Assert("Home", AssertMode.VISIBLE),
+        JourneyStep.Wait("visually spinner disappears", 3),
+        JourneyStep.Action("Tap Settings"),
+      ),
+    )
+    val report = planner.plan(resolvedJourney(journey))
+    assertThat(report.segments.map { it.index }).isEqualTo(listOf(0, 1, 2, 3, 4))
+    assertThat(report.segments[1].wait).isEqualTo(DryRunWaitReport("Home", 20))
+    assertThat(report.segments[3].wait).isEqualTo(DryRunWaitReport("visually spinner disappears", 3))
+    for (index in listOf(1, 3)) {
+      assertThat(report.segments[index].actions).isNull()
+      assertThat(report.segments[index].loop).isNull()
+      assertThat(report.segments[index].assertion).isNull()
+    }
+    val markdown = DryRunRenderer.renderJourney(report)
+    assertThat(markdown).contains("Wait until Home, up to 20 seconds")
+    assertThat(markdown).contains("Wait until visually spinner disappears, up to 3 seconds")
+    assertThat(markdown).contains("Assertion: [VISIBLE] Home")
+  }
+
   @Test
   fun `new interaction descriptions are pure and do not initialize the navigator`() {
     val planner = DryRunPlanner(navigatorFactory = { error("must not initialize navigator") })

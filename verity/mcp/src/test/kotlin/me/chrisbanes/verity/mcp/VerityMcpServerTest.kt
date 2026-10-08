@@ -39,6 +39,28 @@ import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 class VerityMcpServerTest {
 
   @Test
+  fun `load journey displays waits and legacy steps without creating a device`() = runTest {
+    val file = File.createTempFile("verity-wait-mcp-", ".journey.yaml")
+    try {
+      file.writeText("name: Wait fixture\napp: app.fixture\nplatform: android\nsteps:\n  - Press BACK\n  - Wait until Ready\n  - '[?visible] Ready'\n  - Wait until visually Loaded up to 3 seconds\n  - Press down until End\n")
+      val server = VerityMcpServer(sessionManager = McpDeviceSessionManager { _, _, _ -> error("Display must not open a device") }).create()
+      val result = server.tools.getValue("load_journey").handler.invoke(
+        StubClientConnection(),
+        CallToolRequest(CallToolRequestParams("load_journey", buildJsonObject { put("path", file.absolutePath) })),
+      )
+      assertThat(result.isError == true).isFalse()
+      val text = (result.content.single() as TextContent).text
+      assertThat(text).contains("1. [Action] Press BACK")
+      assertThat(text).contains("2. [Wait] Ready (timeout: 20 seconds)")
+      assertThat(text).contains("3. [Assert:VISIBLE] Ready")
+      assertThat(text).contains("4. [Wait] visually Loaded (timeout: 3 seconds)")
+      assertThat(text).contains("5. [Loop] Press down until 'End' (max: 20)")
+    } finally {
+      file.delete()
+    }
+  }
+
+  @Test
   fun `server creates successfully`() {
     val server = VerityMcpServer().create()
     assertThat(server).isNotNull()

@@ -24,6 +24,7 @@ class IosDeviceSession(
   private val iosDevice: device.IOSDevice,
   private val onCommandStart: ((Int) -> Unit)? = null,
   private val boundedCapture: (suspend (Duration) -> HierarchyNode)? = null,
+  private val boundedScreenshot: (suspend (Path, Duration) -> Unit)? = null,
 ) : DeviceSession {
 
   override val platform: Platform = Platform.IOS
@@ -49,6 +50,11 @@ class IosDeviceSession(
   @Suppress("DEPRECATION")
   override suspend fun captureScreenshot(output: Path): Unit = withContext(Dispatchers.IO) {
     maestro.takeScreenshot(output.toFile(), false)
+  }
+
+  override suspend fun captureScreenshot(output: Path, timeout: Duration) {
+    require(timeout.isPositive() && timeout.isFinite()) { "Capture timeout must be positive and finite" }
+    return checkNotNull(boundedScreenshot) { "This iOS session has no bounded screenshot endpoint" }(output, timeout)
   }
 
   override suspend fun shell(command: String): String = withContext(Dispatchers.IO) {

@@ -23,7 +23,7 @@ Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation 
 |--------|-----------|---------|
 | `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, focus-condition grammar, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
 | `:verity:device` | `:verity:core` | `DeviceSession` interface and platform-specific implementations (Android via Dadb + Maestro gRPC, iOS via Maestro XCTest HTTP) |
-| `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, Orchestrator |
+| `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, ConditionWaiter, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 14 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
 | `:verity:smoke-tests` | `:verity:cli` | Offline archive/protocol fixtures and explicit Android/iOS device smoke tests |
@@ -149,13 +149,14 @@ steps:
 
 ### Step Parsing Chain
 
-Steps are parsed through a 5-stage priority chain:
+Steps are parsed through a 6-stage priority chain:
 
 1. **`[?mode]` prefix** — `[?visual]`, `[?tree]`, `[?visible]`, `[?focused]` locks the assertion mode
 2. **`[?]` prefix** — Assert with mode chosen by `AssertModeInferrer`
-3. **Loop inference** — NL pattern: `<verb> ... until <condition>`
-4. **Assertion inference** — NL keywords: "Verify...", "Ensure...", "Confirm...", "Check..."
-5. **Default** — Action
+3. **Wait inference** — anchored `Wait until <condition>`, with default 20 or positive whole-second limit
+4. **Loop inference** — NL pattern: `<verb> ... until <condition>`
+5. **Assertion inference** — NL keywords: "Verify...", "Ensure...", "Confirm...", "Check..."
+6. **Default** — Action
 
 ### Assert Mode Inference
 
@@ -186,6 +187,7 @@ sealed interface JourneyStep {
     data class Action(val instruction: String) : JourneyStep
     data class Assert(val description: String, val mode: AssertMode) : JourneyStep
     data class Loop(val action: String, val until: String, val max: Int = 20) : JourneyStep
+    data class Wait(val until: String, val timeoutSeconds: Int = 20) : JourneyStep
 }
 
 enum class AssertMode { VISIBLE, FOCUSED, TREE, VISUAL }
@@ -196,7 +198,8 @@ data class JourneySegment(
     val index: Int,
     val actions: List<JourneyStep.Action>,
     val assertion: JourneyStep.Assert? = null,
-    val loop: JourneyStep.Loop? = null
+    val loop: JourneyStep.Loop? = null,
+    val wait: JourneyStep.Wait? = null
 )
 ```
 
@@ -204,16 +207,16 @@ data class JourneySegment(
 
 `JourneySegmenter` splits steps into independently executable segments:
 - Actions accumulate until an assertion → segment with those actions + assertion
-- Loops flush pending actions as a separate segment, then become their own segment
+- Loops and waits flush pending actions as a separate segment, then become their own segment
 - Trailing actions without an assertion become a final segment
 
-Each segment is a natural checkpoint: run actions, evaluate assertion, stop on failure.
+Each segment is a checkpoint: execute its actions/assertion, loop or wait, then stop the journey on failure.
 
 ### Dry-Run Planning
 
-Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate structured actions, which the preview renders as Maestro YAML. Assertions are reported without evaluation.
+Dry run is a CLI-owned planning path. `RunCommand` uses the normal journey resolver, then `DryRunPlanner` segments steps and classifies mapped interactions. Navigator creation is lazy: only slow-path actions or loops generate structured actions, which the preview renders as Maestro YAML. Assertions and waits are reported without evaluation.
 
-Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. The planner has no device-session dependency and does not invoke `Orchestrator` or the inspector. Slow-path generation uses the navigator request and validation policy below. The entire suite is planned before Markdown writing: model failures exit `5`, while provider/context setup, local validation and required report-writing failures exit `3`, without a partial successful report or normal result JSON. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
+Loop preview renders all mapped body interactions or one complete generated body, without checking the condition. Wait preview includes the condition and configured seconds without an inspector or navigator request. The planner has no device-session dependency and does not invoke `Orchestrator` or the inspector. Slow-path generation uses the navigator request and validation policy below. The entire suite is planned before Markdown writing: model failures exit `5`, while provider/context setup, local validation and required report-writing failures exit `3`, without a partial successful report or normal result JSON. See the [dry-run spec](specs/dry-run.md) for device boundaries, provider checks, Markdown output, and the current artifact side effects of shared input resolution.
 
 ---
 
@@ -233,6 +236,7 @@ interface DeviceSession : AutoCloseable {
     suspend fun captureHierarchyTree(): HierarchyNode          // abstract
     suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode // cooperative; default unsupported
     suspend fun captureScreenshot(output: Path)
+    suspend fun captureScreenshot(output: Path, timeout: Duration)
     suspend fun shell(command: String): String
     suspend fun waitForAnimationToEnd()
 
@@ -265,6 +269,8 @@ Android and iOS execute those commands through the existing Orchestra and driver
 The factory shares an internal `IOSDevice` delegation adapter between Maestro's iOS driver and `IosDeviceSession`. Hierarchy calls forward the same hierarchy Boolean flag directly to the already-owned `XCTestIOSDevice`; other controller and close operations retain `LocalIOSDevice` delegation. This avoids Maestro 2.11.0's warning-only hierarchy scheduler, which its `LocalIOSDevice.close()` does not shut down.
 
 Bounded capture includes complete acquisition, parsing, conversion and owned cleanup. Android preserves the interruptible SDK route with converter checkpoints. iOS owns a call to the recorded main runner endpoint, checked chunked body input and a fixed-schema Jackson-token decoder; no-argument capture stays SDK-backed. The helper never starts or closes the main runner. These cooperative routes do not guarantee forced termination of arbitrary SDK CPU work.
+
+Bounded screenshot capture checks acquisition, chunked writing, publication and owned cleanup. It preserves prior output on failure and removes its staging files before return. Android retains Maestro’s public uncropped screenshot route; iOS streams the existing uncompressed XCTest endpoint under a request-owned cancel/join lifecycle. Both capture kinds expose `CaptureDeadlineExceededException` with a hierarchy/screenshot operation discriminator; bounded overloads require positive finite durations and unsupported sessions fail explicitly. No-argument capture contracts remain unchanged.
 
 ### Factory
 
@@ -376,6 +382,10 @@ Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, bac
 
 `evaluate(condition, context)` performs exactly one action-free check. A leading `visually` word is stripped and forces a current screenshot; other conditions use complete-condition literal matching, a recognised deterministic focus form, then CONTENT hierarchy inspection. False recognised focus never falls back to an inspector. Assertions and conditions share current-state capture, optional evidence persistence and temporary screenshot cleanup. The evaluator has no polling, delay or history accumulation, allowing callers to own broader deadlines.
 
+### ConditionWaiter
+
+`await(condition, timeout, context)` starts one monotonic budget, defaults to 20 seconds, and runs serial checks one second after each completed negative evaluation. Its bounded evaluator takes one remaining-budget hierarchy for literal/focus/tree work or a remaining-budget screenshot for visual inspection; tree traversal, rendering, persistence, model work and joined cleanup share that deadline. A true result is admitted only before expiry. Completed-check metadata/evidence is retained, with distinct production evidence paths per wait poll. Predeadline model failures survive slow cleanup; caller and foreign cancellation propagate, and overall expiry remains a wait timeout. Existing no-deadline assertion/loop evaluation is retained. See [wait conditions](specs/wait-conditions.md).
+
 ### Orchestrator
 
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
@@ -394,6 +404,8 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 | VISUAL | `InspectorAgent.evaluateVisual()` | High |
 
 **Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and navigator/inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
+
+**Wait execution:** a wait dispatches before action/assertion fallthrough, performs no action or navigator generation, and returns mode `wait` with configured limit, actual elapsed milliseconds, completed-check count and optional last tier/reasoning/evidence. Timeout stops later segments as a failed journey result; fatal model/cancellation policy stays shared with other execution paths.
 
 Each segment creates fresh navigator and inspector instances. Their reasoning is scoped to that segment rather than carrying an accumulated conversation through the journey.
 
@@ -471,7 +483,7 @@ Awaited JSON separates `action{status,output}` from `focus_changed`, `timed_out`
 
 The repository's [run](../verity/skills/run/SKILL.md), [author](../verity/skills/author/SKILL.md) and [debug](../verity/skills/debug/SKILL.md) files guide an external agent connected through stdio or HTTP. They use the same registered tools and [shared procedures](../verity/skills/context/procedures.md); no host command registration or skill packaging is implied.
 
-`load_journey` parses identity and typed steps. The caller derives segments, generates Maestro YAML and evaluates semantic assertions against current captures. Run retains confirmation and assertion checkpoints; author reviews editable suggestions before saving current-schema YAML; debug previews every action flow, including setup, before execute/skip/edit choices. Debug reports keep editing separate from passed/failed/skipped outcomes and identify unexecuted segments.
+`load_journey` parses identity and typed steps, including displaying waits. Semantic wait execution remains CLI-only; MCP run/debug reports the requirement and leaves a wait unexecuted, while author can save reviewed waits as unverified. The caller derives segments, generates Maestro YAML and evaluates semantic assertions against current captures. Run retains confirmation and assertion checkpoints; author reviews editable suggestions before saving current-schema YAML; debug previews every action flow, including setup, before execute/skip/edit choices. Debug reports keep editing separate from passed/failed/skipped outcomes and identify unexecuted segments.
 
 Opened sessions close on completion, stop and failure. Closure attempts saved Android animation-scale restoration when disabling was requested; iOS ignores disabling. App navigation/data and caller-owned saved journeys/screenshots are not restored or removed. Captured evidence references remain distinct from CLI-required result artifacts. See the [MCP skill workflow spec](specs/mcp-skills.md) for the complete caller and cleanup boundary.
 
@@ -553,6 +565,8 @@ JourneySegmenter.segment() ──→ List<JourneySegment>
     ▼
 Orchestrator.run() loops over segments:
     │
+    ├── Wait present? → ConditionWaiter → bounded serial current-state checks
+    │
     ├── Actions present?
     │   ├── All map to interactions? → InteractionExecutor
     │   └── Otherwise → NavigatorAgent → ActionFlow → executeActions()
@@ -564,7 +578,7 @@ Orchestrator.run() loops over segments:
     │   └── VISUAL → captureScreenshot() → InspectorAgent.evaluateVisual()
     │
     ├── Loop present?
-    │   └── checkCondition → pressKey/executeFlow → repeat
+    │   └── ConditionEvaluator → complete ordered body via pressKey/executeActions → repeat
     │
     └── Failed? → stop, skip remaining segments
 ```

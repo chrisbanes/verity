@@ -292,7 +292,7 @@ private class PackagedQualification {
       val mappings = if (platform == Platform.IOS) listOf(Platform.IOS) else listOf(Platform.ANDROID_MOBILE, Platform.ANDROID_TV)
       for (mapping in mappings) {
         withTimeout(600_000) { marker(factory, "PACKAGED_FACTORY_CONNECTED platform=$mapping") }
-        withTimeout(120_000) {
+        withTimeout(360_000) {
           marker(factory, "PACKAGED_FACTORY_CAPTURE_BOUNDED_KEY_CALLER_JOIN_REUSE_OK platform=$mapping")
           marker(factory, "PACKAGED_FACTORY_CLOSE_COMPLETED platform=$mapping")
         }
@@ -1295,33 +1295,54 @@ class PackagedJourneyFixtureTest {
   }
 
   @Test
-  fun `iOS fixture scrolls natively and synchronizes before actual General visibility without models`() = runTest {
+  fun `iOS fixture resets scroll then synchronizes before actual General visibility without models`() = runTest {
     for (visible in listOf(true, false)) {
       val fake = FakeDeviceSession(platform = Platform.IOS)
       val events = mutableListOf<String>()
+      val reset = Interaction.Scroll(Direction.UP)
       val scroll = Interaction.Scroll(Direction.DOWN)
+      var scrollPosition = 0
       val session = object : DeviceSession by fake {
         override suspend fun executeActions(flow: ActionFlow) = fake.executeActions(flow).also {
-          events += if (flow.actions.contains(scroll)) "scroll" else "launch"
+          for (action in flow.actions) {
+            when (action) {
+              reset -> {
+                scrollPosition = (scrollPosition - 1).coerceAtLeast(0)
+                events += "reset-scroll"
+              }
+
+              scroll -> {
+                scrollPosition++
+                events += "scroll"
+              }
+
+              else -> events += "launch"
+            }
+          }
         }
         override suspend fun waitForAnimationToEnd() {
           events += "animation-wait"
         }
         override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
           events += "capture"
-          return HierarchyNode(attributes = if (visible) mapOf("text" to "General") else emptyMap()).containsText(text, ignoreCase)
+          return HierarchyNode(attributes = if (visible && scrollPosition == 1) mapOf("text" to "General") else emptyMap()).containsText(text, ignoreCase)
         }
       }
-      val result = Orchestrator(
+      val orchestrator = Orchestrator(
         session = session,
         navigatorFactory = { NavigatorAgent("unused") { _, _ -> error("iOS fixture must not use navigator") } },
         inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("iOS fixture must not use inspector") }, evaluateVisualContent = { _, _, _, _ -> error("iOS fixture must not use visual model") }) },
-      ).run(JourneyLoader.fromYaml(packagedJourney(Platform.IOS)))
-      assertThat(result.passed).isEqualTo(visible)
-      assertThat(events).isEqualTo(listOf("launch", "scroll", "animation-wait", "capture"))
-      assertThat(fake.executedActionFlows.flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp(), scroll))
-      assertThat(result.segments.single().actions).isEqualTo(listOf("Scroll down"))
-      assertThat(result.segments.single().assertionDescription).isEqualTo("General")
+      )
+      repeat(2) {
+        events.clear()
+        val priorFlows = fake.executedActionFlows.size
+        val result = orchestrator.run(JourneyLoader.fromYaml(packagedJourney(Platform.IOS)))
+        assertThat(result.passed).isEqualTo(visible)
+        assertThat(events).isEqualTo(listOf("launch", "reset-scroll", "animation-wait", "scroll", "animation-wait", "capture"))
+        assertThat(fake.executedActionFlows.drop(priorFlows).flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp(), reset, scroll))
+        assertThat(result.segments.single().actions).isEqualTo(listOf("Scroll up", "Scroll down"))
+        assertThat(result.segments.single().assertionDescription).isEqualTo("General")
+      }
     }
   }
 

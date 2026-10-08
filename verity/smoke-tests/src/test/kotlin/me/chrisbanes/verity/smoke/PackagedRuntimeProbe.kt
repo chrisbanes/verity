@@ -80,10 +80,13 @@ object PackagedRuntimeProbe {
     try {
       check(session.platform == platform) { "Factory changed requested platform mapping" }
       println("PACKAGED_FACTORY_CONNECTED platform=$platform")
-      withTimeout(120.seconds) {
+      withTimeout(300.seconds) {
         fun nonempty(tree: HierarchyNode): Boolean = tree.attributes.isNotEmpty() || tree.states.isNotEmpty() || tree.children.any(::nonempty)
         check(nonempty(probeStage(platform, "noarg-first") { session.captureHierarchyTree() }))
-        check(nonempty(probeStage(platform, "bounded-first") { session.captureHierarchyTree(2000.milliseconds) }))
+        // Cold software-emulated Android captures can take tens of seconds.
+        // This stage proves successful bounded capture; explicit cancellation below
+        // and deterministic device tests retain the short-deadline coverage.
+        check(nonempty(probeStage(platform, "bounded-first") { session.captureHierarchyTree(60.seconds) }))
         probeStage(platform, "key") { session.pressKey(if (platform == Platform.IOS) "return" else "BACK") }
         check(nonempty(probeStage(platform, "noarg-after-key") { session.captureHierarchyTree() }))
         val bodyFailure = CompletableDeferred<Throwable?>()
