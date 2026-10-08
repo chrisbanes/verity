@@ -44,28 +44,24 @@ The three CLI fat JAR tasks merge service descriptors, Kotlin module metadata an
 
 CI and release workflows map the Actions secrets `GRADLE_REMOTE_CACHE_URL`, `GRADLE_REMOTE_CACHE_USERNAME`, and `GRADLE_REMOTE_CACHE_PASSWORD` to those properties. Same-repository pull requests and tagged releases read from the remote cache with `remoteBuildCachePush=false`; only pushes to `main` enable Gradle cache uploads. Fork pull requests do not receive Actions secrets and fall back to the local cache. When the remote cache is configured, CI excludes the disabled local build cache from the Actions cache. The workflows work before the secrets are added.
 
-CI builds and verifies packaged inputs before native tests. Linux uses an API 34
-AOSP x86-64 Android emulator. The sequential macOS ARM64 job uses an API 30 AOSP
-ARM64 emulator with one core and software emulation, followed by a fresh job-owned
-iPhone 17 / iOS 27 simulator. The macOS pre-native build uses `--no-daemon`;
-`packagedAndroidTest --rerun` forces the selected test task without globally
-rerunning its prebuilt dependencies. `packagedIosTest` and the ordinary tagged
-smoke tests are also explicitly forced to execute. Native tests are excluded
-from the default offline `check`.
+CI builds and verifies packaged inputs before native tests. The independent
+`smoke-android` job uses an API 34 AOSP x86-64 emulator on Linux through
+`reactivecircus/android-emulator-runner`. The `smoke-ios` job uses `macos-latest`
+and `futureware-tech/simulator-action` to select an available iOS simulator,
+erase it, wait for boot and shut it down after the job. No simulator model or
+runtime version is pinned. The macOS pre-native build uses `--no-daemon`.
 
-The Android prelaunch hook binds a fresh AVD namespace and configured SDK
-emulator identity. Early process ownership, any postboot intent/revalidation,
-exact process start and listener ports are checked separately from device
-qualification. Before iOS setup, the handoff guard requires the original owned
-emulator to have exited, all recorded listener ports to be closed, and the
-bootstrap observer to have stopped and joined. Missing, stale, cancelled or
-unknown ownership refuses iOS. An Android test failure still fails the job even
-when safe handoff allows iOS tests to run.
+`scripts/ci_target_receipt.py` validates the action-managed device and binds its
+serial or UUID to the CI job, commit and attempt. Gradle commands run directly
+in the workflow. Packaged and ordinary tagged smoke tests are explicitly forced
+to execute; native tests are excluded from the default offline `check`.
 
-The job creates and records an exact simulator UUID rather than reusing a user's
-booted simulator. Setup failure rolls back that UUID; the always-run cleanup
-shuts down and deletes it. Diagnostic timeouts remain unknown observations and
-do not replace native test outcomes.
+Linux Android tests exercise the Linux and universal JARs; macOS iOS tests
+exercise the macOS and universal JARs. Normal CI does not test macOS-specific
+Android interoperability. There is no shared Android-to-iOS runner or handoff,
+and no bootstrap observer or supplementary health diagnostics. The packaged
+harness retains its own process cleanup, caller cancellation and qualification
+receipts.
 
 `:verity:cli:hostJars` builds universal, macOS ARM64 and Linux x86-64 archives.
 `verifyHostJars` checks their resource inventories and packaged ABI;

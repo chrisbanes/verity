@@ -22,7 +22,7 @@ is loaded with a platform parent, without Gradle application dependencies.
 exercise the matching-host and universal production JARs for CLI and both MCP
 transports, and each JAR plus a test-only probe for direct production factory
 operations. Default offline checks do not establish native interoperability.
-Job-owned device setup and capture budgets are separate; offline validation
+Action-managed device setup and capture budgets are separate; offline validation
 requires no model calls or local device experiments.
 
 The stdio command sends startup diagnostics and actual backend ERROR logging to
@@ -161,7 +161,17 @@ Historical observations use different inputs and are not subtraction baselines:
 189,776,800 bytes at `430c8a6`, 177,683,241 at `5a09cfd`, and the then-broken
 189,877,337-byte universal at `7f58ae4`.
 
-## Actual qualification and limits
+## Current CI coverage
+
+The `smoke-android` job tests Linux and universal JARs against an action-managed
+API 34 Android emulator. The independent `smoke-ios` job tests macOS and universal
+JARs against an available, erased iOS simulator on `macos-latest`. The actions
+handle boot and shutdown; a target receipt binds each selected device to the job,
+commit and attempt. No macOS Android job runs in normal CI, so macOS-specific
+Android interoperability is outside that CI coverage. The supported host matrix
+is unchanged. The packaged harness still owns and joins its child processes.
+
+## Historical qualification and limits
 
 [CI run 37408570148, attempt 1](https://github.com/chrisbanes/verity/actions/runs/37408570148)
 passed the build, Linux and macOS checks for the measured runtime. Linux ran two
