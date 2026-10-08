@@ -51,10 +51,7 @@ jobs:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Verify Linux packaged inputs
-        run: |
-          uname -s
-          uname -m
-          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+        run: ./gradlew :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Enable KVM
         run: |
@@ -69,9 +66,11 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: |
-            ./gradlew :verity:smoke-tests:packagedAndroidTest -PpackagedVariant=linux-x86_64,universal --rerun-tasks --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
-            ./gradlew :verity:smoke-tests:test -Pinclude.tags=android --rerun-tasks --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          script: >-
+            ./gradlew :verity:smoke-tests:packagedAndroidTest --rerun
+            :verity:smoke-tests:test --rerun
+            -PpackagedVariant=linux-x86_64,universal -Pinclude.tags=android
+            --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain Android smoke results
         if: always()
@@ -103,10 +102,7 @@ jobs:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Verify macOS packaged inputs
-        run: |
-          uname -s
-          uname -m
-          ./gradlew :verity:cli:hostJars :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-daemon --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+        run: ./gradlew :verity:cli:verifyHostJars :verity:smoke-tests:packagedProbeJar --no-daemon --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Install AppleSimulatorUtils
         run: |
@@ -128,9 +124,11 @@ jobs:
         env:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
           IOS_SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
-        run: |
-          ./gradlew :verity:smoke-tests:packagedIosTest -PpackagedVariant=macos-aarch64,universal --rerun-tasks --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
-          ./gradlew :verity:smoke-tests:test -Pinclude.tags=ios --rerun-tasks --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+        run: >-
+          ./gradlew :verity:smoke-tests:packagedIosTest --rerun
+          :verity:smoke-tests:test --rerun
+          -PpackagedVariant=macos-aarch64,universal -Pinclude.tags=ios
+          --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain iOS smoke results
         if: always()
