@@ -66,11 +66,9 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: >-
-            ./gradlew :verity:smoke-tests:packagedAndroidTest --rerun
-            :verity:smoke-tests:test --rerun
-            -PpackagedVariant=linux-x86_64,universal -Pinclude.tags=android
-            --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          script: |
+            ./gradlew :verity:smoke-tests:packagedAndroidTest --rerun -PpackagedVariant=linux-x86_64,universal --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+            ./gradlew :verity:smoke-tests:test --rerun -Pinclude.tags=android --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain Android smoke results
         if: always()
@@ -124,11 +122,9 @@ jobs:
         env:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
           IOS_SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
-        run: >-
-          ./gradlew :verity:smoke-tests:packagedIosTest --rerun
-          :verity:smoke-tests:test --rerun
-          -PpackagedVariant=macos-aarch64,universal -Pinclude.tags=ios
-          --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+        run: |
+          ./gradlew :verity:smoke-tests:packagedIosTest --rerun -PpackagedVariant=macos-aarch64,universal --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          ./gradlew :verity:smoke-tests:test --rerun -Pinclude.tags=ios --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain iOS smoke results
         if: always()
