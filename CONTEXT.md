@@ -57,6 +57,14 @@ _Avoid_: Run, successful test
 A sequence of device automation commands for launching an application or carrying out journey actions.
 _Avoid_: Journey, suite
 
+**Journey memory**:
+Bounded record of earlier verdicts, the execution trail and earlier screenshots from the current journey, given to inspections as reference rather than proof. It never carries over to another journey.
+_Avoid_: History, project context
+
+**Execution trail**:
+The ordered record of what a journey executed, one entry per interaction or flow, with the focus observed before and after each.
+_Avoid_: Generated flow, evidence
+
 **Project context**:
 Application-specific guidance supplied to help interpret journey instructions.
 _Avoid_: Domain glossary, project configuration

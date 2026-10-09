@@ -52,7 +52,7 @@ Inspector replies require a strict JSON object with a genuine boolean `passed` a
 
 Loop segments include optional structured `loop` metadata: `condition`, completed `iterations`, `tier` (`literal`, `focus`, `tree` or `visual`) and final condition `reasoning`. Segment reasoning may also describe iteration or execution context. Tree and visual tiers retain the final evaluated hierarchy or screenshot reference when optional persistence succeeds. Failure to persist an optional screenshot uses a temporary current capture; it never permits visual evaluation without a captured image.
 
-`ConditionEvaluator.evaluate` performs one action-free check. It does not poll, delay or accumulate history, so a caller can own an overall deadline. An optional per-call `InspectionContext` carries reference text and earlier screenshot paths, empty by default. References are labelled separately from current state and are not proof of the current condition. Normal runs attach no earlier context; producing and bounding journey memory remains future work under [issue #90](https://github.com/chrisbanes/verity/issues/90).
+`ConditionEvaluator.evaluate` performs one action-free check. It does not poll, delay or accumulate history, so a caller can own an overall deadline. An optional per-call `InspectionContext` carries reference text and earlier screenshot paths, empty by default. References are labelled separately from current state and are not proof of the current condition. The CLI fills it with bounded earlier verdicts, the execution trail (including earlier iterations of the current loop) and, for `visually` conditions, earlier screenshots; see [journey memory](journey-memory.md).
 
 ## Entry points and ownership
 

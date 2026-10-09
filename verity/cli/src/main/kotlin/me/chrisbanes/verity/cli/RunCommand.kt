@@ -670,6 +670,7 @@ class RunCommand(
         wait = segment.wait,
       )
     },
+    trail = result.trail,
   )
 
   private fun ResolvedJourney.toFailureArtifactResult(

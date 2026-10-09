@@ -77,7 +77,61 @@ data class JourneyArtifactResult(
   val failedAt: Int? = null,
   val segments: List<SegmentArtifactResult> = emptyList(),
   val error: ArtifactError? = null,
+  val trail: JourneyTrailArtifact? = null,
 )
+
+/** Retained execution trail of one journey: the most recent entries, with the caps that bounded it. */
+@Serializable
+data class JourneyTrailArtifact(
+  val entries: List<TrailEntryArtifact> = emptyList(),
+  val droppedEntries: Int = 0,
+  val maxEntries: Int,
+  val maxTextChars: Int,
+  val maxFocusedNodes: Int,
+  val maxInstructions: Int,
+)
+
+/** [focusBefore] and [focusAfter]: omitted means unknown, an empty list means no focused node was observed. */
+@Serializable
+data class TrailEntryArtifact(
+  val segment: Int,
+  val granularity: TrailGranularity,
+  val origin: TrailOrigin,
+  val iteration: Int? = null,
+  val instructions: List<String> = emptyList(),
+  val omittedInstructions: Int = 0,
+  val succeeded: Boolean,
+  val focusBefore: List<FocusNodeArtifact>? = null,
+  val focusAfter: List<FocusNodeArtifact>? = null,
+  val truncated: Boolean = false,
+)
+
+@Serializable
+data class FocusNodeArtifact(
+  val path: String,
+  val resourceId: String? = null,
+)
+
+@Serializable
+enum class TrailGranularity {
+  @SerialName("interaction")
+  INTERACTION,
+
+  @SerialName("flow")
+  FLOW,
+}
+
+@Serializable
+enum class TrailOrigin {
+  @SerialName("actions")
+  ACTIONS,
+
+  @SerialName("loop")
+  LOOP,
+
+  @SerialName("scroll-to-find")
+  SCROLL_TO_FIND,
+}
 
 @Serializable
 data class SuiteJourneyArtifact(

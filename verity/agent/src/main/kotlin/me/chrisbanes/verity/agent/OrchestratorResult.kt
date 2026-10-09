@@ -4,6 +4,7 @@ import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
+import me.chrisbanes.verity.core.result.JourneyTrailArtifact
 import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.WaitArtifact
@@ -26,6 +27,7 @@ data class SegmentResult(
 data class JourneyResult(
   val journeyName: String,
   val segments: List<SegmentResult>,
+  val trail: JourneyTrailArtifact? = null,
 ) {
   val passed: Boolean get() = segments.all { it.passed }
   val failedAt: Int? get() = segments.firstOrNull { !it.passed }?.index
