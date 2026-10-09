@@ -285,6 +285,9 @@ class CodexModelBackendTest {
         backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low", SelectedRoleModel.Codex("gpt-6-luna") to "low"))
         assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
       }
+      fixture("model-late-foreign-thread-started") { _, backend ->
+        assertThat(assertFailsWith<CodexFailure> { backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low")) }.kind).isEqualTo(CodexFailureKind.CLEANUP)
+      }
       val warned = FakeCodexLauncher("config-warning")
       warned.prepare().close()
       warned.verifyCleanup()
@@ -325,7 +328,7 @@ class CodexModelBackendTest {
     withContext(Dispatchers.Default) {
       listOf("model-bound-foreign-settings", "model-bound-foreign-warning", "model-bound-null-warning", "model-bound-absent-warning", "model-bound-foreign-raw-completed", "model-bound-raw-completed-foreign-turn", "model-bound-raw-completed-missing-turn", "model-bound-raw-completed-before-turn", "model-bound-mcp-status").forEach { scenario ->
         fixture(scenario) { fake, backend ->
-          assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) }
+          assertThat(assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) }.kind, "scenario=$scenario").isEqualTo(CodexFailureKind.PROTOCOL)
           // Before the turn ID is known there is no owned turn to interrupt; the exact process is closed instead.
           val owned = scenario != "model-bound-raw-completed-before-turn"
           assertThat(fake.capturedFrames().count { it["method"] == JsonPrimitive("turn/interrupt") }, "scenario=$scenario").isEqualTo(if (owned) 1 else 0)

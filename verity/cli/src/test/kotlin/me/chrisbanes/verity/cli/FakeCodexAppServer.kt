@@ -153,9 +153,9 @@ internal object FakeCodexAppServer {
     )
     val enabledLayers = layers.filter { it["disabledReason"] == null }
     val origins = mutableMapOf<String, JsonElement>()
+    // Like Codex's record_origins: leaf paths are inserted or overwritten, never pruned.
     enabledLayers.asReversed().forEach { entry ->
       leaves(entry.getValue("config").jsonObject).forEach { path ->
-        origins.keys.removeAll { it.startsWith("$path.") || path.startsWith("$it.") }
         origins[path] = buildJsonObject {
           put("name", entry.getValue("name"))
           put("version", entry.getValue("version"))
@@ -338,7 +338,11 @@ internal object FakeCodexAppServer {
               },
             )
           }
-          lateThreadStarted = if (scenario == "model-late-thread-started") thread else null
+          lateThreadStarted = when (scenario) {
+            "model-late-thread-started" -> thread
+            "model-late-foreign-thread-started" -> JsonObject(thread + ("id" to JsonPrimitive("foreign-thread")))
+            else -> null
+          }
           if (lateThreadStarted == null) {
             event("thread/started", buildJsonObject { put("thread", thread) })
             // Real Codex reports thread settings during thread and turn start.
