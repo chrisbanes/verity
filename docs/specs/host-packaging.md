@@ -85,6 +85,129 @@ sidecars, duplicates, unknown binaries and corrupt or incomplete iOS bundles.
 It never loads native libraries. The verifier also applies negative mutations
 to snapshots of the actual three archives.
 
+## Shrunk archives
+
+`shrunkJars` builds R8-shrunk counterparts of the three archives in
+`verity/cli/build/libs/shrunk/`, with the same release filenames. The unshrunk
+`shadowJar`, `macosArm64Jar` and `linuxX64Jar` tasks, names and outputs are
+unchanged. They remain the comparison baseline and the recovery path, and
+releases still publish them.
+
+`universalShrunkJar` is a ShadowJar with the shared archive settings and
+`minimize { r8 { } }`. R8 `com.android.tools:r8:9.1.31` comes from Google Maven,
+restricted to the `com.android.tools` group. R8 runs once, on the universal
+archive. `macosArm64ShrunkJar` and `linuxX64ShrunkJar` are `Zip` tasks that apply
+`HostPackaging.retain` to that output, with the host archives' ordering,
+timestamp and ZIP64 settings. Host filtering selects resources only, so this
+gives the same classes as shrinking each host archive separately.
+
+Shrinking removes code only. Shadow passes `--no-minification` and generates
+`-dontoptimize`, so retained classes keep their names and bytecode is not
+optimized. Shadow keeps every `META-INF/services` provider and applies consumer
+rules published in dependency JARs. Verity's own `me.chrisbanes.verity.**`
+classes are kept whole by a rule in `verity/cli/r8-rules.pro`.
+`minimize { exclude(project(...)) }` is not used: Shadow also excludes every
+transitive dependency of an excluded project, which kept 61,303 of 65,140
+classes.
+
+`r8-rules.pro` contains only targeted rules. Each `-keep` and `-dontwarn` block
+has a comment naming the runtime path or diagnostic it addresses. The file
+forbids `-ignorewarnings`, bare `-dontwarn *`/`**`, `-dontshrink` and a pinned
+global keep. The current rules cover:
+
+- reflection attributes and Kotlin metadata for every retained class;
+- reflective enum `values()`/`valueOf`;
+- Log4j plugins, their builder fields, visitors and validators;
+- Truffle's by-name accessors, generated libraries and DSL state fields;
+- missing-class diagnostics for optional integrations. Every class named by a
+  `-dontwarn` is also absent from the unshrunk archive.
+
+`verifyShrunkJars` runs in `check` and writes
+`verity/cli/build/reports/shrunk-packaging.tsv`. For each host it compares the
+shrunk archive with its unshrunk counterpart:
+
+- Every resource has the same name, hash and nested iOS inventory. R8 rewrites
+  two families itself. Service descriptors are re-serialized, so their provider
+  lists must match exactly. `.kotlin_module` files are regenerated from the
+  retained file facades; their names must map to unshrunk module files.
+- Shrunk class names are a subset of the unshrunk names. The only exception is
+  an R8 synthetic `Owner$N` helper, marked by its `R8$$SyntheticClass` source
+  and owned by a retained class. One is currently emitted, for a cast in dead
+  Koog tool-result code.
+- The `Main-Class` and every Verity class are present, the class sets of the
+  three shrunk archives are identical, and Maestro's gRPC descriptors resolve
+  under a platform-only class loader.
+
+It also lints the rules, requires `-dontoptimize` in the effective R8
+configuration (`build/reports/r8/configuration.txt`) and rejects 11 mutations of
+the real archive snapshots.
+
+Offline `check` runs the packaged probes against both universal archives.
+Shrunk output must match unshrunk output:
+
+- `McpCommandTest` covers stdio frames, HTTP startup and logging thresholds for
+  all six archives.
+- `PackagedCliPlatformOptionTest` runs `--help`, `list` and a fast-path
+  `run --dry-run`.
+- `PackagedDynamicEntryTest` checks the gRPC ABI chain and the loadability of
+  every service provider and Log4j plugin. It evaluates Graal JS through
+  Maestro's engine. It creates all nine production provider clients and sends
+  text and, where supported, image prompts through settings-redirected clients to
+  a local server.
+
+Probe and fixture code runs beside the shrunk archive, so it may only use
+members that production reaches. Smoke-test Kotlin is compiled without null-check
+intrinsics, because R8 rewrites production's intrinsic calls and drops the unused
+methods. Rules are never added only to make test code link.
+
+CI runs the `-shrunk` variants of `packagedAndroidTest` and `packagedIosTest`
+beside the unshrunk variants. Each shrunk variant is accepted on its unshrunk
+counterpart's host.
+
+Shrinking becomes the release default only after these offline and device
+checks, and a granted live ChatGPT journey through the shrunk macOS archive, all
+pass on the same archive bytes. Until then, `packageRelease` publishes the
+unshrunk archives.
+
+### Shrunk measurements
+
+Measured at
+[`dcbe48fc7f1220120ee1067526d092aca486ec47`](https://github.com/chrisbanes/verity/tree/dcbe48fc7f1220120ee1067526d092aca486ec47)
+on macOS 26.7 arm64, with the JDK 21.0.12.1 toolchain and launcher, Gradle
+9.8.1, Shadow 9.6.1 and R8 9.1.31. The SHA256 of the `artifact` lines of
+`host-packaging.tsv` is
+`cefd12b508c01937c11734b7f31751dd17f4d4a971554467aaa783211d537239`. Sizes come
+from the `archive` rows of `shrunk-packaging.tsv`. Three rebuilds produced
+identical bytes.
+
+| Archive pair | Unshrunk bytes | Shrunk bytes | Saved | Shrunk SHA256 |
+| --- | ---: | ---: | ---: | --- |
+| Universal | 190,285,922 | 126,819,182 | 63,466,740 (33.4%) | `2322a9f260c6929b488ef0b5ea265af30fc1ff59bd3a1d64134be302fb18bc1f` |
+| macOS ARM64 | 170,222,247 | 106,921,943 | 63,300,304 (37.2%) | `0a3d6a70c0ce2786eb7c07daebd159fe0c39cff701738d068a54dcb2c49ee746` |
+| Linux x86-64 | 152,539,519 | 89,239,465 | 63,300,054 (41.5%) | `6b1a098d315547794b385fc4107554969b23c18e1d3a12b8afdeb945494c23df` |
+
+Classes fall from 65,140 to 32,900 in every archive, and compressed class bytes
+from 100,771,962 to 44,693,162. Compressed resource bytes fall by 21,234 only,
+from the regenerated Kotlin module files and re-serialized service descriptors.
+The remaining compressed resource costs are:
+
+| Resource family | Universal | macOS ARM64 | Linux x86-64 |
+| --- | ---: | ---: | ---: |
+| Android APKs | 12,270,189 | 12,270,189 | 12,270,189 |
+| iOS driver groups | 16,697,725 | 16,697,725 | 0 |
+| Native payloads | 27,587,560 | 7,539,561 | 6,556,292 |
+| Other resources | 16,418,510 | 16,418,510 | 16,418,510 |
+
+Savings compare each host archive with its own shrunk counterpart. The host
+filter's savings are separate and are described in the measurements below.
+
+Build time is the median of three `--rerun --profile` runs of
+`:verity:cli:shadowJar :verity:cli:universalShrunkJar` (`build/reports/profile/`).
+`shadowJar` took 15.5 s (13.3–17.9 s). `universalShrunkJar`, which assembles its
+own archive and then runs R8, took 89.4 s (84.1–96.7 s). R8 runs in a separate
+JVM. Shadow then rewrites its output in the Gradle daemon and buffers every
+entry, so `gradle.properties` sets the daemon heap to 2 GiB, matching CI.
+
 ## Release assets and installation
 
 For version `V`, `packageRelease` produces exactly four publication assets:
@@ -163,9 +286,10 @@ Historical observations use different inputs and are not subtraction baselines:
 
 ## Current CI coverage
 
-The `smoke-android` job tests Linux and universal JARs against an action-managed
-API 34 Android emulator. The independent `smoke-ios` job tests macOS and universal
-JARs against an available, erased iOS simulator on `macos-latest`. The actions
+The `smoke-android` job tests the Linux and universal JARs and their shrunk
+counterparts against an action-managed API 34 Android emulator. The independent
+`smoke-ios` job tests the macOS and universal JARs and their shrunk counterparts
+against an available, erased iOS simulator on `macos-latest`. The actions
 handle boot and shutdown, and their selected device IDs are passed directly to
 Gradle. No macOS Android job runs in normal CI, so macOS-specific
 Android interoperability is outside that CI coverage. The supported host matrix

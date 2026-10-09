@@ -42,6 +42,8 @@ The optional HTTP remote build cache follows Haze's setup. Set all three Gradle 
 
 The three CLI fat JAR tasks merge service descriptors, Kotlin module metadata and Log4j plugin caches, and fail if duplicate ZIP entries remain. They share reproducible entry ordering, omitted entry timestamps and ZIP64 settings. All three archive tasks are excluded from build caching because the artifacts exceed the remote cache upload limit; compilation and test tasks remain cacheable. Unchanged local archive outputs can still be up to date.
 
+`shrunkJars` builds R8-shrunk counterparts of the three archives in `verity/cli/build/libs/shrunk/` under the same filenames. `universalShrunkJar` runs Shadow's R8 minimizer once, with names preserved, optimization disabled and the targeted rules in `verity/cli/r8-rules.pro`. `macosArm64ShrunkJar` and `linuxX64ShrunkJar` apply the host resource filter to its output. `verifyShrunkJars`, part of `check`, compares each shrunk archive with its unshrunk counterpart and writes `build/reports/shrunk-packaging.tsv`. Offline packaged tests and the CI device jobs exercise both forms. The unshrunk tasks are unchanged; they remain the comparison baseline and the recovery path, and `packageRelease` still publishes them. Releases switch to the shrunk archives only after the offline, device and live-journey validation in the [host packaging spec](specs/host-packaging.md#shrunk-archives) passes on the same archive bytes. The Gradle daemon heap is 2 GiB because Shadow buffers the R8 output in the daemon.
+
 CI and release workflows map the Actions secrets `GRADLE_REMOTE_CACHE_URL`, `GRADLE_REMOTE_CACHE_USERNAME`, and `GRADLE_REMOTE_CACHE_PASSWORD` to those properties. Same-repository pull requests and tagged releases read from the remote cache with `remoteBuildCachePush=false`; only pushes to `main` enable Gradle cache uploads. Fork pull requests do not receive Actions secrets and fall back to the local cache. When the remote cache is configured, CI excludes the disabled local build cache from the Actions cache. The workflows work before the secrets are added.
 
 CI builds and verifies packaged inputs before native tests. The independent
@@ -56,8 +58,9 @@ action's `ANDROID_SERIAL`; iOS tests receive the simulator action's UUID through
 `IOS_SIMULATOR_UDID`. Packaged and ordinary tagged smoke tests are explicitly
 forced to execute; native tests are excluded from the default offline `check`.
 
-Linux Android tests exercise the Linux and universal JARs; macOS iOS tests
-exercise the macOS and universal JARs. Normal CI does not test macOS-specific
+Linux Android tests exercise the Linux and universal JARs and their shrunk
+counterparts; macOS iOS tests exercise the macOS and universal JARs and their
+shrunk counterparts. Normal CI does not test macOS-specific
 Android interoperability. There is no shared Android-to-iOS runner or handoff,
 and no bootstrap observer or supplementary health diagnostics. The packaged
 harness retains its own process cleanup, caller cancellation and functional test
@@ -99,6 +102,7 @@ To opt out locally, pass `--no-build-cache`, `--no-isolated-projects`, or `--no-
 | MCP server | MCP Kotlin SDK | Tool registration, stdio/HTTP transport |
 | HTTP server | Ktor (Netty) | HTTP transport for MCP |
 | gRPC | grpc-netty-shaded | Bundled Netty to avoid version conflicts with Ktor |
+| Packaging | Shadow, R8 9.1.31 | Fat JARs; code-only shrinking for the shrunk CLI archives |
 
 ### Netty Conflict Resolution
 
