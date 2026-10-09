@@ -524,7 +524,7 @@ internal class CodexModelBackend private constructor(
   }
 
   companion object {
-    /** API keys, plus environment overrides that redirect ChatGPT credential or request origins outside config/read. */
+    /** API keys and origin overrides invisible to config/read: token refresh/revoke URLs carry credentials; the rest only reach disabled features (defence in depth). */
     internal val removedEnvironment = setOf("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "CODEX_APP_SERVER_CHATGPT_BASE_URL", "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE")
 
     suspend fun prepare(
