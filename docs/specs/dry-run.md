@@ -54,3 +54,9 @@ Caller cancellation and shorter enclosing timeouts propagate without a completed
 - [DryRunPlanner](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/DryRunPlanner.kt) and [DryRunPlannerTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/DryRunPlannerTest.kt): mapped actions, lazy generation, loops, and assertions.
 - [DryRunRenderer](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/DryRunRenderer.kt) and [DryRunArtifactWriter](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/DryRunArtifactWriter.kt): Markdown and file naming.
 - [RunCommandTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/RunCommandTest.kt): preview branching, sorted discovery, parsing, deferred provider/model checks, model/setup exit codes, report-write precedence and cancellation.
+
+## ChatGPT backend ownership
+
+A fully mapped preview launches no Codex process, makes no model or device call, and succeeds even with unusable auth/model settings. At the first unmapped group, ChatGPT preview acquires and validates only the navigator backend; unused inspector model and effort settings do not affect it. Later generated groups reuse that backend with a new ephemeral thread per request. The preview owner closes it after planning and Markdown writing, including request failure, write failure and caller cancellation.
+
+Startup/auth faults exit `3`; request rejection, invalid/empty output and model-owned timeouts exit `5`. Planning completes before Markdown is written, so a request failure produces no partial successful report. Caller cancellation propagates unchanged without a completed report. Required Markdown-write failure retains exit-`3` precedence. Cleanup failure on an otherwise successful path is a safe setup failure; with an existing failure or cancellation the primary outcome retains ownership and a fixed cleanup diagnostic is attached.

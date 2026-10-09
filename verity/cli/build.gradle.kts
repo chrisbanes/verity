@@ -114,12 +114,35 @@ val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc"
 
 // Keep module regressions and separately exercise actual archives with fixture output only.
 tasks.test {
-  systemProperty("verity.cli.test.classpath", sourceSets.test.get().runtimeClasspath.asPath)
+  (options as JUnitPlatformOptions).excludeTags("qualification-codex")
+  val testRuntimeClasspath = sourceSets.test.get().runtimeClasspath
+  // Resolve at execution: resolving while tasks are realized lets another Test task mutate a resolved classpath.
+  jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dverity.cli.test.classpath=${testRuntimeClasspath.asPath}") })
   dependsOn(hostJars)
   val archives = files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
   inputs.files(archives).withPropertyName("packagedLoggingArchives")
   systemProperty("verity.cli.packaged.jars", archives.asPath)
   systemProperty("verity.cli.fixture.classes", sourceSets.test.get().output.classesDirs.asPath)
+}
+
+// Opt-in real Codex qualification; makes real model requests, so it is never part of check.
+tasks.register<Test>("codexQualification") {
+  testClassesDirs = sourceSets.test.get().output.classesDirs
+  classpath = sourceSets.test.get().runtimeClasspath
+  // The convention plugin selects JUnit Platform.
+  (options as JUnitPlatformOptions).includeTags("qualification-codex")
+  val properties = mapOf(
+    "binary" to providers.gradleProperty("codexQualificationBinary"),
+    "version" to providers.gradleProperty("codexQualificationVersion"),
+    "priorRequests" to providers.gradleProperty("codexQualificationPriorRequests"),
+  )
+  properties.forEach { (name, value) ->
+    inputs.property(name, value.orElse(""))
+    systemProperty("verity.codex.qualification.$name", value.getOrElse(""))
+  }
+  systemProperty("verity.codex.qualification.reports", layout.buildDirectory.dir("reports/codex-qualification").get().asFile.absolutePath)
+  systemProperty("java.awt.headless", "true")
+  outputs.upToDateWhen { false }
 }
 
 val verifyHostJars = tasks.register<VerifyHostJars>("verifyHostJars") {

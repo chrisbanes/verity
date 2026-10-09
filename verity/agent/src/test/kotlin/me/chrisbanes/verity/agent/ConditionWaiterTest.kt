@@ -2,6 +2,7 @@ package me.chrisbanes.verity.agent
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isSameInstanceAs
 import java.io.IOException
 import java.nio.file.Path
 import kotlin.coroutines.cancellation.CancellationException
@@ -28,6 +29,35 @@ import me.chrisbanes.verity.device.DeviceSession
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ConditionWaiterTest {
+  @Test fun `typed cleanup stops observed tree and visual waits before result admission or another poll`() = runTest {
+    for (visual in listOf(false, true)) {
+      val failure = ModelBackendFailure(ModelBackendFailureKind.CLEANUP)
+      var requests = 0
+      var deleted = false
+      val inspector = InspectorAgent(
+        { _, _, _ ->
+          requests++
+          throw failure
+        },
+        { _, _, _, _ ->
+          requests++
+          throw failure
+        },
+      )
+      val evaluator = ConditionEvaluator(Session(), inspector, temporaryScreenshot = { inspect ->
+        try {
+          inspect(Path.of("owned.png"))
+        } finally {
+          deleted = true
+        }
+      }, verifyScreenshot = {})
+      val waiter = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }
+      assertThat(assertFailsWith<ModelBackendFailure> { waiter.await(if (visual) "visually ready" else "semantic condition", 3.seconds) }).isSameInstanceAs(failure)
+      assertThat(requests).isEqualTo(1)
+      assertThat(deleted).isEqualTo(visual)
+    }
+  }
+
   @Test fun `immediate tiers and visual bypass use bounded current capture`() = runTest {
     val session = Session()
     val evaluator = evaluator(session)

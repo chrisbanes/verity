@@ -92,7 +92,7 @@ To opt out locally, pass `--no-build-cache`, `--no-isolated-projects`, or `--no-
 | CLI | Clikt | Argument parsing, subcommands |
 | YAML | Kaml | Journey deserialization with custom serializers |
 | Serialization | kotlinx.serialization | JSON/YAML encoding/decoding |
-| LLM | Koog (JetBrains) | Prompt DSL, model abstraction, provider-agnostic |
+| LLM | Koog (JetBrains), Codex app-server | API backends through Koog; isolated ChatGPT backend through Codex |
 | Android device | Dadb | ADB over TCP — persistent shared connection |
 | Android automation | Maestro SDK (embedded) | gRPC driver, UI automation, hierarchy capture |
 | iOS automation | Maestro XCTest client | HTTP client to on-device XCTest server (port 22087) |
@@ -633,3 +633,32 @@ VerityMcpServer
 6. **Platform abstraction**: One `DeviceSession` interface, platform-specific implementations. Core logic (parsing, segmentation, interaction mapping) is platform-aware but SDK-free.
 
 7. **Dual mode from one core**: The same device and core layers serve both autonomous CLI execution and interactive MCP-driven workflows. Author interactively, run in CI.
+
+## OpenAI API and ChatGPT backends
+
+The CLI owns `SelectedRoleModel`: either the native API `LLModel` or an exact Codex ID, with one selected model per role. `ModelRequestBackend` adapts the existing navigator and inspector callbacks without changing typed `ActionFlow` decoding, prompts, inspector verdicts or scroll handling. API requests carry the complete preflight `LLMParams` through Koog, including endpoint-specific data. ChatGPT requests carry only exact catalog-validated optional effort. There is no provider registry or new module.
+
+ChatGPT preflight owns acquisition until success transfers one prepared backend to the run or lazy preview owner. Acquisition, requests and cleanup have separate deadlines. Ownership spans failed device connection, suite abort, report writing and caller cancellation. Normal requests and lazy preview use fresh ephemeral Codex threads; model-owned request deadlines retain the agent's stage and failure policy. The canonical `ModelBackendFailure` in agent carries only fixed kinds, without raw causes; request conversion preserves the caller's stage, observed wait failure timing and cancellation.
+
+Preparation uses a discovery-only bootstrap to read inherited MCP/plugin/app names from `config/read`, closes it, then launches the final process with each name disabled and verifies effective policy. Codex splits override keys on every `.` and ignores quotes, so each group is disabled by one inline table, such as `-c mcp_servers={ "name" = { enabled = false }, … }`. `apps` always includes `_default`, the thread config carries the same tables, and no override key is a dot-prefix of another. Verification reads `config/read` with `includeLayers` for the owned working directory. Pinned keys and names use the typed config, except `tools.update_plan.enabled` and `tools.experimental_request_user_input.enabled`, which the typed schema omits. For those two keys, the highest-precedence enabled layer that defines the key, or a non-table prefix of it, must set boolean `false`, and `origins` must name that layer. A managed layer above session flags that enables either key therefore fails `codex.isolation`. Launch and thread policy pin Codex's default ChatGPT origins (`chatgpt_base_url=https://chatgpt.com/backend-api/`, `openai_base_url=https://chatgpt.com/backend-api/codex`), and effective-policy verification fails closed with `codex.isolation` when a higher-precedence layer such as managed configuration reports another origin. Both child environments remove `OPENAI_API_KEY`, `CODEX_API_KEY`, the credential-bearing `CODEX_REFRESH_TOKEN_URL_OVERRIDE` and `CODEX_REVOKE_TOKEN_URL_OVERRIDE`, and, as defence in depth, `OPENAI_BASE_URL` and `CODEX_APP_SERVER_CHATGPT_BASE_URL`, which only affect disabled features; they use owned empty temporary working directories, and retain Codex's existing authentication/runtime-store location. Verity does not read, copy, migrate, modify or delete credential/runtime files, invoke login/logout/config writes, or redirect `CODEX_HOME`, `sqlite_home` or `CODEX_SQLITE_HOME`.
+
+Launch and thread policy disables tools, approvals, callbacks, delegation, integration capabilities and network-enabled execution. Experimental raw events are required. Every ordinary/raw tool attempt and every server request, including unknown methods and authentication-refresh callbacks, permanently invalidates the request even if a later assistant message looks valid. No execution callback is implemented.
+
+Both connections opt out of `configWarning`, `remoteControl/status/changed`, `account/updated` and `account/rateLimits/updated`. Codex pushes these without thread identity; any other notification outside an owned request fails it. Besides the turn, item, delta, token-usage and status events a request consumes, the handlers accept and ignore only these informational notifications, and only when bound to owned IDs:
+- `thread/settings/updated` and `warning` for the owned thread;
+- `rawResponse/completed` for the owned thread and turn;
+- the owned thread's `thread/started`, which real Codex can send after the `thread/start` response.
+
+`mcpServer/startupStatus/updated` still fails because it reports MCP lifecycle.
+
+Empty working directories and `project_doc_max_bytes=0` do not establish that inherited global `AGENTS.md` guidance is absent: the historical probe reported its source. Codex retains its runtime database ownership and may perform its own metadata/backfill operations. This backend is not wholly stateless. See the [version/host-bound checkpoint](https://github.com/chrisbanes/verity/issues/92#issuecomment-5955708208), [official app-server docs](https://learn.chatgpt.com/docs/app-server), and [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference). Fake-child regression tests establish owned process exit and directory removal separately from real-server evidence.
+
+Real-binary qualification is opt-in and excluded from `check`. It runs Verity's own preparation, role validation, navigator text and inspector image requests, and cleanup, making two real model requests per run:
+
+```bash
+./gradlew :verity:cli:codexQualification -PcodexQualificationBinary=<codex> -PcodexQualificationVersion=<version> -PcodexQualificationPriorRequests=<used> --rerun --no-scan
+```
+
+Its receipt (`verity/cli/build/reports/codex-qualification/`) holds versions, counts, outcomes and timings only. codex-cli 0.161.0 is runtime-qualified on macOS 26.7 arm64 (gpt-6-luna, low effort, 2026-10-09). The documented 0.159.0 minimum is source-verified against rust-v0.159.0 ([evidence](https://github.com/chrisbanes/verity/issues/92#issuecomment-6085385043)), not runtime-qualified. Other versions remain gated by the runtime schema, policy and request checks.
+
+MCP remains device-only under [ADR-0001](adr/0001-mcp-device-boundary.md). Shared `list`/MCP configuration resolution starts no Codex process. Fast-only dry-run remains lazy and device/model-free; only an unmapped group triggers navigator-only preflight.

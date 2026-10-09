@@ -16,6 +16,18 @@ class RunResultContractTest {
     explicitNulls = false
   }
 
+  @Test fun `optional auth backend identity round trips and old summaries remain valid`() {
+    val summary = SuiteArtifactSummary(formatVersion = 1, timestamp = "2026-10-08T00:00:00Z", inputPath = "journey.yaml", status = ArtifactStatus.PASSED, total = 0, passed = 0, failed = 0, openaiAuth = "chatgpt", modelBackend = "codex-app-server")
+    val encoded = json.encodeToString(summary)
+    assertThat(encoded).contains("\"openai_auth\":\"chatgpt\"")
+    assertThat(encoded).contains("\"model_backend\":\"codex-app-server\"")
+    assertThat(json.decodeFromString<SuiteArtifactSummary>(encoded)).isEqualTo(summary)
+    val old = summary.copy(openaiAuth = null, modelBackend = null)
+    val oldEncoded = json.encodeToString(old)
+    assertThat(oldEncoded).doesNotContain("openai_auth")
+    assertThat(json.decodeFromString<SuiteArtifactSummary>(oldEncoded)).isEqualTo(old)
+  }
+
   @Test fun `wait fields are additive nullable before first check and omitted for nonwait segments`() {
     val wait = SegmentArtifactResult(0, false, SegmentExecutionMode.WAIT, wait = WaitArtifact("Ready", 3, 3000, 0))
     val encoded = json.encodeToString(wait)

@@ -102,3 +102,9 @@ Core owns the serializable result schema, agent orchestration collects segment m
 - [Orchestrator](../../verity/agent/src/main/kotlin/me/chrisbanes/verity/agent/Orchestrator.kt): generated flows and assertion evidence.
 - [RunArtifacts](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/RunArtifacts.kt): naming, relative paths, and result writing.
 - [RunCommandTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/RunCommandTest.kt): JSON outcomes, exit codes, required-write failures, exception recovery, path containment, and directory collisions.
+
+## Authentication metadata
+
+Format-version-1 summaries may additionally contain `openai_auth` (`api-key` or `chatgpt`) and `model_backend` (`koog` or `codex-app-server`). Existing provider, exact model and per-role effort fields remain. These properties are optional, including on parser/setup/journey failures; older summaries remain readable without them. No API key, account identity, raw configuration or raw backend error is stored.
+
+An isolated-backend attempt rejection is a stage-preserving safe model failure: the affected journey and suite use `model_failure`, completed results remain, later journeys stop, and the CLI exits `5`. Setup/preflight failures remain exit `3`. Owned cleanup is bounded and cannot replace the caller's cancellation or an existing failure; failed cleanup on success becomes a safe setup failure.
