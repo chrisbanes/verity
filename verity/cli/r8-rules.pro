@@ -8,8 +8,10 @@
 
 # Names stay unchanged, but R8 strips attributes by default. Jackson's Kotlin module, kotlin-reflect, Kaml and
 # Graal read generic signatures, annotations (including kotlin.Metadata) and inner-class tables at runtime;
-# keep source and line attributes for readable stack traces.
--keepattributes Signature,InnerClasses,EnclosingMethod,Exceptions,*Annotation*,MethodParameters,SourceFile,LineNumberTable,Record,PermittedSubclasses,NestHost,NestMembers
+# keep source and line attributes for readable stack traces. PermittedSubclasses is deliberately dropped: R8 removes
+# unused intermediate sealed types (Koog's MessagePart$Tool) but leaves stale permitted lists, so the JVM rejects
+# retained subclasses (IncompatibleClassChangeError). Kotlin reads sealed hierarchies from kotlin.Metadata.
+-keepattributes Signature,InnerClasses,EnclosingMethod,Exceptions,*Annotation*,MethodParameters,SourceFile,LineNumberTable,Record,NestHost,NestMembers
 
 # R8 otherwise strips kotlin.Metadata from every class not pinned by a keep rule. kotlin-reflect and
 # jackson-module-kotlin (Maestro's flow models) read it at runtime.
@@ -31,12 +33,41 @@
 -keep class org.apache.logging.log4j.core.config.plugins.visitors.** { <init>(); }
 -keep class org.apache.logging.log4j.core.config.plugins.validation.validators.** { <init>(); }
 
+# R8 treats a class whose constructors are never called directly as uninstantiable and rewrites casts to it
+# into an always-throwing R8 synthetic helper. Jackson, ServiceLoader and Class.newInstance callers create
+# such classes reflectively, so keep the constructors of every retained class (classes stay removable).
+-keepclassmembers class ** {
+  <init>(...);
+}
+
 # Class.getEnumConstants(), Enum.valueOf and EnumSet call the synthetic values()/valueOf members reflectively
 # (Truffle, Jackson, Clikt choice options); R8 otherwise drops them when no direct call remains.
 -keepclassmembers enum * {
   public static **[] values();
   public static ** valueOf(java.lang.String);
 }
+
+# Maestro binds its flow YAML, XCTest driver requests/responses, view hierarchy and simctl/devicectl JSON with
+# Jackson (Kotlin module): constructors, properties and generic-only element types are reached reflectively.
+# Keep the YAML models and the iOS driver packages whole; keep every member of other retained Maestro classes.
+-keep class maestro.orchestra.yaml.** { *; }
+-keep class xcuitest.** { *; }
+-keep class hierarchy.** { *; }
+-keep class util.** { *; }
+-keep class device.** { *; }
+-keepclassmembers class maestro.**, ios.** { *; }
+
+# JNA (Mordant terminal detection) registers natives and calls back Java members such as Native.fromNative by
+# name from its dispatch library, and maps Library interfaces and Structure fields reflectively.
+-keep class com.sun.jna.** { *; }
+-keep class * extends com.sun.jna.** { *; }
+-keep interface * extends com.sun.jna.** { *; }
+
+# gRPC's shaded Netty probes Epoll reflectively; its epoll and tcnative JNI code registers natives and looks up
+# Java classes, fields and methods by name.
+-keep class io.grpc.netty.shaded.io.netty.channel.epoll.** { *; }
+-keep class io.grpc.netty.shaded.io.netty.channel.unix.** { *; }
+-keep class io.grpc.netty.shaded.io.netty.internal.tcnative.** { *; }
 
 # Missing-class diagnostics. Every class below is also absent from the unshrunk archive: these are optional
 # integrations that the referencing library probes for at runtime, or code paths Verity never reaches.
@@ -59,9 +90,10 @@
 -dontwarn com.github.luben.zstd.**
 -dontwarn org.brotli.dec.**
 -dontwarn org.tukaani.xz.**
-# OpenTelemetry SDK build-time annotations and incubator declarative-config API.
+# OpenTelemetry SDK build-time annotations and the incubator declarative-config API and SDK extension.
 -dontwarn com.google.auto.value.**
 -dontwarn io.opentelemetry.api.incubator.**
+-dontwarn io.opentelemetry.sdk.extension.incubator.**
 # Micrometer context-propagation integration, used only when that library is present.
 -dontwarn io.micrometer.context.**
 # Netty's optional native OpenSSL binding (netty-tcnative) used only when present.

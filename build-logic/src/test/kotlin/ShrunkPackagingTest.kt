@@ -75,6 +75,12 @@ class ShrunkPackagingTest {
   }
 
   @Test
+  fun `R8 throwing casts are rejected only in reflection-dependent packages`() {
+    compare(faithful + ("lib/Used.class" to "calls lib/Used$0"))
+    assertFailsWith<IllegalStateException> { compare(faithful + ("me/chrisbanes/verity/cli/VerityKt.class" to "calls lib/Used$0")) }
+  }
+
+  @Test
   fun `removed Verity or main classes are rejected`() {
     assertFailsWith<IllegalStateException> { compare(faithful - "me/chrisbanes/verity/cli/VerityKt.class") }
   }
@@ -88,14 +94,28 @@ class ShrunkPackagingTest {
 
   @Test
   fun `rules lint rejects blanket suppression and unjustified rules`() {
-    ShrunkPackaging.lint("# Optional codec.\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.luben.zstd.**\n\n# Metadata.\n-keep,allowshrinking class **\n")
+    ShrunkPackaging.lint(
+      "# Optional codec.\n-dontwarn org.tukaani.xz.**\n-dontwarn com.github.luben.zstd.**\n\n# Metadata.\n-keep,allowshrinking class **\n" +
+        "# Constructors.\n-keepclassmembers class ** {\n  <init>(...);\n}\n# Enums.\n-keepclassmembers enum * {\n  public static **[] values();\n}\n" +
+        "# Subtypes.\n-keep class * extends com.sun.jna.** { *; }\n# Annotated.\n-keep @a.Plugin class * { *; }\n" +
+        "# Annotated members.\n-keepclassmembers class * {\n  @a.** *;\n}\n",
+    )
     for (rules in listOf(
       "# reason\n-ignorewarnings\n",
       "# reason\n-dontwarn **\n",
       "# reason\n-dontwarn *\n",
+      "# reason\n-dontwarn\n",
       "# reason\n-dontshrink\n",
       "# reason\n-keep class ** { *; }\n",
       "# reason\n-keep class **\n",
+      "# reason\n-keep,includedescriptorclasses class ** { *; }\n",
+      "# reason\n-keepclassmembers class ** { *; }\n",
+      "# reason\n-keepclassmembers class ** {\n  <fields>;\n}\n",
+      "# reason\n-keepnames class **\n",
+      "# reason\n-keep class * extends java.lang.Object { *; }\n",
+      "# reason\n-keep @** class * { *; }\n",
+      "# reason\n-keep class *,** { *; }\n",
+      "# reason\n-keep class a.A, ** { *; }\n",
       "-keep class a.A\n",
       "# reason\n-keep class a.A\n\n-dontwarn b.**\n",
     )) {

@@ -111,12 +111,24 @@ transitive dependency of an excluded project, which kept 61,303 of 65,140
 classes.
 
 `r8-rules.pro` contains only targeted rules. Each `-keep` and `-dontwarn` block
-has a comment naming the runtime path or diagnostic it addresses. The file
-forbids `-ignorewarnings`, bare `-dontwarn *`/`**`, `-dontshrink` and a pinned
-global keep. The current rules cover:
+has a comment naming the runtime path or diagnostic it addresses. The lint
+forbids `-ignorewarnings`, `-dontshrink`, a bare or `*`/`**` `-dontwarn`, and
+any global rule that pins classes or keeps every member. Two global forms are
+allowed. One matches classes without pinning them, so that their Kotlin
+metadata survives. The other keeps the constructors of retained classes. The
+current rules cover:
 
-- reflection attributes and Kotlin metadata for every retained class;
+- reflection attributes and Kotlin metadata for every retained class. The
+  `PermittedSubclasses` attribute is dropped: R8 removes unused intermediate
+  sealed types but leaves stale permitted lists, which the JVM rejects;
+- constructors of every retained class. Without them, R8 treats classes created
+  only by Jackson, `ServiceLoader` or `Class.newInstance` as uninstantiable and
+  rewrites casts to them into throws;
 - reflective enum `values()`/`valueOf`;
+- Maestro's Jackson-bound flow YAML, XCTest driver and simctl/devicectl models,
+  and every member of other retained Maestro classes;
+- JNA, used by Mordant's terminal detection, and gRPC's shaded Netty epoll and
+  tcnative classes, which JNI code reaches by name;
 - Log4j plugins, their builder fields, visitors and validators;
 - Truffle's by-name accessors, generated libraries and DSL state fields;
 - missing-class diagnostics for optional integrations. Every class named by a
@@ -132,8 +144,10 @@ shrunk archive with its unshrunk counterpart:
   retained file facades; their names must map to unshrunk module files.
 - Shrunk class names are a subset of the unshrunk names. The only exception is
   an R8 synthetic `Owner$N` helper, marked by its `R8$$SyntheticClass` source
-  and owned by a retained class. One is currently emitted, for a cast in dead
-  Koog tool-result code.
+  and owned by a retained class. R8 currently emits one. It throws for a
+  non-null value cast to a type that has no retained subtype; because every
+  retained class keeps its constructors, such a value cannot exist. The receipt
+  records how many classes call each helper (91 at present).
 - The `Main-Class` and every Verity class are present, the class sets of the
   three shrunk archives are identical, and Maestro's gRPC descriptors resolve
   under a platform-only class loader.
@@ -151,9 +165,10 @@ Shrunk output must match unshrunk output:
   `run --dry-run`.
 - `PackagedDynamicEntryTest` checks the gRPC ABI chain and the loadability of
   every service provider and Log4j plugin. It evaluates Graal JS through
-  Maestro's engine. It creates all nine production provider clients and sends
-  text and, where supported, image prompts through settings-redirected clients to
-  a local server.
+  Maestro's engine, parses a Maestro flow and round-trips XCTest driver DTOs
+  through Jackson, and calls libc through JNA. It creates all nine production
+  provider clients and sends text and, where supported, image prompts through
+  settings-redirected clients to a local server.
 
 Probe and fixture code runs beside the shrunk archive, so it may only use
 members that production reaches. Smoke-test Kotlin is compiled without null-check
@@ -172,7 +187,7 @@ unshrunk archives.
 ### Shrunk measurements
 
 Measured at
-[`dcbe48fc7f1220120ee1067526d092aca486ec47`](https://github.com/chrisbanes/verity/tree/dcbe48fc7f1220120ee1067526d092aca486ec47)
+[`d5750160f852745b2e1e57e3b0e63b495fe342d6`](https://github.com/chrisbanes/verity/tree/d5750160f852745b2e1e57e3b0e63b495fe342d6)
 on macOS 26.7 arm64, with the JDK 21.0.12.1 toolchain and launcher, Gradle
 9.8.1, Shadow 9.6.1 and R8 9.1.31. The SHA256 of the `artifact` lines of
 `host-packaging.tsv` is
@@ -182,12 +197,12 @@ identical bytes.
 
 | Archive pair | Unshrunk bytes | Shrunk bytes | Saved | Shrunk SHA256 |
 | --- | ---: | ---: | ---: | --- |
-| Universal | 190,285,922 | 126,819,182 | 63,466,740 (33.4%) | `2322a9f260c6929b488ef0b5ea265af30fc1ff59bd3a1d64134be302fb18bc1f` |
-| macOS ARM64 | 170,222,247 | 106,921,943 | 63,300,304 (37.2%) | `0a3d6a70c0ce2786eb7c07daebd159fe0c39cff701738d068a54dcb2c49ee746` |
-| Linux x86-64 | 152,539,519 | 89,239,465 | 63,300,054 (41.5%) | `6b1a098d315547794b385fc4107554969b23c18e1d3a12b8afdeb945494c23df` |
+| Universal | 190,285,922 | 133,851,108 | 56,434,814 (29.7%) | `e5ef1d35d081f2624ae1d6c050330de7d78ada7fb640d991c0b6dc5c7dbd3650` |
+| macOS ARM64 | 170,222,247 | 113,972,317 | 56,249,930 (33.0%) | `2af89db6849fd1f9917743fcc4124197c8c4572e96ccf0d94a9abffa5639976d` |
+| Linux x86-64 | 152,539,519 | 96,289,839 | 56,249,680 (36.9%) | `cfc987b098e4bd7144a54579fb5cb5c77145ed73967a1e0a87a9cd934ee5f8cd` |
 
-Classes fall from 65,140 to 32,900 in every archive, and compressed class bytes
-from 100,771,962 to 44,693,162. Compressed resource bytes fall by 21,234 only,
+Classes fall from 65,140 to 37,396 in every archive, and compressed class bytes
+from 100,771,962 to 50,727,186. Compressed resource bytes fall by 19,838 only,
 from the regenerated Kotlin module files and re-serialized service descriptors.
 The remaining compressed resource costs are:
 
@@ -196,15 +211,16 @@ The remaining compressed resource costs are:
 | Android APKs | 12,270,189 | 12,270,189 | 12,270,189 |
 | iOS driver groups | 16,697,725 | 16,697,725 | 0 |
 | Native payloads | 27,587,560 | 7,539,561 | 6,556,292 |
-| Other resources | 16,418,510 | 16,418,510 | 16,418,510 |
+| Other resources | 16,419,906 | 16,419,906 | 16,419,906 |
 
 Savings compare each host archive with its own shrunk counterpart. The host
 filter's savings are separate and are described in the measurements below.
 
 Build time is the median of three `--rerun --profile` runs of
 `:verity:cli:shadowJar :verity:cli:universalShrunkJar` (`build/reports/profile/`).
-`shadowJar` took 15.5 s (13.3–17.9 s). `universalShrunkJar`, which assembles its
-own archive and then runs R8, took 89.4 s (84.1–96.7 s). R8 runs in a separate
+`shadowJar` took 16.0 s (15.9–16.8 s). `universalShrunkJar`, which assembles its
+own archive and then runs R8, took 99.0 s (89.9–191.8 s; the slowest was the
+first run in a fresh daemon). R8 runs in a separate
 JVM. Shadow then rewrites its output in the Gradle daemon and buffers every
 entry, so `gradle.properties` sets the daemon heap to 2 GiB, matching CI.
 

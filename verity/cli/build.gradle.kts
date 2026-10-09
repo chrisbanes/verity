@@ -1,4 +1,3 @@
-import com.github.jengelman.gradle.plugins.shadow.tasks.MinimizeTool
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import com.github.jengelman.gradle.plugins.shadow.transformers.Log4j2PluginsCacheFileTransformer
 

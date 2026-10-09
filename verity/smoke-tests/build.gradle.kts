@@ -32,6 +32,9 @@ dependencies {
   testImplementation(libs.koog.mistral)
   testImplementation(libs.koog.ollama)
   testImplementation(libs.koog.dashscope)
+  // The Maestro probe binds production flow YAML and XCTest driver DTOs from the packaged JAR.
+  testImplementation(libs.maestro.orchestra)
+  testImplementation(libs.maestro.ios.driver)
   testCompileOnly(project(":verity:cli"))
 }
 

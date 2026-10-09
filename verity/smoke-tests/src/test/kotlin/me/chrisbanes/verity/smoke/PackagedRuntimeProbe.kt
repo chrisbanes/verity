@@ -36,6 +36,10 @@ object PackagedRuntimeProbe {
 
       "graal" -> PackagedRuntimeProbeEntries.graal()
 
+      "maestro" -> PackagedRuntimeProbeEntries.maestro()
+
+      "natives" -> PackagedRuntimeProbeEntries.natives()
+
       "providers" -> PackagedRuntimeProbeProviders.run()
 
       "android" -> {

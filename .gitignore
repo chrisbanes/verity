@@ -12,3 +12,6 @@ build/
 .DS_Store
 Thumbs.db
 maestro/
+
+# Kotlin compiler session data
+.kotlin/

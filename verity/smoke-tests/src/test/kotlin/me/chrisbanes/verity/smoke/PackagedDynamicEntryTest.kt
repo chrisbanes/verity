@@ -62,6 +62,22 @@ class PackagedDynamicEntryTest {
   }
 
   @Test
+  fun `Maestro flow YAML and XCTest DTOs bind identically after shrinking`() {
+    val (unshrunk, shrunk) = differential("maestro")
+    assertThat(unshrunk.last()).isEqualTo("PACKAGED_MAESTRO_OK")
+    assertThat(unshrunk.count { it.startsWith("MAESTRO_COMMAND ") }).isEqualTo(18)
+    assertThat(unshrunk.any { it.startsWith("XCTEST_HIERARCHY ") && it.endsWith(" roundtrip=true") }).isEqualTo(true)
+    assertThat(shrunk).isEqualTo(unshrunk)
+  }
+
+  @Test
+  fun `JNA and gRPC epoll natives load identically after shrinking`() {
+    val (unshrunk, shrunk) = differential("natives")
+    assertThat(unshrunk).contains("NATIVE jna getpid=true")
+    assertThat(shrunk).isEqualTo(unshrunk)
+  }
+
+  @Test
   fun `Graal JS evaluates in both archives`() {
     val (unshrunk, shrunk) = differential("graal")
     assertThat(unshrunk).contains("PACKAGED_GRAAL_JS_OK result=2")

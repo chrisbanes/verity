@@ -16,31 +16,43 @@ import org.gradle.api.provider.Property
  * Recorded exceptions to byte identity, both written by R8 itself:
  * - `META-INF/services/` descriptors are re-serialized; the provider lists must match exactly.
  * - `.kotlin_module` files are regenerated from the retained file facades, keyed by the unsanitized module name.
- * R8 may also synthesize `Owner$N` helper classes whose source file is `R8$$SyntheticClass`.
+ * R8 may also synthesize `Owner$N` helper classes whose source file is `R8$$SyntheticClass`. It emits one that
+ * throws for casts to types with no retained subtype. The receipt lists each helper's callers, and no caller may be
+ * in code whose reflective types Verity depends on.
  */
 object ShrunkPackaging {
   private const val SERVICES = "META-INF/services/"
   private const val MODULE = ".kotlin_module"
   private val SYNTHETIC = Regex("(.+)\\$\\d+\\.class")
 
-  /** Archive contents needed for comparison: the host snapshot plus service lists and synthetic class names. */
-  data class Contents(val archive: HostPackaging.Archive, val services: Map<String, List<String>>, val synthetic: Set<String>) {
-    val classes: Set<String> get() = archive.entries.filter { it.name.endsWith(".class") }.map { it.name }.toSet()
+  /** Packages whose Jackson, kotlinx-serialization or Kotlin-reflect types must never meet R8's throwing cast. */
+  val PROTECTED = listOf("me/chrisbanes/verity/", "ai/koog/", "maestro/", "xcuitest/", "hierarchy/", "util/", "device/", "ios/")
+
+  /** Archive contents needed for comparison: the host snapshot, service lists and R8 synthetic classes with their callers. */
+  data class Contents(val archive: HostPackaging.Archive, val services: Map<String, List<String>>, val synthetic: Map<String, List<String>>) {
+    val classes: Set<String> by lazy { archive.entries.filter { it.name.endsWith(".class") }.map { it.name }.toSet() }
   }
 
   fun read(file: File): Contents {
     val archive = HostPackaging.snapshot(file)
     return ZipFile(file).use { zip ->
-      fun bytes(name: String) = zip.getInputStream(zip.getEntry(name)).use { it.readBytes() }
-      val services = archive.entries.filter { it.name.startsWith(SERVICES) }.associate { it.name to providers(bytes(it.name)) }
-      val synthetic = archive.entries.map { it.name }.filter { SYNTHETIC.matches(it) && "R8\$\$SyntheticClass".toByteArray() in bytes(it) }.toSet()
-      Contents(archive, services, synthetic)
+      // Latin-1 maps bytes one-to-one, so class-file constant searches are plain substring checks.
+      fun text(name: String) = String(zip.getInputStream(zip.getEntry(name)).use { it.readBytes() }, Charsets.ISO_8859_1)
+      val services = archive.entries.filter { it.name.startsWith(SERVICES) }.associate { it.name to providers(text(it.name).toByteArray(Charsets.ISO_8859_1)) }
+      val classes = archive.entries.map { it.name }.filter { it.endsWith(".class") }
+      val synthetic = classes.filter { SYNTHETIC.matches(it) && "R8\$\$SyntheticClass" in text(it) }
+      val callers = synthetic.associateWith { mutableListOf<String>() }
+      if (synthetic.isNotEmpty()) {
+        for (name in classes) {
+          val source = text(name)
+          for (helper in synthetic) if (name != helper && helper.removeSuffix(".class") in source) callers.getValue(helper) += name
+        }
+      }
+      Contents(archive, services, callers)
     }
   }
 
   fun providers(bytes: ByteArray): List<String> = String(bytes, Charsets.UTF_8).lines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }
-
-  private operator fun ByteArray.contains(needle: ByteArray): Boolean = (0..size - needle.size).any { start -> needle.indices.all { this[start + it] == needle[it] } }
 
   fun compare(unshrunk: Contents, shrunk: Contents, mainClass: String) {
     val before = unshrunk.archive.entries.associateBy { it.name }
@@ -57,10 +69,12 @@ object ShrunkPackaging {
     val unknownModules = after.keys.filter { it.endsWith(MODULE) && it.replace(':', '_') !in modules }
     check(unknownModules.isEmpty()) { "Unexpected Kotlin module files: $unknownModules" }
     val classes = unshrunk.classes
-    val renamed = shrunk.classes - classes - shrunk.synthetic
+    val renamed = shrunk.classes - classes - shrunk.synthetic.keys
     check(renamed.isEmpty()) { "Classes absent from the unshrunk archive: ${renamed.take(10)}" }
-    val orphans = shrunk.synthetic.filter { SYNTHETIC.matchEntire(it)!!.groupValues[1] + ".class" !in classes }
+    val orphans = shrunk.synthetic.keys.filter { SYNTHETIC.matchEntire(it)!!.groupValues[1] + ".class" !in classes }
     check(orphans.isEmpty()) { "R8 synthetic classes without an unshrunk owner: $orphans" }
+    val protectedCallers = shrunk.synthetic.values.flatten().filter { caller -> PROTECTED.any(caller::startsWith) }
+    check(protectedCallers.isEmpty()) { "R8 rewrote casts into throws in reflection-dependent code: ${protectedCallers.take(10)}" }
     val required = classes.filter { it.startsWith("me/chrisbanes/verity/") } + "${mainClass.replace('.', '/')}.class"
     val missing = required.filterNot { it in shrunk.classes }
     check(missing.isEmpty()) { "Shrinking removed required classes: ${missing.take(10)}" }
@@ -71,23 +85,62 @@ object ShrunkPackaging {
     check(sets.values.distinct().size == 1) { "Class sets differ between shrunk archives: ${sets.mapValues { it.value.size }}" }
   }
 
-  /** Rules policy: no blanket suppression, no shrink bypass, no pinned global keep, every rule justified. */
+  /**
+   * Rules policy: no blanket suppression, no shrink bypass, every rule justified by a preceding comment, and no
+   * global rule that pins classes or keeps every member. The only global forms allowed match classes without
+   * pinning them (`-keep,allowshrinking class **`) or keep constructors only.
+   */
   fun lint(rules: String) {
     var commented = false
+    var statement: String? = null
+    var start = 0
+    fun finish() {
+      val rule = statement ?: return
+      statement = null
+      val directive = rule.substringBefore(' ').substringBefore(',')
+      check(directive !in setOf("-ignorewarnings", "-dontshrink")) { "Forbidden rule at line $start: $rule" }
+      if (directive == "-dontwarn") check(Regex("-dontwarn\\s+\\S+").containsMatchIn(rule) && !Regex("-dontwarn\\s+\\*{1,2}\\s*$").matches(rule)) { "Blanket -dontwarn at line $start" }
+      if (directive.startsWith("-keep")) {
+        val header = rule.substringBefore('{')
+        val targets = Regex("(?:class|interface|enum)\\s+([^{]*?)(?:\\s+(?:extends|implements)\\s+(\\S+))?\\s*$").find(header)
+        val names = targets?.groupValues?.get(1)?.split(',')?.map(String::trim).orEmpty()
+        // A supertype or class annotation narrows a wildcard target only when it names a real type.
+        val supertype = targets?.groupValues?.get(2).orEmpty()
+        val annotation = Regex("@(\\S+)").find(header)?.groupValues?.get(1).orEmpty()
+        val narrowed = (supertype.isNotEmpty() && supertype != "java.lang.Object" && supertype !in setOf("*", "**")) ||
+          (annotation.isNotEmpty() && annotation.any(Char::isLetter))
+        if (names.any { it in setOf("*", "**") } && !narrowed) {
+          val members = rule.substringAfter('{', "").substringBefore('}').split(';').map(String::trim).filter(String::isNotEmpty)
+          val wildcard = members.any { it in setOf("*", "<fields>", "<methods>") }
+          val pins = directive in setOf("-keep", "-keepnames", "-keepclasseswithmembers", "-keepclasseswithmembernames") && !rule.substringBefore(' ').contains("allowshrinking")
+          val constructorsOnly = members.isNotEmpty() && members.all { it.startsWith("<init>") }
+          val enumAccessors = rule.contains("enum") && members.isNotEmpty() && !wildcard
+          val annotatedMembers = members.isNotEmpty() && members.all { it.startsWith("@") }
+          check(!wildcard && !pins && (members.isEmpty() || constructorsOnly || enumAccessors || annotatedMembers)) { "Global keep at line $start: $rule" }
+        }
+      }
+      if (directive.startsWith("-keep") || directive == "-dontwarn") check(commented) { "Uncommented rule at line $start: $rule" }
+    }
     for ((index, raw) in rules.lines().withIndex()) {
       val line = raw.trim()
       when {
-        line.isEmpty() -> commented = false
-        line.startsWith("#") -> commented = true
+        statement != null && !line.startsWith("-") && line.isNotEmpty() && !line.startsWith("#") -> statement += " $line"
+        line.isEmpty() -> {
+          finish()
+          commented = false
+        }
+        line.startsWith("#") -> {
+          finish()
+          commented = true
+        }
         else -> {
-          val directive = line.substringBefore(' ')
-          check(directive !in setOf("-ignorewarnings", "-dontshrink")) { "Forbidden rule at line ${index + 1}: $line" }
-          check(!Regex("-dontwarn\\s+\\*{1,2}\\s*$").matches(line)) { "Blanket -dontwarn at line ${index + 1}" }
-          check(!(directive == "-keep" && Regex("class\\s+\\*\\*(\\s|\\{|$)").containsMatchIn(line))) { "Global keep at line ${index + 1}" }
-          if (directive.startsWith("-keep") || directive == "-dontwarn") check(commented) { "Uncommented rule at line ${index + 1}: $line" }
+          finish()
+          statement = line
+          start = index + 1
         }
       }
     }
+    finish()
   }
 
   fun verifyConfiguration(configuration: String) {
@@ -143,7 +196,10 @@ abstract class VerifyShrunkJars : DefaultTask() {
         report += listOf("archive", host.name, variant, archive.file.name, archive.file.length(), archive.hash, contents.classes.size, classBytes, resourceBytes,
           families["apk"] ?: 0, families["ios"] ?: 0, families["native"] ?: 0, families["other"] ?: 0).joinToString("\t")
       }
-      report += after.synthetic.sorted().map { "synthetic\t${host.name}\t$it" }
+      for ((helper, callers) in after.synthetic.toSortedMap()) {
+        report += "synthetic\t${host.name}\t$helper\tcallers=${callers.size}"
+        report += callers.sorted().map { "synthetic-caller\t${host.name}\t$helper\t$it" }
+      }
       // Exact gRPC descriptor lookup under each shrunk archive's platform-only class loader.
       java.net.URLClassLoader(arrayOf(after.archive.file.toURI().toURL()), ClassLoader.getPlatformClassLoader()).use {
         report += PackagedGrpc.verifyBuilder(it).map { descriptor -> "abi\t${host.name}\t$descriptor" }
@@ -163,6 +219,9 @@ abstract class VerifyShrunkJars : DefaultTask() {
       "removed-resource" to { ShrunkPackaging.compare(before, mutate(after.archive.entries - apk), main) },
       "renamed-class" to { ShrunkPackaging.compare(before, mutate(after.archive.entries + verityClass.copy(name = "a/a.class")), main) },
       "removed-verity-class" to { ShrunkPackaging.compare(before, mutate(after.archive.entries - verityClass), main) },
+      "protected-synthetic-caller" to {
+        ShrunkPackaging.compare(before, after.copy(synthetic = after.synthetic + (verityClass.name.removeSuffix(".class") + "$0.class" to listOf("maestro/Probe.class"))), main)
+      },
       "removed-provider" to { ShrunkPackaging.compare(before, after.copy(services = after.services + (service.key to service.value.drop(1))), main) },
       "unknown-module" to { ShrunkPackaging.compare(before, mutate(after.archive.entries + apk.copy(name = "META-INF/unknown.kotlin_module")), main) },
       "class-set-mismatch" to { ShrunkPackaging.sameClasses(mapOf("a" to after, "b" to mutate(after.archive.entries - verityClass))) },
