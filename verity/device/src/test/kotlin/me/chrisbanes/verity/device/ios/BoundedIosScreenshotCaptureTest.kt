@@ -121,4 +121,28 @@ class BoundedIosScreenshotCaptureTest {
       }
     }
   }
+
+  @Test
+  fun `caller budget outlasts the shared client's shorter read timeout`() = runTest {
+    withContext(Dispatchers.Default) {
+      val bytes = byteArrayOf(1, 2, 3)
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      server.createContext("/") { exchange ->
+        Thread.sleep(300)
+        exchange.sendResponseHeaders(200, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
+      }
+      server.start()
+      val directory = Files.createTempDirectory("ios-screenshot-test")
+      try {
+        val http = OkHttpClient.Builder().readTimeout(50, TimeUnit.MILLISECONDS).build()
+        val output = directory.resolve("screen.png")
+        BoundedIosScreenshotCapture({ XCTestClient("127.0.0.1", server.address.port) }, http).capture(output, 5.seconds)
+        assertThat(Files.readAllBytes(output).toList()).isEqualTo(bytes.toList())
+      } finally {
+        server.stop(0)
+        directory.toFile().deleteRecursively()
+      }
+    }
+  }
 }

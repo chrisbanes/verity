@@ -35,7 +35,10 @@ internal class BoundedIosScreenshotCapture(
           .build()
         checkCapture()
         val remaining = remainingNanos()
-        val call = httpClient.newBuilder().callTimeout(remaining, TimeUnit.NANOSECONDS).build().newCall(request)
+        // The caller budget is the only limit; OkHttp defaults would cut a slow cold capture off at 10s.
+        val call = httpClient.newBuilder().callTimeout(remaining, TimeUnit.NANOSECONDS)
+          .connectTimeout(0, TimeUnit.NANOSECONDS).readTimeout(0, TimeUnit.NANOSECONDS).writeTimeout(0, TimeUnit.NANOSECONDS)
+          .build().newCall(request)
         val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
           try {
             awaitCancellation()
