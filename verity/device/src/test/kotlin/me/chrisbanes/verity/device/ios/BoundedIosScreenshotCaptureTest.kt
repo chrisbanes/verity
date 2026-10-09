@@ -124,7 +124,7 @@ class BoundedIosScreenshotCaptureTest {
 
   @Test
   fun `caller budget outlasts the shared client's shorter read timeout`() = runTest {
-    withContext(Dispatchers.Default) {
+    withContext(Dispatchers.IO) {
       val bytes = byteArrayOf(1, 2, 3)
       val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
       server.createContext("/") { exchange ->
