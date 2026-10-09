@@ -18,6 +18,7 @@ grpc-kotlin = "1.5.0"
 assertk = "0.28.1"
 ktlint = "1.8.0"
 shadow = "9.6.1"
+r8 = "9.1.31"
 spotless = "8.10.4"
 
 [libraries]
@@ -53,6 +54,7 @@ grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version.ref = "grpc"
 grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
 grpc-protobuf = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
 grpc-kotlin-stub = { module = "io.grpc:grpc-kotlin-stub", version.ref = "grpc-kotlin" }
+r8 = { module = "com.android.tools:r8", version.ref = "r8" }
 assertk = { module = "com.willowtreeapps.assertk:assertk", version.ref = "assertk" }
 
 [plugins]

@@ -106,6 +106,13 @@ class McpCommandTest {
         }
       }
       assertThat(stderr.readText().contains("Starting Verity MCP server on")).isFalse()
+      // The diagnostic precedes binding; require the server to accept a connection too.
+      withTimeout(30_000) {
+        while (!withContext(Dispatchers.IO) { runCatching { java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 100) } }.isSuccess }) {
+          check(process.isAlive) { "HTTP server exited before accepting connections: ${stderr.readText().takeLast(2000)}" }
+          delay(20)
+        }
+      }
     }
   }
 
@@ -278,7 +285,8 @@ object McpLoggingFixture {
     // Packaged fixtures must load production/backend/SDK classes from the selected archive.
     System.getProperty("verity.fixture.archive")?.let { archive ->
       if (archive.endsWith(".jar")) {
-        for (name in listOf("me.chrisbanes.verity.cli.McpCommand", "org.slf4j.LoggerFactory", "org.apache.logging.log4j.core.appender.ConsoleAppender", "io.modelcontextprotocol.kotlin.sdk.client.Client")) {
+        // The CLI ships only the SDK's server side; the R8-shrunk archive drops the unused client classes.
+        for (name in listOf("me.chrisbanes.verity.cli.McpCommand", "org.slf4j.LoggerFactory", "org.apache.logging.log4j.core.appender.ConsoleAppender", "io.modelcontextprotocol.kotlin.sdk.server.Server")) {
           check(File(Class.forName(name, false, McpLoggingFixture::class.java.classLoader).protectionDomain.codeSource.location.toURI()).canonicalFile == File(archive).canonicalFile)
         }
       }

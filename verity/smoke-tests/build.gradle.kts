@@ -22,6 +22,20 @@ dependencies {
   testImplementation(libs.mcp.kotlin.sdk)
   testImplementation("io.ktor:ktor-client-cio:${libs.versions.ktor.get()}")
   testImplementation(libs.koog.agents)
+  // The provider probe compiles against production client classes; its child JVM loads them from the packaged JAR.
+  testImplementation(libs.koog.anthropic)
+  testImplementation(libs.koog.openai)
+  testImplementation(libs.koog.google)
+  testImplementation(libs.koog.openrouter)
+  testImplementation(libs.koog.bedrock)
+  testImplementation(libs.koog.deepseek)
+  testImplementation(libs.koog.mistral)
+  testImplementation(libs.koog.ollama)
+  testImplementation(libs.koog.dashscope)
+  // The Maestro probe binds production flow YAML and XCTest driver DTOs from the packaged JAR.
+  testImplementation(libs.maestro.orchestra)
+  testImplementation(libs.maestro.ios.driver)
+  testCompileOnly(project(":verity:cli"))
 }
 
 tasks.test {
@@ -59,6 +73,12 @@ tasks.test {
   }
 }
 
+// Probe classes also run beside the R8-shrunk CLI, which rewrites its own Kotlin null-check intrinsics and drops
+// the unused Intrinsics methods. Compile test code without those intrinsic calls so the probe links.
+tasks.compileTestKotlin {
+  compilerOptions.freeCompilerArgs.addAll("-Xno-call-assertions", "-Xno-param-assertions", "-Xno-receiver-assertions")
+}
+
 configurations.configureEach {
   exclude(group = "io.grpc", module = "grpc-netty")
 }
@@ -71,11 +91,14 @@ dependencies {
   add(packagedRuntime.name, project(path = ":verity:cli", configuration = "packagedUniversal"))
 }
 val universalJar = packagedRuntime.elements.map { it.single().asFile }
-tasks.test {
-  inputs.file(universalJar).withPropertyName("packagedCliOptionArchive")
-  val archive = universalJar
-  doFirst { systemProperty("verity.packaged.cli.options.jar", archive.get().absolutePath) }
+val packagedRuntimeShrunk = configurations.create("packagedRuntimeShrunk") {
+  isCanBeConsumed = false
+  isCanBeResolved = true
 }
+dependencies {
+  add(packagedRuntimeShrunk.name, project(path = ":verity:cli", configuration = "packagedUniversalShrunk"))
+}
+val universalShrunkJar = packagedRuntimeShrunk.elements.map { it.single().asFile }
 
 val smokeRuntime = configurations.testRuntimeClasspath
 val verifySmokeGrpc = tasks.register<VerifyPackagedGrpc>("verifySmokeGrpc") {
@@ -110,6 +133,17 @@ val packagedProbeJar = tasks.register<Jar>("packagedProbeJar") {
     }
   }
 }
+// Offline packaged checks run every probe against both universal archives; shrunk output must match unshrunk.
+tasks.test {
+  inputs.files(universalJar, universalShrunkJar).withPropertyName("packagedCliOptionArchives")
+  inputs.file(packagedProbeJar.flatMap { it.archiveFile }).withPropertyName("packagedProbeJar")
+  val archives = universalJar.zip(universalShrunkJar) { unshrunk, shrunk -> listOf(unshrunk, shrunk) }
+  val probe = packagedProbeJar.flatMap { it.archiveFile }
+  doFirst {
+    systemProperty("verity.packaged.cli.options.jars", archives.get().joinToString(File.pathSeparator) { it.absolutePath })
+    systemProperty("verity.packaged.probe.jar", probe.get().asFile.absolutePath)
+  }
+}
 val packagedGrpcProbe = tasks.register<JavaExec>("packagedGrpcProbe") {
   dependsOn(":verity:cli:verifyPackagedGrpc", packagedProbeJar)
   classpath(files(universalJar, packagedProbeJar.flatMap { it.archiveFile }))
@@ -126,15 +160,20 @@ fun packagedHost(name: String, exported: String) = configurations.create(name) {
 }
 val packagedMacos = packagedHost("packagedMacos", "packagedMacosArm64")
 val packagedLinux = packagedHost("packagedLinux", "packagedLinuxX64")
+val packagedMacosShrunk = packagedHost("packagedMacosShrunk", "packagedMacosArm64Shrunk")
+val packagedLinuxShrunk = packagedHost("packagedLinuxShrunk", "packagedLinuxX64Shrunk")
 val productionJars = mapOf(
   "universal" to universalJar,
   "macos-aarch64" to packagedMacos.elements.map { it.single().asFile },
   "linux-x86_64" to packagedLinux.elements.map { it.single().asFile },
+  "universal-shrunk" to universalShrunkJar,
+  "macos-aarch64-shrunk" to packagedMacosShrunk.elements.map { it.single().asFile },
+  "linux-x86_64-shrunk" to packagedLinuxShrunk.elements.map { it.single().asFile },
 )
 val selectedVariants = providers.gradleProperty("packagedVariant").orElse("universal")
 val packagedReports = layout.buildDirectory.dir("reports/packaged")
 fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
-  dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", packagedProbeJar)
+  dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", ":verity:cli:verifyShrunkJars", packagedProbeJar)
   testClassesDirs = sourceSets.test.get().output.classesDirs
   classpath = sourceSets.test.get().runtimeClasspath
   maxHeapSize = "512m"

@@ -50,7 +50,48 @@ val macosArm64Jar = hostJar(HostPackaging.Host.MACOS_ARM64)
 val linuxX64Jar = hostJar(HostPackaging.Host.LINUX_X64)
 val hostJars = tasks.register("hostJars") { dependsOn(tasks.shadowJar, macosArm64Jar, linuxX64Jar) }
 
+// R8 shrinks the universal archive once; host filtering selects resources only, so host variants derive from it.
+val r8Configuration = layout.buildDirectory.file("reports/r8/configuration.txt")
+val universalShrunkJar = tasks.register<ShadowJar>("universalShrunkJar") {
+  destinationDirectory.set(layout.buildDirectory.dir("libs/shrunk"))
+  archiveClassifier.set("")
+  from(sourceSets.main.map { it.output })
+  configurations = listOf(project.configurations.runtimeClasspath.get())
+  manifest.from(tasks.jar.get().manifest)
+  javaLauncher.set(javaToolchains.launcherFor(java.toolchain))
+  // Verity's own modules stay whole through r8-rules.pro; minimize { exclude(project(...)) } would also keep
+  // every transitive dependency of those modules, which is nearly the whole archive.
+  minimize {
+    r8 {
+      keepRuleFiles.from("r8-rules.pro")
+      keepRules.add(r8Configuration.map { "-printconfiguration ${it.asFile.absolutePath}" })
+    }
+  }
+  outputs.file(r8Configuration)
+}
+
+fun shrunkHostJar(host: HostPackaging.Host) = tasks.register<Zip>(
+  if (host == HostPackaging.Host.MACOS_ARM64) "macosArm64ShrunkJar" else "linuxX64ShrunkJar",
+) {
+  // Match the host ShadowJar archive settings.
+  destinationDirectory.set(layout.buildDirectory.dir("libs/shrunk"))
+  archiveBaseName.set("verity")
+  archiveClassifier.set(host.classifier)
+  archiveExtension.set("jar")
+  isPreserveFileTimestamps = false
+  isReproducibleFileOrder = true
+  isZip64 = true
+  outputs.doNotCacheIf("The fat JAR exceeds the remote build cache upload limit") { true }
+  from(universalShrunkJar.map { zipTree(it.archiveFile) })
+  exclude { !HostPackaging.retain(it.path, host) }
+}
+
+val macosArm64ShrunkJar = shrunkHostJar(HostPackaging.Host.MACOS_ARM64)
+val linuxX64ShrunkJar = shrunkHostJar(HostPackaging.Host.LINUX_X64)
+val shrunkJars = tasks.register("shrunkJars") { dependsOn(universalShrunkJar, macosArm64ShrunkJar, linuxX64ShrunkJar) }
+
 dependencies {
+  shadowR8(libs.r8)
   implementation(enforcedPlatform(libs.grpc.bom))
   testImplementation(enforcedPlatform(libs.grpc.bom))
   testImplementation(libs.mcp.kotlin.sdk)
@@ -94,6 +135,14 @@ val packagedLinuxX64 = configurations.create("packagedLinuxX64") {
 }
 artifacts.add(packagedMacosArm64.name, macosArm64Jar)
 artifacts.add(packagedLinuxX64.name, linuxX64Jar)
+// Shrunk counterparts; the unshrunk archives above remain the comparison baseline and recovery path.
+for ((name, task) in listOf("packagedUniversalShrunk" to universalShrunkJar, "packagedMacosArm64Shrunk" to macosArm64ShrunkJar, "packagedLinuxX64Shrunk" to linuxX64ShrunkJar)) {
+  configurations.create(name) {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+  }
+  artifacts.add(name, task)
+}
 val runtime = configurations.runtimeClasspath
 val verifyPackagedGrpc = tasks.register<VerifyPackagedGrpc>("verifyPackagedGrpc") {
   dependsOn(tasks.shadowJar, ":verity:smoke-tests:verifySmokeGrpc")
@@ -118,8 +167,15 @@ tasks.test {
   val testRuntimeClasspath = sourceSets.test.get().runtimeClasspath
   // Resolve at execution: resolving while tasks are realized lets another Test task mutate a resolved classpath.
   jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dverity.cli.test.classpath=${testRuntimeClasspath.asPath}") })
-  dependsOn(hostJars)
-  val archives = files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  dependsOn(hostJars, shrunkJars)
+  val archives = files(
+    tasks.shadowJar.flatMap { it.archiveFile },
+    macosArm64Jar.flatMap { it.archiveFile },
+    linuxX64Jar.flatMap { it.archiveFile },
+    universalShrunkJar.flatMap { it.archiveFile },
+    macosArm64ShrunkJar.flatMap { it.archiveFile },
+    linuxX64ShrunkJar.flatMap { it.archiveFile },
+  )
   inputs.files(archives).withPropertyName("packagedLoggingArchives")
   systemProperty("verity.cli.packaged.jars", archives.asPath)
   systemProperty("verity.cli.fixture.classes", sourceSets.test.get().output.classesDirs.asPath)
@@ -160,23 +216,46 @@ val verifyHostJars = tasks.register<VerifyHostJars>("verifyHostJars") {
   )
   receipt.set(layout.buildDirectory.file("reports/host-packaging.tsv"))
 }
-tasks.check { dependsOn(verifyHostJars, verifyPackagedGrpc) }
+val verifyShrunkJars = tasks.register<VerifyShrunkJars>("verifyShrunkJars") {
+  dependsOn(hostJars, shrunkJars)
+  universal.set(tasks.shadowJar.flatMap { it.archiveFile })
+  macos.set(macosArm64Jar.flatMap { it.archiveFile })
+  linux.set(linuxX64Jar.flatMap { it.archiveFile })
+  universalShrunk.set(universalShrunkJar.flatMap { it.archiveFile })
+  macosShrunk.set(macosArm64ShrunkJar.flatMap { it.archiveFile })
+  linuxShrunk.set(linuxX64ShrunkJar.flatMap { it.archiveFile })
+  rules.set(layout.projectDirectory.file("r8-rules.pro"))
+  configuration.set(r8Configuration)
+  mainClass.set(application.mainClass)
+  receipt.set(layout.buildDirectory.file("reports/shrunk-packaging.tsv"))
+}
+tasks.check { dependsOn(verifyHostJars, verifyPackagedGrpc, verifyShrunkJars) }
 
 // Release input generation is offline and consumes only the three verified archives.
+// Releases publish the R8-shrunk archives; -PreleaseArchives=unshrunk restores the unshrunk ones.
 val releaseScript = layout.projectDirectory.file("../../scripts/release_artifacts.py")
 val releaseDirectory = layout.buildDirectory.dir("release")
 val releaseVersion = providers.gradleProperty("version").orElse(project.version.toString())
+val releaseArchives = providers.gradleProperty("releaseArchives").orElse("shrunk").get()
+require(releaseArchives in setOf("shrunk", "unshrunk")) { "releaseArchives must be 'shrunk' or 'unshrunk', not '$releaseArchives'" }
+val releaseJars = if (releaseArchives == "shrunk") listOf(universalShrunkJar, macosArm64ShrunkJar, linuxX64ShrunkJar) else listOf(tasks.shadowJar, macosArm64Jar, linuxX64Jar)
 tasks.register<Exec>("packageRelease") {
   dependsOn(verifyHostJars, verifyPackagedGrpc)
+  if (releaseArchives == "shrunk") dependsOn(verifyShrunkJars)
   inputs.file(releaseScript)
-  inputs.files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  inputs.files(releaseJars.map { jar -> jar.flatMap { it.archiveFile } })
   inputs.property("releaseVersion", releaseVersion)
+  inputs.property("releaseArchives", releaseArchives)
   outputs.dir(releaseDirectory)
   commandLine(
-    "python3", releaseScript.asFile.absolutePath, "build", "--version", releaseVersion.get(),
-    "--output", releaseDirectory.get().asFile.absolutePath,
-    tasks.shadowJar.get().archiveFile.get().asFile.absolutePath,
-    macosArm64Jar.get().archiveFile.get().asFile.absolutePath,
-    linuxX64Jar.get().archiveFile.get().asFile.absolutePath,
+    listOf(
+      "python3",
+      releaseScript.asFile.absolutePath,
+      "build",
+      "--version",
+      releaseVersion.get(),
+      "--output",
+      releaseDirectory.get().asFile.absolutePath,
+    ) + releaseJars.map { it.get().archiveFile.get().asFile.absolutePath },
   )
 }

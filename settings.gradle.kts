@@ -9,6 +9,11 @@ rootProject.name = "verity"
 dependencyResolutionManagement {
   repositories {
     mavenCentral()
+    // R8 is published only to Google Maven.
+    exclusiveContent {
+      forRepository { google() }
+      filter { includeGroup("com.android.tools") }
+    }
   }
 }
 
