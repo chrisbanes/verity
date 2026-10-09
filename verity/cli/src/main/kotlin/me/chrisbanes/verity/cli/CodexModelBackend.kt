@@ -665,7 +665,7 @@ internal class CodexModelBackend private constructor(
       System.getenv("PATH")?.split(java.io.File.pathSeparator)?.map { Path.of(it).resolve("codex") }?.firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
     }
 
-    private fun launchProcess(command: List<String>, directory: Path, environment: Map<String, String>): Process = ProcessBuilder(command).directory(directory.toFile()).apply {
+    internal fun launchProcess(command: List<String>, directory: Path, environment: Map<String, String>): Process = ProcessBuilder(command).directory(directory.toFile()).apply {
       environment().clear()
       environment().putAll(environment)
     }.start()
