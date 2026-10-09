@@ -84,6 +84,9 @@ internal class JourneyMemory(
       } catch (_: IOException) {
         // The previous reference, if any, stays in place.
         temp?.let { Files.deleteIfExists(it) }
+      } catch (_: SecurityException) {
+        // Same: remembering a screenshot is advisory.
+        temp?.let { Files.deleteIfExists(it) }
       }
     }
   }

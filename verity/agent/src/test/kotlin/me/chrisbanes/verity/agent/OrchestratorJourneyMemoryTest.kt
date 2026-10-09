@@ -34,6 +34,7 @@ class OrchestratorJourneyMemoryTest {
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
   ) : DeviceSession {
     val events = mutableListOf<String>()
+    var flowSucceeds = true
     private var executions = 0
     private var screenshots = 0
 
@@ -45,7 +46,7 @@ class OrchestratorJourneyMemoryTest {
       if (flow.actions.singleOrNull() == Interaction.LaunchApp()) return FlowResult(true)
       events += "flow"
       executions++
-      return FlowResult(true)
+      return FlowResult(flowSucceeds)
     }
 
     override suspend fun pressKey(keyName: String) {
@@ -146,6 +147,17 @@ class OrchestratorJourneyMemoryTest {
     assertThat(entry.granularity).isEqualTo(TrailGranularity.FLOW)
     assertThat(entry.instructions).containsExactly("navigate to settings page")
     assertThat(entry.focusBefore).isEqualTo(listOf(FocusNodeArtifact("/0", "focus:0")))
+    assertThat(entry.focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "focus:1")))
+  }
+
+  @Test
+  fun `unsuccessful slow path flow is recorded as failed with after focus observed`() = runTest {
+    val session = Session(Platform.ANDROID_MOBILE).apply { flowSucceeds = false }
+    val result = orchestrator(session).run(journey(Platform.ANDROID_MOBILE, JourneyStep.Action("navigate to settings page")))
+
+    assertThat(result.passed).isEqualTo(false)
+    val entry = result.trail!!.entries.single()
+    assertThat(entry.succeeded).isEqualTo(false)
     assertThat(entry.focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "focus:1")))
   }
 
