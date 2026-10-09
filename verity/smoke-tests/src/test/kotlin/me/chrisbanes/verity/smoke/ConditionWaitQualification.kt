@@ -25,6 +25,22 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.device.DeviceSession
 
+/**
+ * Generous per-capture budget for functional proofs. Slow CI simulators have taken ~9s for a single
+ * hierarchy capture, so a tight budget here measures runner speed rather than behavior.
+ */
+internal val QualificationBudget = 15.seconds
+
+/** Logs each capture's duration so a slow-runner failure can be told apart from a behavioral one. */
+internal suspend fun <T> timedCapture(label: String, kind: String, block: suspend () -> T): T {
+  val started = System.nanoTime()
+  try {
+    return block()
+  } finally {
+    println("$label capture=$kind elapsed_ms=${(System.nanoTime() - started) / 1_000_000}")
+  }
+}
+
 /** Ordinary configured-device functional proof; no claim about a native CPU phase deadline. */
 internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: String, label: String) {
   // Setup is outside the wait; the guarded session forbids every action during evaluation.
@@ -44,7 +60,7 @@ internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: Str
       captures++
       peak = maxOf(peak, active)
       try {
-        return production.captureHierarchyTree(timeout)
+        return timedCapture(label, "hierarchy") { production.captureHierarchyTree(timeout) }
       } finally {
         active--
       }
@@ -54,7 +70,7 @@ internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: Str
       captures++
       peak = maxOf(peak, active)
       try {
-        production.captureScreenshot(output, timeout)
+        timedCapture(label, "screenshot") { production.captureScreenshot(output, timeout) }
       } finally {
         active--
       }
@@ -95,19 +111,19 @@ internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: Str
   )
   val waiter = ConditionWaiter(ConditionEvaluator(guarded, inspector))
   val started = System.nanoTime()
-  val immediate = waiter.await(visible, 5.seconds)
+  val immediate = waiter.await(visible, QualificationBudget)
   assertThat(immediate.satisfied).isTrue()
   assertThat(immediate.lastEvaluation?.tier).isEqualTo(ConditionTier.LITERAL)
   val absent = "focus is on '__verity_absent_${UUID.randomUUID()}__'"
-  val negative = waiter.await(absent, 2.seconds)
+  val negative = waiter.await(absent, QualificationBudget)
   assertThat(negative.satisfied).isFalse()
   assertThat(negative.lastEvaluation?.tier).isEqualTo(ConditionTier.FOCUS)
   assertThat(negative.checks > 0).isTrue()
-  val visual = waiter.await("visually native screenshot is available", 5.seconds)
+  val visual = waiter.await("visually native screenshot is available", QualificationBudget)
   assertThat(visual.satisfied).isTrue()
   assertThat(visual.lastEvaluation?.tier).isEqualTo(ConditionTier.VISUAL)
   delayed = true
-  val cancelled = waiter.await("visually delayed negative condition", 5.seconds)
+  val cancelled = waiter.await("visually delayed negative condition", QualificationBudget)
   assertThat(cancelled.satisfied).isFalse()
   assertThat(cancelled.checks).isEqualTo(0)
   assertThat(modelEntered && modelJoined).isTrue()
@@ -117,10 +133,10 @@ internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: Str
   withContext(Dispatchers.IO) { images.forEach { assertThat(Files.exists(it)).isFalse() } }
   val output = withContext(Dispatchers.IO) { Files.createTempFile("verity-wait-reuse", ".png") }
   try {
-    production.captureHierarchyTree(2.seconds)
-    production.captureHierarchyTree()
-    production.captureScreenshot(output, 2.seconds)
-    production.captureScreenshot(output)
+    timedCapture(label, "reuse-hierarchy-bounded") { production.captureHierarchyTree(QualificationBudget) }
+    timedCapture(label, "reuse-hierarchy-noarg") { production.captureHierarchyTree() }
+    timedCapture(label, "reuse-screenshot-bounded") { production.captureScreenshot(output, QualificationBudget) }
+    timedCapture(label, "reuse-screenshot-noarg") { production.captureScreenshot(output) }
     assertThat(withContext(Dispatchers.IO) { Files.size(output) > 0 }).isTrue()
   } finally {
     withContext(NonCancellable + Dispatchers.IO) { Files.deleteIfExists(output) }

@@ -5,7 +5,6 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import java.nio.file.Files
 import kotlin.test.Test
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -31,6 +30,7 @@ import org.junit.jupiter.api.Tag
 @Tag("ios")
 class IosBoundedConditionCaptureSmoke {
   companion object {
+    private const val LABEL = "IosBoundedConditionCaptureSmoke"
     private lateinit var lifecycle: DeviceLifecycle
     private lateinit var session: DeviceSession
 
@@ -74,7 +74,7 @@ class IosBoundedConditionCaptureSmoke {
 
   @Test
   fun `integrated waits capture native state without actions and join before reuse`() = runBlocking {
-    qualifyConditionWaits(session, "com.apple.Preferences", "IosBoundedConditionCaptureSmoke")
+    qualifyConditionWaits(session, "com.apple.Preferences", LABEL)
   }
 
   @Test
@@ -86,18 +86,18 @@ class IosBoundedConditionCaptureSmoke {
     val bodyCompletedAt = java.util.concurrent.atomic.AtomicLong()
     var invocation: kotlinx.coroutines.Deferred<Unit>? = null
     try {
-      session.captureHierarchyTree()
-      session.captureHierarchyTree(2.seconds)
-      session.captureScreenshot(output)
+      timedCapture(LABEL, "hierarchy-noarg") { session.captureHierarchyTree() }
+      timedCapture(LABEL, "hierarchy-bounded") { session.captureHierarchyTree(QualificationBudget) }
+      timedCapture(LABEL, "screenshot-noarg") { session.captureScreenshot(output) }
       assertThat(withContext(Dispatchers.IO) { Files.size(output) > 0 }).isTrue()
-      session.captureScreenshot(output, 2.seconds)
+      timedCapture(LABEL, "screenshot-bounded") { session.captureScreenshot(output, QualificationBudget) }
       assertThat(withContext(Dispatchers.IO) { Files.size(output) > 0 }).isTrue()
       val prior = withContext(Dispatchers.IO) { Files.readAllBytes(output).toList() }
       val caller = CancellationException("Ios screenshot caller qualification")
       val entryAt = System.nanoTime()
       invocation = async(start = CoroutineStart.UNDISPATCHED) {
         try {
-          session.captureScreenshot(output, 2.seconds)
+          session.captureScreenshot(output, QualificationBudget)
           bodyFailure.complete(null)
         } catch (failure: Throwable) {
           bodyCompletedAt.set(System.nanoTime())
@@ -106,7 +106,7 @@ class IosBoundedConditionCaptureSmoke {
         }
       }
       val active = invocation
-      withTimeout(2.seconds) {
+      withTimeout(QualificationBudget) {
         while (!withContext(Dispatchers.IO) { inProductionCapture() }) {
           check(!active.isCompleted) { "Screenshot finished before native in-flight qualification" }
           delay(1)
@@ -123,10 +123,10 @@ class IosBoundedConditionCaptureSmoke {
       assertThat(withContext(Dispatchers.IO) { inProductionCapture() }).isEqualTo(false)
       assertThat(withContext(Dispatchers.IO) { Files.readAllBytes(output).toList() }).isEqualTo(prior)
       println("IosBoundedConditionCaptureSmoke caller_body_join_and_file_rollback_verified=true entry_ns=$entryAt cancel_ns=$cancelAt body_complete_ns=${bodyCompletedAt.get()} join_ns=$joinAt active_after_join=0")
-      session.captureScreenshot(output, 2.seconds)
-      session.captureScreenshot(output)
-      session.captureHierarchyTree(2.seconds)
-      session.captureHierarchyTree()
+      timedCapture(LABEL, "reuse-screenshot-bounded") { session.captureScreenshot(output, QualificationBudget) }
+      timedCapture(LABEL, "reuse-screenshot-noarg") { session.captureScreenshot(output) }
+      timedCapture(LABEL, "reuse-hierarchy-bounded") { session.captureHierarchyTree(QualificationBudget) }
+      timedCapture(LABEL, "reuse-hierarchy-noarg") { session.captureHierarchyTree() }
       assertThat(withContext(Dispatchers.IO) { Files.size(output) > 0 }).isTrue()
       withContext(Dispatchers.IO) { Files.list(directory).use { assertThat(it.toList()).isEqualTo(listOf(output)) } }
       println("IosBoundedConditionCaptureSmoke bounded_and_noarg_screenshot_hierarchy_reuse_verified=true reuse_complete_ns=${System.nanoTime()} head=${System.getenv("GITHUB_SHA")} run=${System.getenv("GITHUB_RUN_ID")} runtime=${System.getProperty("java.version")}/${System.getProperty("os.arch")}")
