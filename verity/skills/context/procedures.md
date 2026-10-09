@@ -48,9 +48,8 @@ A typed `Wait` is a standalone, action-free segment with its parsed condition an
 
 Pick the first rule that applies:
 
-1. **Authored journey loop** (always this rule, even when the loop seeks a target): execute it with [Loop Execution](#loop-execution), which honours the authored body and bound. In run only, `run_loop(session_id, action, until, max)` may replace it for a single raw key with a literal visible-text condition whose semantics match exactly. Pass the parsed maximum explicitly, because the tool defaults to 10. It returns `SATISFIED` or `NOT SATISFIED` text and an iteration count. Debug and author execute every body through Loop Execution so each body is reviewed. Semantic, focus, visual and multi-action loops always use Loop Execution; MCP does not expose the agent module's semantic evaluator.
+1. **Authored journey loop** (always this rule, even when the loop seeks a target): execute it with [Loop Execution](#loop-execution), which honours the authored body and bound. In run only, `run_loop(session_id, action, until, max)` may replace it for a single raw key with a literal visible-text condition whose semantics match exactly. Pass the parsed maximum explicitly, because the tool defaults to 10. It returns `SATISFIED` or `NOT SATISFIED` text and an iteration count; `NOT SATISFIED` is a failed loop (a failed navigation under rule 2). Debug and author execute every body through Loop Execution so a new or replacement body is reviewed first. Semantic, focus, visual and multi-action loops always use Loop Execution; MCP does not expose the agent module's semantic evaluator.
 2. **Target-seeking navigation** (reach a stated target with no authored iteration contract, such as an audit `kind: "loop"` step or exploratory repositioning in author or debug): use `run_loop` under the same single-key, literal-text match. Otherwise use [Overshoot and Correct](#overshoot-and-correct) when every key or scroll only moves focus or the viewport (directional keys, scroll, swipe). Anything that activates, selects, types or submits uses [Loop Execution](#loop-execution) with the caller's bound.
-
 
 ## Loop Execution
 
@@ -98,7 +97,7 @@ Choose the cheapest sufficient evidence, retaining the parsed or user-approved m
 | `[?visual]` | `capture_screenshot(session_id)` and caller evaluation of the actual current image |
 | `[?]` | Use the mode reported by `load_journey`; parser heuristics infer it and never automatically choose FOCUSED |
 
-Loop and `until` conditions follow the tiers in [Loop Execution](#loop-execution). `capture_focused_tree` and `capture_hierarchy` are both tree-tier evidence under the same bounds rule. `diff_hierarchy` is change evidence only, never an assertion verdict on its own.
+Loop and `until` conditions follow the tiers in [Loop Execution](#loop-execution). `capture_focused_tree` and `capture_hierarchy` are both tree-tier evidence, limited to their returned content. `diff_hierarchy` is change evidence only, never an assertion verdict on its own.
 
 Report deterministic tool input/result and its basis. For tree/visual checks, explain how the captured state supports the verdict. Missing evidence, a tool error or failed/invalid external evaluation is a failure, never a fabricated pass. `load_journey` has no assertion-strategy argument; server configuration does not override its INFER parser behaviour.
 
