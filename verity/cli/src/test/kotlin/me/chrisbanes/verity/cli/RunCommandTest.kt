@@ -26,6 +26,7 @@ import kotlin.test.assertFailsWith
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -50,11 +51,16 @@ import me.chrisbanes.verity.core.result.EffortArtifactSetting
 import me.chrisbanes.verity.core.result.EffortSettingMode
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
+import me.chrisbanes.verity.core.result.FocusNodeArtifact
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
 import me.chrisbanes.verity.core.result.JourneyArtifactResult
+import me.chrisbanes.verity.core.result.JourneyTrailArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
+import me.chrisbanes.verity.core.result.TrailEntryArtifact
+import me.chrisbanes.verity.core.result.TrailGranularity
+import me.chrisbanes.verity.core.result.TrailOrigin
 import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.ActionFlowPreparationPhase
 import me.chrisbanes.verity.device.CaptureDeadlineExceededException
@@ -520,6 +526,42 @@ class RunCommandTest {
       assertThat(result.output).contains("Journey: Single journey")
       assertThat(result.output).contains("File: ${file.absolutePath}")
       assertThat(result.output).contains("Suite result: PASSED")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `journey result includes the retained trail and its truncation information`() {
+    val dir = createTempDirectory("verity-run-trail").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single journey")
+      val outputDir = File(dir, "output")
+      val trail = JourneyTrailArtifact(
+        entries = listOf(
+          TrailEntryArtifact(0, TrailGranularity.INTERACTION, TrailOrigin.ACTIONS, instructions = listOf("Press D-pad down"), succeeded = true, focusBefore = emptyList(), focusAfter = listOf(FocusNodeArtifact("/0", "menu:home"))),
+          TrailEntryArtifact(1, TrailGranularity.FLOW, TrailOrigin.LOOP, iteration = 0, instructions = listOf("a…"), succeeded = true, truncated = true),
+        ),
+        droppedEntries = 4,
+        maxEntries = 20,
+        maxTextChars = 300,
+        maxFocusedNodes = 5,
+      )
+      val command = runCommand(clock = fixedClock()) { journeys ->
+        SuiteRunResult(journeys.map { ResolvedJourneyResult(it, JourneyResult(it.journey.name, listOf(SegmentResult(0, passed = true)), trail)) })
+      }
+
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${file.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(0)
+      val journeyFile = File(outputDir, "runs/20260708-143512-single-journey/journeys/001-single-journey.json")
+      val written = Json.parseToJsonElement(journeyFile.readText()).jsonObject["trail"]!!.jsonObject
+      assertThat(written["droppedEntries"]!!.jsonPrimitive.content).isEqualTo("4")
+      assertThat(written["maxEntries"]!!.jsonPrimitive.content).isEqualTo("20")
+      val entries = written["entries"]!!.let { it as JsonArray }
+      assertThat(entries[0].jsonObject["granularity"]!!.jsonPrimitive.content).isEqualTo("interaction")
+      assertThat(entries[1].jsonObject["truncated"]!!.jsonPrimitive.content).isEqualTo("true")
+      assertThat(readJourney(journeyFile).trail).isEqualTo(trail)
     } finally {
       dir.deleteRecursively()
     }
@@ -1101,6 +1143,7 @@ class RunCommandTest {
       assertThat(journey.failedAt).isEqualTo(null)
       assertThat(journey.segments).containsExactly()
       assertThat(journey.error).isEqualTo(ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "visual evaluator failed"))
+      assertThat(journey.trail).isEqualTo(null)
     } finally {
       dir.deleteRecursively()
     }
