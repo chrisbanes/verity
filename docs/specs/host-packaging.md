@@ -145,15 +145,18 @@ shrunk archive with its unshrunk counterpart:
 - Shrunk class names are a subset of the unshrunk names. The only exception is
   an R8 synthetic `Owner$N` helper, marked by its `R8$$SyntheticClass` source
   and owned by a retained class. R8 currently emits one. It throws for a
-  non-null value cast to a type that has no retained subtype; because every
-  retained class keeps its constructors, such a value cannot exist. The receipt
-  records how many classes call each helper (91 at present).
+  non-null value cast to a type that has no retained subtype. Because every
+  retained class keeps its constructors, only a `java.lang.reflect.Proxy`
+  instance could reach it. The receipt lists every caller (91 at present: Graal
+  native-image types, absent optional integrations and interfaces Verity never
+  configures). The verifier fails if a caller is in Verity, Koog or Maestro
+  (including its XCTest, hierarchy, device and iOS packages).
 - The `Main-Class` and every Verity class are present, the class sets of the
   three shrunk archives are identical, and Maestro's gRPC descriptors resolve
   under a platform-only class loader.
 
 It also lints the rules, requires `-dontoptimize` in the effective R8
-configuration (`build/reports/r8/configuration.txt`) and rejects 11 mutations of
+configuration (`build/reports/r8/configuration.txt`) and rejects 12 mutations of
 the real archive snapshots.
 
 Offline `check` runs the packaged probes against both universal archives.
@@ -187,7 +190,7 @@ unshrunk archives.
 ### Shrunk measurements
 
 Measured at
-[`d5750160f852745b2e1e57e3b0e63b495fe342d6`](https://github.com/chrisbanes/verity/tree/d5750160f852745b2e1e57e3b0e63b495fe342d6)
+[`4b2562615fec6839f85f96c53295c765de2d8f8f`](https://github.com/chrisbanes/verity/tree/4b2562615fec6839f85f96c53295c765de2d8f8f)
 on macOS 26.7 arm64, with the JDK 21.0.12.1 toolchain and launcher, Gradle
 9.8.1, Shadow 9.6.1 and R8 9.1.31. The SHA256 of the `artifact` lines of
 `host-packaging.tsv` is
