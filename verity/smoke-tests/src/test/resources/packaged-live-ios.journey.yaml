@@ -1,0 +1,6 @@
+name: Shrunk packaged ChatGPT journey
+app: com.apple.Preferences
+platform: ios
+steps:
+  - Open the General section of Settings
+  - "[?tree] The General settings page lists an About entry"

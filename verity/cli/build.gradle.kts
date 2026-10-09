@@ -168,8 +168,11 @@ tasks.test {
   val testRuntimeClasspath = sourceSets.test.get().runtimeClasspath
   // Resolve at execution: resolving while tasks are realized lets another Test task mutate a resolved classpath.
   jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dverity.cli.test.classpath=${testRuntimeClasspath.asPath}") })
-  dependsOn(hostJars)
-  val archives = files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  dependsOn(hostJars, shrunkJars)
+  val archives = files(
+    tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile },
+    universalShrunkJar.flatMap { it.archiveFile }, macosArm64ShrunkJar.flatMap { it.archiveFile }, linuxX64ShrunkJar.flatMap { it.archiveFile },
+  )
   inputs.files(archives).withPropertyName("packagedLoggingArchives")
   systemProperty("verity.cli.packaged.jars", archives.asPath)
   systemProperty("verity.cli.fixture.classes", sourceSets.test.get().output.classesDirs.asPath)

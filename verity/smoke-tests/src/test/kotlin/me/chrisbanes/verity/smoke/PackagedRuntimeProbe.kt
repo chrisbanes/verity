@@ -32,6 +32,12 @@ object PackagedRuntimeProbe {
     when (args.first()) {
       "grpc" -> verifyGrpc()
 
+      "services" -> PackagedRuntimeProbeEntries.services()
+
+      "graal" -> PackagedRuntimeProbeEntries.graal()
+
+      "providers" -> PackagedRuntimeProbeProviders.run()
+
       "android" -> {
         check(System.getenv("GITHUB_ACTIONS") == "true") { "Native probe requires configured job-owned CI" }
         check(args[1].startsWith("emulator-"))
@@ -69,7 +75,8 @@ object PackagedRuntimeProbe {
       check(sockets.attempts == 0)
       println("PACKAGED_GRPC_ABI_CHAIN_OK sockets=0")
     } finally {
-      channel.shutdownNow()
+      // The shrunk archive keeps only the ManagedChannel members production calls.
+      channel.shutdown()
       check(channel.awaitTermination(10, TimeUnit.SECONDS)) { "Channel failed to terminate" }
     }
   }

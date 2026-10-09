@@ -18,6 +18,26 @@
 # members, so unused classes and members are still removed.
 -keep,allowshrinking class **
 
+# Log4j loads every plugin in the merged Log4j2Plugins.dat cache by class name and invokes its
+# @PluginFactory/@PluginBuilderFactory members reflectively.
+-keep @org.apache.logging.log4j.core.config.plugins.Plugin class * { *; }
+# Plugin builders (for example ConsoleAppender$Builder and its superclasses) receive configuration through
+# fields annotated @PluginBuilderAttribute/@PluginElement/@Required, set reflectively.
+-keepclassmembers class * {
+  @org.apache.logging.log4j.core.config.plugins.** *;
+}
+# Those annotations name their PluginVisitor and ConstraintValidator implementations, which Log4j
+# instantiates reflectively through their no-argument constructors.
+-keep class org.apache.logging.log4j.core.config.plugins.visitors.** { <init>(); }
+-keep class org.apache.logging.log4j.core.config.plugins.validation.validators.** { <init>(); }
+
+# Class.getEnumConstants(), Enum.valueOf and EnumSet call the synthetic values()/valueOf members reflectively
+# (Truffle, Jackson, Clikt choice options); R8 otherwise drops them when no direct call remains.
+-keepclassmembers enum * {
+  public static **[] values();
+  public static ** valueOf(java.lang.String);
+}
+
 # Missing-class diagnostics. Every class below is also absent from the unshrunk archive: these are optional
 # integrations that the referencing library probes for at runtime, or code paths Verity never reaches.
 
@@ -52,3 +72,28 @@
 -dontwarn org.openjsse.**
 # Netty's BlockHound integration, loaded only when BlockHound is installed.
 -dontwarn reactor.blockhound.**
+
+# Truffle (Graal JS for Maestro scripts) loads DSL-generated library and export classes by name
+# (<Library>Gen, <Receiver>Gen); without them Context creation fails with "not a registered library".
+-keep class com.oracle.truffle.**Gen { *; }
+# Truffle DSL inlined nodes look up the state fields of generated nested data classes reflectively
+# (InlineSupport.StateField.create(lookup, "append3_state_0_")).
+-keepclassmembers class com.oracle.truffle.**Gen$** { <fields>; }
+# Truffle's Accessor bridge (com.oracle.truffle.api.impl.Accessor) loads every module accessor, its nested
+# implementation and the *SupportImpl classes by name (for example LanguageAccessor$LanguageImpl,
+# DynamicObjectSupportImpl).
+-keep class com.oracle.truffle.**Accessor { *; }
+-keep class com.oracle.truffle.**Accessor$* { *; }
+-keep class com.oracle.truffle.**SupportImpl { *; }
+# Optional dependencies of Log4j plugins kept above (async loggers, JMS/Kafka/ZeroMQ/SMTP appenders, CSV
+# layouts, OSGi bundle and versioning annotations); Verity's Log4j configurations use none of these plugins.
+-dontwarn com.conversantmedia.util.concurrent.**
+-dontwarn com.lmax.disruptor.**
+-dontwarn javax.activation.**
+-dontwarn javax.jms.**
+-dontwarn javax.mail.**
+-dontwarn org.apache.commons.csv.**
+-dontwarn org.apache.kafka.**
+-dontwarn org.jctools.queues.**
+-dontwarn org.osgi.annotation.**
+-dontwarn org.zeromq.**

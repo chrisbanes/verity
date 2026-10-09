@@ -278,7 +278,8 @@ object McpLoggingFixture {
     // Packaged fixtures must load production/backend/SDK classes from the selected archive.
     System.getProperty("verity.fixture.archive")?.let { archive ->
       if (archive.endsWith(".jar")) {
-        for (name in listOf("me.chrisbanes.verity.cli.McpCommand", "org.slf4j.LoggerFactory", "org.apache.logging.log4j.core.appender.ConsoleAppender", "io.modelcontextprotocol.kotlin.sdk.client.Client")) {
+        // The CLI ships only the SDK's server side; the R8-shrunk archive drops the unused client classes.
+        for (name in listOf("me.chrisbanes.verity.cli.McpCommand", "org.slf4j.LoggerFactory", "org.apache.logging.log4j.core.appender.ConsoleAppender", "io.modelcontextprotocol.kotlin.sdk.server.Server")) {
           check(File(Class.forName(name, false, McpLoggingFixture::class.java.classLoader).protectionDomain.codeSource.location.toURI()).canonicalFile == File(archive).canonicalFile)
         }
       }

@@ -691,7 +691,7 @@ private suspend fun <T> withPackagedCleanup(close: suspend () -> Unit, body: sus
   }
 }
 
-private class PackagedChild(val process: Process, val stdout: File, val stderr: File, private val scratch: File? = null) {
+internal class PackagedChild(val process: Process, val stdout: File, val stderr: File, private val scratch: File? = null) {
   private val observed = java.util.concurrent.ConcurrentHashMap<Long, ProcessHandle>()
   fun observeDescendants() {
     process.descendants().use { stream -> stream.forEach { observed[it.pid()] = it } }
@@ -721,12 +721,16 @@ private class PackagedChild(val process: Process, val stdout: File, val stderr: 
   }
 }
 
-/** Exercises the actual packaged CLI parser/list path without device or model work. */
+/** Exercises the actual packaged CLI help, parser/list and dry-run paths without device or model work. */
 class PackagedCliPlatformOptionTest {
   @Test
   fun `CLI enum names list and distinct wire aliases fail without devices or models`() = runTest {
+    // Unshrunk and R8-shrunk universal archives.
+    for (jar in checkNotNull(System.getProperty("verity.packaged.cli.options.jars")).split(File.pathSeparator).map(::File)) verifyArchive(jar)
+  }
+
+  private suspend fun verifyArchive(jar: File) {
     withContext(Dispatchers.IO) {
-      val jar = File(checkNotNull(System.getProperty("verity.packaged.cli.options.jar")))
       check(jar.isFile)
       val directory = Files.createTempDirectory("packaged-cli-platform-options").toFile()
       val requests = AtomicInteger()
@@ -741,6 +745,31 @@ class PackagedCliPlatformOptionTest {
       try {
         val journeys = File(directory, "journeys").apply { mkdirs() }
         File(journeys, "settings.journey.yaml").writeText(packagedJourney(Platform.ANDROID_MOBILE))
+        fun launch(label: String, vararg arguments: String): Triple<Int, String, String> {
+          val stdout = File(directory, "$label.stdout")
+          val stderr = File(directory, "$label.stderr")
+          val process = ProcessBuilder(
+            listOf(File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m", "-jar", jar.absolutePath) + arguments,
+          ).directory(directory).redirectOutput(stdout).redirectError(stderr).start()
+          val child = PackagedChild(process, stdout, stderr)
+          try {
+            check(process.waitFor(30, TimeUnit.SECONDS)) { "CLI $label fixture timed out" }
+            return Triple(process.exitValue(), stdout.readText(), stderr.readText())
+          } finally {
+            child.stop()
+            assertThat(child.aliveOwnedCount()).isEqualTo(0)
+          }
+        }
+        val help = launch("help", "--help")
+        assertThat(help.first).isEqualTo(0)
+        assertThat(help.second.contains("Usage:")).isTrue()
+        // The mapped scroll step and visible assertion need neither a navigator nor a device.
+        val dryRun = launch(
+          "dry-run", "--provider", "ollama", "--api-key", "http://127.0.0.1:${trap.address.port}",
+          "run", "--dry-run", File(journeys, "settings.journey.yaml").absolutePath,
+        )
+        assertThat(dryRun.first, dryRun.third).isEqualTo(0)
+        assertThat(dryRun.second.contains("Kind: FAST_PATH\nInteractions:\n- Scroll(DOWN)"), dryRun.second).isTrue()
         for (platform in Platform.entries) {
           // Clikt enum parsing accepts case-only IOS/ios; Android wire names differ semantically.
           val arguments = listOf(platform.cliArgument to true, platform.wireName to (platform == Platform.IOS)) +
