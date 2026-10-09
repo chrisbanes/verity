@@ -696,7 +696,8 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
     val classpath = sources.map { Path.of(it.protectionDomain.codeSource.location.toURI()).toString() }.distinct().joinToString(java.io.File.pathSeparator)
     val receipt = if (scenario.startsWith("model-")) Files.createTempFile("verity-fake-codex-", ".jsonl").also { receipts.add(it) } else null
     val release = if (scenario.startsWith("model-callback-") || scenario == "model-idle-callback") Files.createTempFile("verity-fake-release-", ".txt").also { releases.add(it) } else null
-    val process = ProcessBuilder(listOf(Path.of(System.getProperty("java.home"), "bin", "java").toString()) + listOfNotNull(receipt?.let { "-Dverity.fake.receipt=$it" }, release?.let { "-Dverity.fake.release=$it" }) + listOf("-cp", classpath, FakeCodexAppServer::class.java.name, scenario) + command.drop(1)).directory(directory.toFile()).apply {
+    // Codex always writes UTF-8. With the cleared environment, Linux would otherwise give the fake an ASCII stdout.
+    val process = ProcessBuilder(listOf(Path.of(System.getProperty("java.home"), "bin", "java").toString()) + listOfNotNull(receipt?.let { "-Dverity.fake.receipt=$it" }, release?.let { "-Dverity.fake.release=$it" }) + listOf("-Dstdout.encoding=UTF-8", "-cp", classpath, FakeCodexAppServer::class.java.name, scenario) + command.drop(1)).directory(directory.toFile()).apply {
       environment().clear()
       environment().putAll(environment)
     }.start()
