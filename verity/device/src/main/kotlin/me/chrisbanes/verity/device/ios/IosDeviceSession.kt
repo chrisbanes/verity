@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import maestro.Maestro
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
@@ -31,7 +32,15 @@ class IosDeviceSession(
 
   override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml, onCommandStart)
 
-  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
+  override suspend fun executeActions(flow: ActionFlow): FlowResult {
+    val result = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
+    // ponytail: settles only at the end of the flow; actions after LaunchApp in the same flow still race the launch.
+    // Sessions without a bounded endpoint (test doubles) cannot poll safely, so they skip settling.
+    val capture = boundedCapture ?: return result
+    if (!result.success || flow.actions.none { it is Interaction.LaunchApp }) return result
+    if (awaitIosLaunchSettled(flow.appId, capture)) return result
+    return FlowResult(success = false, output = "${flow.appId} launch did not settle within $IOS_LAUNCH_SETTLE_TIMEOUT: SpringBoard still owns the hierarchy")
+  }
 
   override suspend fun pressKey(keyName: String): Unit = withContext(Dispatchers.IO) {
     iosDevice.pressKey(keyName)

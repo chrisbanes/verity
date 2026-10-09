@@ -316,7 +316,12 @@ private class PackagedQualification {
       withTimeout(30_000) { awaitSuccess(listing) }
       check(withContext(Dispatchers.IO) { listing.stdout.readText().contains("Settings visible") })
       val running = start(directory, owned, "run", options + listOf("run", fixtures.path))
-      withTimeout(600_000) { awaitSuccess(running) }
+      try {
+        withTimeout(600_000) { awaitSuccess(running) }
+      } catch (failure: Throwable) {
+        if (platform == Platform.IOS) withContext(NonCancellable + Dispatchers.IO) { retainSimulatorScreenshot(target, File(directory, "run-failure.png"), failure) }
+        throw failure
+      }
       val summaries = withContext(Dispatchers.IO) { output.walkTopDown().filter { it.name == "summary.json" }.toList() }
       check(summaries.size == 1) { "Expected one persisted suite summary" }
       val summary = withContext(Dispatchers.IO) { Json.parseToJsonElement(summaries.single().readText()).jsonObject }
@@ -449,6 +454,21 @@ private class PackagedQualification {
     } catch (failure: Throwable) {
       scratch.deleteRecursively()
       throw failure
+    }
+  }
+
+  /** Post-run screen state for the uploaded artifact; never replaces the run failure. */
+  private fun retainSimulatorScreenshot(target: String, output: File, failure: Throwable) {
+    try {
+      val process = ProcessBuilder("xcrun", "simctl", "io", target, "screenshot", output.path).redirectErrorStream(true).redirectOutput(File(output.path + ".log")).start()
+      if (!process.waitFor(30, TimeUnit.SECONDS)) {
+        process.destroyForcibly().waitFor()
+        failure.addSuppressed(IllegalStateException("Simulator screenshot timed out"))
+      } else if (process.exitValue() != 0) {
+        failure.addSuppressed(IllegalStateException("Simulator screenshot failed: exit ${process.exitValue()}"))
+      }
+    } catch (screenshot: Exception) {
+      failure.addSuppressed(screenshot)
     }
   }
 
@@ -1295,37 +1315,22 @@ class PackagedJourneyFixtureTest {
   }
 
   @Test
-  fun `iOS fixture resets scroll then synchronizes before actual General visibility without models`() = runTest {
+  fun `iOS fixture only scrolls toward the top before actual General visibility without models`() = runTest {
     for (visible in listOf(true, false)) {
       val fake = FakeDeviceSession(platform = Platform.IOS)
       val events = mutableListOf<String>()
-      val reset = Interaction.Scroll(Direction.UP)
+      // Maestro swipe DOWN reveals content above, so General stays on screen from any start at or near the top.
       val scroll = Interaction.Scroll(Direction.DOWN)
-      var scrollPosition = 0
       val session = object : DeviceSession by fake {
         override suspend fun executeActions(flow: ActionFlow) = fake.executeActions(flow).also {
-          for (action in flow.actions) {
-            when (action) {
-              reset -> {
-                scrollPosition = (scrollPosition - 1).coerceAtLeast(0)
-                events += "reset-scroll"
-              }
-
-              scroll -> {
-                scrollPosition++
-                events += "scroll"
-              }
-
-              else -> events += "launch"
-            }
-          }
+          events += if (flow.actions.contains(scroll)) "scroll" else "launch"
         }
         override suspend fun waitForAnimationToEnd() {
           events += "animation-wait"
         }
         override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
           events += "capture"
-          return HierarchyNode(attributes = if (visible && scrollPosition == 1) mapOf("text" to "General") else emptyMap()).containsText(text, ignoreCase)
+          return HierarchyNode(attributes = if (visible) mapOf("text" to "General") else emptyMap()).containsText(text, ignoreCase)
         }
       }
       val orchestrator = Orchestrator(
@@ -1333,16 +1338,12 @@ class PackagedJourneyFixtureTest {
         navigatorFactory = { NavigatorAgent("unused") { _, _ -> error("iOS fixture must not use navigator") } },
         inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("iOS fixture must not use inspector") }, evaluateVisualContent = { _, _, _, _ -> error("iOS fixture must not use visual model") }) },
       )
-      repeat(2) {
-        events.clear()
-        val priorFlows = fake.executedActionFlows.size
-        val result = orchestrator.run(JourneyLoader.fromYaml(packagedJourney(Platform.IOS)))
-        assertThat(result.passed).isEqualTo(visible)
-        assertThat(events).isEqualTo(listOf("launch", "reset-scroll", "animation-wait", "scroll", "animation-wait", "capture"))
-        assertThat(fake.executedActionFlows.drop(priorFlows).flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp(), reset, scroll))
-        assertThat(result.segments.single().actions).isEqualTo(listOf("Scroll up", "Scroll down"))
-        assertThat(result.segments.single().assertionDescription).isEqualTo("General")
-      }
+      val result = orchestrator.run(JourneyLoader.fromYaml(packagedJourney(Platform.IOS)))
+      assertThat(result.passed).isEqualTo(visible)
+      assertThat(events).isEqualTo(listOf("launch", "scroll", "animation-wait", "capture"))
+      assertThat(fake.executedActionFlows.flatMap { it.actions }).isEqualTo(listOf(Interaction.LaunchApp(), scroll))
+      assertThat(result.segments.single().actions).isEqualTo(listOf("Scroll down"))
+      assertThat(result.segments.single().assertionDescription).isEqualTo("General")
     }
   }
 
