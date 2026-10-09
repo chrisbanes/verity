@@ -67,7 +67,7 @@ For an unprefixed condition, first check the complete literal condition with `ch
 
 Reach a stated target with side-effect-free movement by batching an estimate, then correcting from evidence (at most two corrections). It never executes an authored journey loop.
 
-1. Estimate the presses from evidence that passes [Hierarchy Reuse](#hierarchy-reuse), erring high. When the target is in the captured evidence, use its observed distance plus one. Otherwise use one viewport of visible items in the movement direction. Keep the total of batch and correction presses within the caller's bound (for example, the audit step's `max`).
+1. Run the step 3 check on the current state first. If the condition already holds, succeed with no movement. Otherwise estimate the presses from that check or other evidence that passes [Hierarchy Reuse](#hierarchy-reuse), erring high. When the target is in the captured evidence, use its observed distance plus one. Otherwise use one viewport of visible items in the movement direction. Keep the total of batch and correction presses within the caller's bound (for example, the audit step's `max`).
 2. Send the estimate as one batched `run_flow`. A debugger previews it and each correction flow, as for any generated flow.
 3. Inspect once with the cheapest check that evaluates the `until` condition and, if unsatisfied, locates the correction:
    - `check_visible` when presence of literal text is the condition. A false result is followed by one locating `capture_focused_tree` or `capture_hierarchy`, which belongs to the same inspection;
