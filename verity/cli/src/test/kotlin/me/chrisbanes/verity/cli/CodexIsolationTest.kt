@@ -35,9 +35,29 @@ class CodexIsolationTest {
     assertThat(isolation.policy["project_doc_max_bytes"]).isEqualTo(JsonPrimitive(0))
     assertThat(CodexIsolation.features.size).isEqualTo(37)
     assertThat(CodexIsolation.features.all { isolation.policy["features.$it"] == JsonPrimitive(false) }).isTrue()
-    assertThat(isolation.arguments().contains("mcp_servers.\"a.\\\"b\\\\c\".enabled=false")).isTrue()
-    assertThat(isolation.arguments().contains("plugins.\"with spaces\".enabled=false")).isTrue()
+    assertThat(isolation.arguments().contains("mcp_servers={ \"a.\\\"b\\\\c\" = { enabled = false } }")).isTrue()
+    assertThat(isolation.arguments().contains("plugins={ \"with spaces\" = { enabled = false } }")).isTrue()
     assertThat(isolation.arguments().none { it.contains("sqlite_home") || it.contains("CODEX_HOME") }).isTrue()
+  }
+
+  @Test
+  fun `each group is one prefix free inline table keyed by TOML basic strings`() {
+    val names = setOf("homeassistant", "computer-use", "linear@openai-curated", "punctuation.a\"b\\c", "space and [brackets]")
+    val isolation = CodexIsolation(mapOf("mcp_servers" to names, "plugins" to names, "apps" to emptySet()))
+    val overrides = isolation.arguments().chunked(2).map { (flag, override) ->
+      assertThat(flag).isEqualTo("-c")
+      override.substringBefore('=') to override.substringAfter('=')
+    }
+    val tables = names.joinToString(", ", "{ ", " }") { "${CodexIsolation.tomlKey(it)} = { enabled = false }" }
+    assertThat(overrides.filter { it.first in CodexIsolation.groups }).isEqualTo(listOf("mcp_servers" to tables, "plugins" to tables, "apps" to "{ \"_default\" = { enabled = false } }"))
+    assertThat(overrides.none { (key, _) -> CodexIsolation.groups.any { key.startsWith("$it.") } }).isTrue()
+    assertThat(isolation.threadConfig()["apps"]).isEqualTo(JsonObject(mapOf("_default" to JsonObject(mapOf("enabled" to JsonPrimitive(false))))))
+    assertThat(isolation.threadConfig()["mcp_servers"]?.jsonObject?.keys).isEqualTo(names)
+    listOf(overrides.map { it.first }, isolation.threadConfig().keys.toList()).forEach { keys ->
+      assertThat(keys.distinct()).isEqualTo(keys)
+      assertThat(keys.none { key -> keys.any { key.startsWith("$it.") } }).isTrue()
+    }
+    assertThat(CodexIsolation().arguments().chunked(2).count { it[1].substringBefore('=') in CodexIsolation.groups }).isEqualTo(1)
   }
 
   @Test

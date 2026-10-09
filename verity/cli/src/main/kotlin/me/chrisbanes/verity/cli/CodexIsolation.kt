@@ -37,7 +37,6 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
     put("forced_login_method", JsonPrimitive("chatgpt"))
     put("agents.enabled", JsonPrimitive(false))
     put("notify", JsonArray(emptyList()))
-    put("apps._default.enabled", JsonPrimitive(false))
     put("project_doc_max_bytes", JsonPrimitive(0))
     put("developer_instructions", JsonPrimitive(""))
     features.forEach { put("features.$it", JsonPrimitive(false)) }
@@ -45,17 +44,20 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
   }
 
   fun arguments(): List<String> = buildList {
-    (policy + namedPolicy()).forEach { (key, value) ->
+    policy.forEach { (key, value) ->
       add("-c")
       add("$key=$value")
     }
+    disabledNames().forEach { (group, keys) ->
+      add("-c")
+      add("$group=" + keys.joinToString(", ", "{ ", " }") { "${tomlKey(it)} = { enabled = false }" })
+    }
   }
 
-  fun threadConfig(): JsonObject = JsonObject(policy + namedPolicy())
+  fun threadConfig(): JsonObject = JsonObject(policy + disabledNames().mapValues { (_, keys) -> JsonObject(keys.associateWith { JsonObject(mapOf("enabled" to JsonPrimitive(false))) }) })
 
-  private fun namedPolicy(): Map<String, JsonElement> = buildMap {
-    names.forEach { (group, keys) -> keys.forEach { put("$group.${tomlKey(it)}.enabled", JsonPrimitive(false)) } }
-  }
+  // Codex splits override keys on every '.', ignoring quotes, so each group is one inline table keyed by name.
+  private fun disabledNames(): Map<String, Set<String>> = groups.associateWith { group -> names[group].orEmpty() + if (group == "apps") setOf("_default") else emptySet() }.filterValues { it.isNotEmpty() }
 
   fun verify(config: JsonObject): CodexIsolation {
     policy.forEach { (key, expected) -> if (lookup(config, key.split('.')) != expected) throw CodexFailure(CodexFailureKind.ISOLATION) }
@@ -64,6 +66,7 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
       if (objectValue != null && objectValue !is JsonObject) throw CodexFailure(CodexFailureKind.ISOLATION)
       objectValue?.keys.orEmpty() - if (group == "apps") setOf("_default") else emptySet()
     }
+    if (lookup(config, listOf("apps", "_default", "enabled")) != JsonPrimitive(false)) throw CodexFailure(CodexFailureKind.ISOLATION)
     if (names.isNotEmpty()) {
       if (discovered != names) throw CodexFailure(CodexFailureKind.ISOLATION)
       names.forEach { (group, keys) -> keys.forEach { if (lookup(config, listOf(group, it, "enabled")) != JsonPrimitive(false)) throw CodexFailure(CodexFailureKind.ISOLATION) } }

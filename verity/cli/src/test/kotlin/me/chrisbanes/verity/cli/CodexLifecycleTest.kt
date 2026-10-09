@@ -7,6 +7,7 @@ import assertk.assertions.isLessThan
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.io.ByteArrayInputStream
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.CancellationException
@@ -51,11 +52,34 @@ class CodexLifecycleTest {
           assertThat(observations["removedEnvironmentAbsent"]).isEqualTo(JsonPrimitive(true))
           assertThat(observations["optOutNotificationMethods"]).isEqualTo(JsonArray(OPTED_OUT_NOTIFICATIONS.map(::JsonPrimitive)))
           assertThat(backend.isolation.names.values.all { it.size == 2 }).isTrue()
+          val typed = backend.client.request("config/read").getValue("config").jsonObject
+          CodexIsolation.groups.forEach { group ->
+            backend.isolation.names.getValue(group).forEach { assertThat(typed.getValue(group).jsonObject.getValue(it).jsonObject["enabled"]).isEqualTo(JsonPrimitive(false)) }
+          }
+          val invalidThread = buildJsonObject { put("config", buildJsonObject { put("mcp_servers.\"punctuation.a\\\"b\\\\c\".enabled", false) }) }
+          assertThat(assertFailsWith<CodexFailure> { backend.client.request("thread/start", invalidThread) }.kind).isEqualTo(CodexFailureKind.PROTOCOL)
         } finally {
           backend.close()
         }
         backend.close()
         fake.verifyCleanup()
+      }
+    }
+  }
+
+  @Test
+  fun `dotted group overrides crash like real Codex instead of disabling a name`() = runTest {
+    withContext(Dispatchers.IO) {
+      listOf("mcp_servers.\"punctuation.a\\\"b\\\\c\".enabled=false", "mcp_servers.punctuation.a\"b\\c.enabled=false").forEach { override ->
+        val directory = Files.createTempDirectory("verity-fake-dotted-")
+        try {
+          val process = FakeCodexLauncher("success").launch(listOf("codex", "app-server", "--listen", "stdio://", "-c", override), directory, emptyMap())
+          val error = process.errorStream.bufferedReader().readText()
+          assertThat(process.waitFor()).isEqualTo(1)
+          assertThat(error.contains("invalid transport")).isTrue()
+        } finally {
+          Files.deleteIfExists(directory)
+        }
       }
     }
   }

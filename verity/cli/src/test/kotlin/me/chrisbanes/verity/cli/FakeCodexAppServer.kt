@@ -115,19 +115,25 @@ internal object FakeCodexAppServer {
       }
       return
     }
-    val config = mutableMapOf<String, JsonElement>()
+    // Session-flags layer, built exactly as Codex applies `-c` overrides.
+    val session = mutableMapOf<String, JsonElement>()
     command.windowed(2).filter { it[0] == "-c" }.forEach { pair ->
-      val (key, value) = pair[1].split('=', limit = 2)
-      insert(config, keys(key), Json.parseToJsonElement(value))
+      val (key, raw) = pair[1].split('=', limit = 2)
+      override(session, key.trim().split('.'), tomlValue(raw))
     }
-    val final = command.any { it.startsWith("mcp_servers.") }
-    val names = listOf("punctuation.a\"b\\c", "space and [brackets]")
-    CodexIsolation.groups.forEach { group ->
-      val existing = (config[group] as? JsonObject ?: JsonObject(emptyMap())).toMutableMap()
-      names.forEach { name -> if (name !in existing) existing[name] = buildJsonObject { put("enabled", true) } }
-      if (scenario == "drift" && final) existing["new-name"] = buildJsonObject { put("enabled", true) }
-      config[group] = JsonObject(existing)
+    val final = "mcp_servers" in session
+    val inherited = listOf("punctuation.a\"b\\c", "space and [brackets]") + if (scenario == "drift" && final) listOf("new-name") else emptyList()
+    // User layer: inherited entries, with the transport real MCP servers need.
+    val user = JsonObject(
+      CodexIsolation.groups.associateWith { group ->
+        JsonObject(inherited.associateWith { JsonObject(listOfNotNull(if (group == "mcp_servers") "command" to JsonPrimitive("fixture-mcp") else null, "enabled" to JsonPrimitive(true)).toMap()) })
+      },
+    )
+    invalidConfig(merge(user, JsonObject(session)))?.let {
+      System.err.println("Error: $it")
+      kotlin.system.exitProcess(1)
     }
+    val config = merge(user, JsonObject(session)).toMutableMap()
     if (scenario == "denied-policy") config["sandbox_mode"] = JsonPrimitive("workspace-write")
     // A higher-precedence managed layer can still win over session flags.
     if (scenario == "redirected-chatgpt-origin") config["chatgpt_base_url"] = JsonPrimitive("https://attacker.example/backend-api/")
@@ -262,6 +268,17 @@ internal object FakeCodexAppServer {
         "thread/start" -> {
           if (activeThread != null) error("overlapping model requests")
           val params = frame.getValue("params").jsonObject
+          val threadLayer = session.toMutableMap()
+          (params["config"] as? JsonObject)?.forEach { (key, value) -> override(threadLayer, key.split('.'), value) }
+          if (invalidConfig(merge(user, JsonObject(threadLayer))) != null) {
+            println(
+              buildJsonObject {
+                put("id", frame.getValue("id"))
+                put("error", buildJsonObject { put("code", -32603) })
+              },
+            )
+            return@forEach
+          }
           capturedThread = params
           ++threadCounter
           activeThread = if (scenario == "model-reused-thread-after-success") "thread-1" else "thread-$threadCounter"
@@ -650,36 +667,31 @@ internal object FakeCodexAppServer {
     )
   }
 
-  private fun keys(key: String): List<String> {
-    val result = mutableListOf<String>()
-    var start = 0
-    var quoted = false
-    var escaped = false
-    key.forEachIndexed { index, char ->
-      if (escaped) {
-        escaped = false
-      } else if (char == '\\' && quoted) {
-        escaped = true
-      } else if (char == '"') {
-        quoted = !quoted
-      } else if (char == '.' && !quoted) {
-        result.add(key.substring(start, index))
-        start = index + 1
-      }
+  private fun override(target: MutableMap<String, JsonElement>, path: List<String>, value: JsonElement) {
+    if (path.size == 1) {
+      target[path[0]] = value
+      return
     }
-    result.add(key.substring(start))
-    return result.map { if (it.startsWith('"')) Json.parseToJsonElement(it).jsonPrimitive.content else it }
+    val child = (target[path[0]] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
+    override(child, path.drop(1), value)
+    target[path[0]] = JsonObject(child)
   }
 
-  private fun insert(target: MutableMap<String, JsonElement>, keys: List<String>, value: JsonElement) {
-    if (keys.size == 1) {
-      target[keys[0]] = value
-    } else {
-      val child = (target[keys[0]] as? JsonObject ?: JsonObject(emptyMap())).toMutableMap()
-      insert(child, keys.drop(1), value)
-      target[keys[0]] = JsonObject(child)
-    }
+  private fun merge(base: JsonObject, overlay: JsonObject): JsonObject = JsonObject(
+    base + overlay.mapValues { (key, value) ->
+      val existing = base[key]
+      if (existing is JsonObject && value is JsonObject) merge(existing, value) else value
+    },
+  )
+
+  /** Codex's group validation: a non-table group, or an MCP entry without a transport, stops startup. */
+  private fun invalidConfig(config: JsonObject): String? {
+    CodexIsolation.groups.forEach { group -> if (config[group] != null && config[group] !is JsonObject) return "invalid type in `$group`" }
+    return (config["mcp_servers"] as? JsonObject)?.entries?.firstOrNull { (_, entry) -> (entry as? JsonObject)?.let { "command" in it || "url" in it } != true }?.let { "invalid transport in `mcp_servers.${it.key}`" }
   }
+
+  /** Codex parses a `-c` value as TOML, falling back to the trimmed literal string. */
+  private fun tomlValue(raw: String): JsonElement = TomlSubset(raw.trim()).parse() ?: JsonPrimitive(raw.trim().trim('"', '\''))
 
   // Reduced, unchanged schema fragments from the retained real 0.159.0 experimental schemas.
   private val schemaFixtures: Map<String, String> = mapOf(
@@ -854,5 +866,100 @@ internal suspend fun recordCodexTestEvidence(evidence: JsonObject) {
   kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
     Files.createDirectories(path.toAbsolutePath().parent)
     Files.writeString(path, evidence.toString() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)
+  }
+}
+
+/** The TOML value subset Verity emits: basic strings, booleans, integers, arrays and inline tables. */
+private class TomlSubset(private val source: String) {
+  private var index = 0
+
+  fun parse(): JsonElement? = runCatching {
+    value().also {
+      skipSpace()
+      require(index == source.length)
+    }
+  }.getOrNull()
+
+  private fun value(): JsonElement {
+    skipSpace()
+    return when (val char = source[index]) {
+      '"' -> JsonPrimitive(string())
+
+      '[' -> items(']') { value() }.let(::JsonArray)
+
+      '{' -> JsonObject(items('}') { key() to expectAssignment() }.toMap())
+
+      else -> {
+        val token = source.substring(index).takeWhile { it.isLetterOrDigit() || it == '-' || it == '+' || it == '_' }
+        require(token.isNotEmpty()) { "unexpected $char" }
+        index += token.length
+        when {
+          token == "true" -> JsonPrimitive(true)
+          token == "false" -> JsonPrimitive(false)
+          else -> JsonPrimitive(token.toLong())
+        }
+      }
+    }
+  }
+
+  private fun expectAssignment(): JsonElement {
+    skipSpace()
+    require(source[index++] == '=')
+    return value()
+  }
+
+  private fun key(): String {
+    skipSpace()
+    if (source[index] == '"') return string()
+    val bare = source.substring(index).takeWhile { it.isLetterOrDigit() || it == '_' || it == '-' }
+    require(bare.isNotEmpty())
+    index += bare.length
+    return bare
+  }
+
+  private fun <T> items(close: Char, item: () -> T): List<T> {
+    index++
+    val result = mutableListOf<T>()
+    skipSpace()
+    if (source[index] == close) return result.also { index++ }
+    while (true) {
+      result += item()
+      skipSpace()
+      when (source[index++]) {
+        ',' -> Unit
+        close -> return result
+        else -> error("unterminated")
+      }
+    }
+  }
+
+  private fun string(): String {
+    index++
+    val result = StringBuilder()
+    while (true) {
+      val char = source[index++]
+      require(char == '\t' || (char >= ' ' && char != '\u007f')) { "control character" }
+      when (char) {
+        '"' -> return result.toString()
+
+        '\\' -> when (val escape = source[index++]) {
+          'b' -> result.append('\b')
+          't' -> result.append('\t')
+          'n' -> result.append('\n')
+          'f' -> result.append('\u000c')
+          'r' -> result.append('\r')
+          '"', '\\' -> result.append(escape)
+          'u' -> result.appendCodePoint(source.substring(index, index + 4).toInt(16)).also { index += 4 }
+          'U' -> result.appendCodePoint(source.substring(index, index + 8).toInt(16)).also { index += 8 }
+          else -> error("escape")
+        }
+
+        else -> result.append(char)
+      }
+    }
+  }
+
+  private fun skipSpace() {
+    while (index < source.length && (source[index] == ' ' || source[index] == '\t')) index++
   }
 }
