@@ -88,6 +88,7 @@ data class JourneyTrailArtifact(
   val maxEntries: Int,
   val maxTextChars: Int,
   val maxFocusedNodes: Int,
+  val maxInstructions: Int,
 )
 
 /** [focusBefore] and [focusAfter]: omitted means unknown, an empty list means no focused node was observed. */
@@ -98,6 +99,7 @@ data class TrailEntryArtifact(
   val origin: TrailOrigin,
   val iteration: Int? = null,
   val instructions: List<String> = emptyList(),
+  val omittedInstructions: Int = 0,
   val succeeded: Boolean,
   val focusBefore: List<FocusNodeArtifact>? = null,
   val focusAfter: List<FocusNodeArtifact>? = null,

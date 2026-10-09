@@ -29,10 +29,11 @@ The launch of the app is not recorded.
 | --- | --- | --- |
 | Trail entries | 20 | The most recent are retained; `droppedEntries` counts older ones |
 | Verdicts | 10 | The most recent are retained; the prompt notes how many older ones were omitted |
+| Instructions per entry | 10 | The first ten are kept in order; `omittedInstructions` counts the rest and the prompt notes them |
 | Text per field | 300 characters | An instruction, assertion, reasoning or resource ID is cut to 300 characters including a trailing `…` |
 | Focused nodes per observation | 5 | The first five in tree order are kept |
 
-A cut to an entry's text or focus sets that entry's `truncated` flag. Memory never grows beyond these caps.
+A cut to an entry's instructions, text or focus sets that entry's `truncated` flag. Memory never grows beyond these caps.
 
 ## What the inspector receives
 
@@ -48,7 +49,7 @@ Memory belongs to one `Orchestrator.run` call. A suite, or a reused `Orchestrato
 
 ## Artifact
 
-Every journey result written by a normal run includes an additive `trail` object with `entries` (oldest first), `droppedEntries`, `maxEntries`, `maxTextChars` and `maxFocusedNodes`. A failure written for an exception has no `trail`. See [run artifacts](run-artifacts.md); `formatVersion` remains 1.
+Every journey result written by a normal run includes an additive `trail` object with `entries` (oldest first), `droppedEntries`, `maxEntries`, `maxTextChars`, `maxFocusedNodes` and `maxInstructions`. A failure written for an exception has no `trail`. See [run artifacts](run-artifacts.md); `formatVersion` remains 1.
 
 ## Qualification
 

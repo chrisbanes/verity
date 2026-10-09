@@ -286,12 +286,13 @@ class RunResultContractTest {
       trail = JourneyTrailArtifact(
         entries = listOf(
           TrailEntryArtifact(0, TrailGranularity.INTERACTION, TrailOrigin.SCROLL_TO_FIND, instructions = listOf("Scroll"), succeeded = true, focusBefore = listOf(FocusNodeArtifact("/0", "menu:home")), focusAfter = null),
-          TrailEntryArtifact(1, TrailGranularity.FLOW, TrailOrigin.LOOP, iteration = 1, instructions = listOf("a", "b"), succeeded = false, focusBefore = null, focusAfter = emptyList(), truncated = true),
+          TrailEntryArtifact(1, TrailGranularity.FLOW, TrailOrigin.LOOP, iteration = 1, instructions = listOf("a", "b"), omittedInstructions = 2, succeeded = false, focusBefore = null, focusAfter = emptyList(), truncated = true),
         ),
         droppedEntries = 3,
         maxEntries = 20,
         maxTextChars = 300,
         maxFocusedNodes = 5,
+        maxInstructions = 10,
       ),
     )
     val encoded = json.encodeToString(result)

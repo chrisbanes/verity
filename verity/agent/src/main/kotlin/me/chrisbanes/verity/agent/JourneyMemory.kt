@@ -102,7 +102,7 @@ internal class JourneyMemory(
     return InspectionContext(render(screenshots.size), screenshots)
   }
 
-  fun trail(): JourneyTrailArtifact = JourneyTrailArtifact(trail.toList(), droppedEntries, MAX_TRAIL_ENTRIES, MAX_TEXT_CHARS, MAX_FOCUSED_NODES)
+  fun trail(): JourneyTrailArtifact = JourneyTrailArtifact(trail.toList(), droppedEntries, MAX_TRAIL_ENTRIES, MAX_TEXT_CHARS, MAX_FOCUSED_NODES, MAX_INSTRUCTIONS)
 
   suspend fun close() {
     withContext(NonCancellable + Dispatchers.IO) {
@@ -125,7 +125,9 @@ internal class JourneyMemory(
     after: List<FocusNodeArtifact>?,
   ) {
     var truncated = false
-    val clipped = instructions.map { text -> clip(text).also { truncated = truncated || it.second }.first }
+    val omitted = (instructions.size - MAX_INSTRUCTIONS).coerceAtLeast(0)
+    if (omitted > 0) truncated = true
+    val clipped = instructions.take(MAX_INSTRUCTIONS).map { text -> clip(text).also { truncated = truncated || it.second }.first }
     fun focus(nodes: List<FocusNodeArtifact>?): List<FocusNodeArtifact>? {
       if (nodes == null) return null
       if (nodes.size > MAX_FOCUSED_NODES) truncated = true
@@ -136,7 +138,7 @@ internal class JourneyMemory(
     }
     val focusBefore = focus(before)
     val focusAfter = focus(after)
-    trail.addLast(TrailEntryArtifact(source.segment, granularity, source.origin, source.iteration, clipped, succeeded, focusBefore, focusAfter, truncated))
+    trail.addLast(TrailEntryArtifact(source.segment, granularity, source.origin, source.iteration, clipped, omitted, succeeded, focusBefore, focusAfter, truncated))
     while (trail.size > MAX_TRAIL_ENTRIES) {
       trail.removeFirst()
       droppedEntries++
@@ -164,7 +166,7 @@ internal class JourneyMemory(
   private fun describe(entry: TrailEntryArtifact): String {
     val origin = entry.origin.name.lowercase().replace('_', '-') + (entry.iteration?.let { " #$it" } ?: "")
     val outcome = if (entry.succeeded) "succeeded" else "failed"
-    val instructions = entry.instructions.joinToString("; ") { "\"$it\"" }
+    val instructions = entry.instructions.joinToString("; ") { "\"$it\"" } + if (entry.omittedInstructions > 0) "; (+${entry.omittedInstructions} more not shown)" else ""
     return "segment ${entry.segment}, ${entry.granularity.name.lowercase()} ($origin), $outcome: $instructions; " +
       "focus before: ${focusText(entry.focusBefore)}; after: ${focusText(entry.focusAfter)}" +
       if (entry.truncated) " [truncated]" else ""
@@ -184,6 +186,7 @@ internal class JourneyMemory(
     const val MAX_VERDICTS = 10
     const val MAX_TEXT_CHARS = 300
     const val MAX_FOCUSED_NODES = 5
+    const val MAX_INSTRUCTIONS = 10
     val FOCUS_CAPTURE_TIMEOUT = 2.seconds
     internal const val FIRST = "first.png"
     internal const val LATEST = "latest.png"

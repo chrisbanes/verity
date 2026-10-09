@@ -156,6 +156,7 @@ class JourneyMemoryTest {
       assertThat(trail.maxEntries).isEqualTo(20)
       assertThat(trail.maxTextChars).isEqualTo(300)
       assertThat(trail.maxFocusedNodes).isEqualTo(5)
+      assertThat(trail.maxInstructions).isEqualTo(10)
       assertThat(memory.inspectionContext(includeScreenshots = true).referenceText).contains("(5 older omitted)")
     }
   }
@@ -191,11 +192,26 @@ class JourneyMemoryTest {
   }
 
   @Test
+  fun `a flow with many instructions keeps the first ten and counts the rest`() {
+    withMemory { memory, _ ->
+      val instructions = (1..13).map { "step $it" }
+      memory.recordExecution(source, TrailGranularity.FLOW, instructions) { }
+      val entry = memory.trail().entries.single()
+      assertThat(entry.instructions).isEqualTo(instructions.take(10))
+      assertThat(entry.omittedInstructions).isEqualTo(3)
+      assertThat(entry.truncated).isTrue()
+      assertThat(memory.inspectionContext(includeScreenshots = false).referenceText).contains("\"step 10\"; (+3 more not shown)")
+      assertThat(memory.inspectionContext(includeScreenshots = false).referenceText).doesNotContain("step 11")
+    }
+  }
+
+  @Test
   fun `exactly bounded values are not flagged`() {
     val session = FakeSession { focused("a", "b", "c", "d", "e") }
     withMemory(session) { memory, _ ->
-      memory.recordExecution(source, TrailGranularity.INTERACTION, listOf("x".repeat(300))) { }
+      memory.recordExecution(source, TrailGranularity.FLOW, List(10) { "x".repeat(300) }) { }
       assertThat(memory.trail().entries.single().truncated).isFalse()
+      assertThat(memory.trail().entries.single().omittedInstructions).isEqualTo(0)
     }
   }
 

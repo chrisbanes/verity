@@ -546,6 +546,7 @@ class RunCommandTest {
         maxEntries = 20,
         maxTextChars = 300,
         maxFocusedNodes = 5,
+        maxInstructions = 10,
       )
       val command = runCommand(clock = fixedClock()) { journeys ->
         SuiteRunResult(journeys.map { ResolvedJourneyResult(it, JourneyResult(it.journey.name, listOf(SegmentResult(0, passed = true)), trail)) })
