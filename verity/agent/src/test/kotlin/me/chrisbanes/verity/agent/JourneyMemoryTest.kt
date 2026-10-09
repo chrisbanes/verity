@@ -267,6 +267,21 @@ class JourneyMemoryTest {
   }
 
   @Test
+  fun `frozen copies are removed when the block throws`() {
+    withMemory { memory, root ->
+      memory.recordScreenshot(file(root, "a.png", 1))
+      var frozen: Path? = null
+      assertFailsWith<IllegalStateException> {
+        memory.withFrozenContext(includeScreenshots = true) { context ->
+          frozen = context.referenceScreenshots.single()
+          error("boom")
+        }
+      }
+      assertThat(Files.exists(frozen!!)).isFalse()
+    }
+  }
+
+  @Test
   fun `frozen context without earlier screenshots attaches none`() {
     withMemory { memory, root ->
       memory.withFrozenContext(includeScreenshots = true) { context ->

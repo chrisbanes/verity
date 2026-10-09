@@ -41,7 +41,7 @@ Immediately before each tree or visual assertion, and each loop condition check,
 
 Visual inspections (including conditions beginning `visually`) also receive at most two earlier screenshots. The first earlier screenshot is Reference screenshot 1 and the most recent is Reference screenshot 2. If only one earlier screenshot exists it is attached once. Both are distinct from the current screenshot, which keeps its own label. Tree inspections receive text only. A fresh journey sends no reference context.
 
-Screenshots are copied into a journey-owned temporary directory when the inspection finishes, because artifact paths are reused and temporary screenshots are deleted. That directory holds at most two files, the latest is replaced atomically, a failed copy keeps the previous reference, and the directory is removed when the journey ends. These copies are not saved as run artifacts, and neither are the retained verdicts.
+Screenshots are copied into a journey-owned temporary directory when the inspection finishes, because artifact paths are reused and temporary screenshots are deleted. That directory holds at most two files (plus, during a visual wait, a `frozen-*` subdirectory of up to two copies), the latest is replaced atomically, a failed copy keeps the previous reference, and the directory is removed when the journey ends. These copies are not saved as run artifacts, and neither are the retained verdicts.
 
 ## Scope
 
