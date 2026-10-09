@@ -280,6 +280,11 @@ class CodexModelBackendTest {
         assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
         assertThat(fake.capturedFrames().mapNotNull { it["initializeOptOut"] }).isEqualTo(List(2) { JsonArray(OPTED_OUT_NOTIFICATIONS.map(::JsonPrimitive)) })
       }
+      // Real Codex announces the thread after the start response: during unsubscribe for role validation, during turn start for requests.
+      fixture("model-late-thread-started") { _, backend ->
+        backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low", SelectedRoleModel.Codex("gpt-6-luna") to "low"))
+        assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
+      }
       val warned = FakeCodexLauncher("config-warning")
       warned.prepare().close()
       warned.verifyCleanup()

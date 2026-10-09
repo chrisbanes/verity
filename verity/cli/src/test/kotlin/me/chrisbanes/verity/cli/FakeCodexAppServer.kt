@@ -182,6 +182,7 @@ internal object FakeCodexAppServer {
     var activeThread: String? = null
     var activeTurn: String? = null
     var capturedThread = JsonObject(emptyMap())
+    var lateThreadStarted: JsonObject? = null
     var initialized = false
     var notified = false
     var read = false
@@ -337,9 +338,12 @@ internal object FakeCodexAppServer {
               },
             )
           }
-          event("thread/started", buildJsonObject { put("thread", thread) })
-          // Real Codex reports thread settings during thread and turn start.
-          event("thread/settings/updated", buildJsonObject { put("threadId", activeThread) })
+          lateThreadStarted = if (scenario == "model-late-thread-started") thread else null
+          if (lateThreadStarted == null) {
+            event("thread/started", buildJsonObject { put("thread", thread) })
+            // Real Codex reports thread settings during thread and turn start.
+            event("thread/settings/updated", buildJsonObject { put("threadId", activeThread) })
+          }
           if (scenario == "model-unsolicited-turn") {
             event(
               "turn/started",
@@ -466,6 +470,8 @@ internal object FakeCodexAppServer {
         )
       }
       if (method == "thread/start" && scenario == "model-no-stdin") Thread.sleep(60_000)
+      // Real 0.161 announces the thread after the thread/start response.
+      if (method == "thread/start") lateThreadStarted?.let { event("thread/started", buildJsonObject { put("thread", it) }) }
       if (method == "turn/start") {
         if (scenario.startsWith("model-callback-")) {
           val release = Path.of(System.getProperty("verity.fake.release"))

@@ -499,6 +499,15 @@ internal class CodexModelBackend private constructor(
     private suspend fun cleanupEvent(frame: JsonObject) {
       // Permissive draining is limited to a request that was already rejected.
       val params = frame["params"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.CLEANUP)
+      // Real Codex can announce the owned thread after the thread/start response, so as late as unsubscribe.
+      if (frame["method"] == JsonPrimitive("thread/started")) {
+        try {
+          verifyThread(params["thread"] as? JsonObject ?: reject())
+        } catch (_: CodexFailure) {
+          throw CodexFailure(CodexFailureKind.CLEANUP)
+        }
+        return
+      }
       if (params["threadId"] != JsonPrimitive(threadId ?: observedThreadId)) throw CodexFailure(CodexFailureKind.CLEANUP)
       when ((frame["method"] as? JsonPrimitive)?.contentOrNull) {
         "item/started", "item/completed", "rawResponseItem/completed" -> {
