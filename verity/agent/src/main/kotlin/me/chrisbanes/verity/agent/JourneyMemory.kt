@@ -88,10 +88,13 @@ internal class JourneyMemory(
     }
   }
 
-  /** Empty when there is nothing to say, so a fresh journey sends no reference context. */
-  fun inspectionContext(): InspectionContext {
+  /**
+   * Empty when there is nothing to say, so a fresh journey sends no reference context.
+   * Tree inspections pass `includeScreenshots = false` and receive text only.
+   */
+  fun inspectionContext(includeScreenshots: Boolean): InspectionContext {
     val dir = directory
-    val screenshots = if (dir == null) emptyList() else listOfNotNull(dir.resolve(FIRST).takeIf { hasFirst }, dir.resolve(LATEST).takeIf { hasLatest })
+    val screenshots = if (dir == null || !includeScreenshots) emptyList() else listOfNotNull(dir.resolve(FIRST).takeIf { hasFirst }, dir.resolve(LATEST).takeIf { hasLatest })
     if (verdicts.isEmpty() && trail.isEmpty() && screenshots.isEmpty()) return InspectionContext()
     return InspectionContext(render(screenshots.size), screenshots)
   }

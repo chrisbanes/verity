@@ -113,6 +113,35 @@ class ConditionEvaluatorTest {
   }
 
   @Test
+  fun `inspected screenshot hook runs after the verdict while the file exists, for visual checks only`() = runTest {
+    withContext(Dispatchers.Default) {
+      val order = mutableListOf<String>()
+      val inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":true,"reasoning":"tree"}""") },
+        evaluateVisualContent = { _, _, _, _ ->
+          order += "verdict"
+          inspectionReply("""{"passed":true,"reasoning":"visual"}""")
+        },
+      )
+      val hooked = mutableListOf<Path>()
+      val evaluator = ConditionEvaluator(
+        StateSession(),
+        inspector,
+        onInspectedScreenshot = { path ->
+          order += "hook"
+          assertThat(withContext(Dispatchers.IO) { Files.size(path) }).isEqualTo(1L)
+          hooked.add(path)
+        },
+      )
+      evaluator.evaluate("page has a settings menu")
+      assertThat(hooked).isEqualTo(emptyList())
+      evaluator.evaluate("visually Settings")
+      assertThat(order).isEqualTo(listOf("verdict", "hook"))
+      assertThat(withContext(Dispatchers.IO) { Files.exists(hooked.single()) }).isEqualTo(false)
+    }
+  }
+
+  @Test
   fun `failed or missing screenshot never reaches the inspector`() = runTest {
     withContext(Dispatchers.Default) {
       val inspector = InspectorAgent(

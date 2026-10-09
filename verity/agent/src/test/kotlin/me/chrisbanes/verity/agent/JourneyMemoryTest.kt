@@ -93,7 +93,7 @@ class JourneyMemoryTest {
       assertThat(runs).isEqualTo(1)
       assertThat(entry.focusBefore).isNull()
       assertThat(entry.focusAfter).isNull()
-      assertThat(memory.inspectionContext().referenceText).contains("focus before: unknown; after: unknown")
+      assertThat(memory.inspectionContext(includeScreenshots = true).referenceText).contains("focus before: unknown; after: unknown")
     }
   }
 
@@ -105,7 +105,7 @@ class JourneyMemoryTest {
       val entry = memory.trail().entries.single()
       assertThat(entry.focusBefore).isEqualTo(emptyList())
       assertThat(entry.focusAfter).isEqualTo(emptyList())
-      assertThat(memory.inspectionContext().referenceText).contains("focus before: none; after: none")
+      assertThat(memory.inspectionContext(includeScreenshots = true).referenceText).contains("focus before: none; after: none")
     }
   }
 
@@ -156,7 +156,7 @@ class JourneyMemoryTest {
       assertThat(trail.maxEntries).isEqualTo(20)
       assertThat(trail.maxTextChars).isEqualTo(300)
       assertThat(trail.maxFocusedNodes).isEqualTo(5)
-      assertThat(memory.inspectionContext().referenceText).contains("(5 older omitted)")
+      assertThat(memory.inspectionContext(includeScreenshots = true).referenceText).contains("(5 older omitted)")
     }
   }
 
@@ -164,7 +164,7 @@ class JourneyMemoryTest {
   fun `verdicts keep the most recent and note omitted ones`() {
     withMemory { memory, _ ->
       repeat(12) { memory.recordVerdict("assertion $it", it % 2 == 0, "reason $it") }
-      val text = memory.inspectionContext().referenceText
+      val text = memory.inspectionContext(includeScreenshots = true).referenceText
       assertThat(text).contains("(2 older omitted)")
       assertThat(text).doesNotContain("assertion 1:")
       assertThat(text).contains("- [passed] assertion 2: reason 2")
@@ -185,7 +185,7 @@ class JourneyMemoryTest {
       assertThat(entry.truncated).isTrue()
 
       memory.recordVerdict(long, true, long)
-      val line = memory.inspectionContext().referenceText.lines().single { it.startsWith("- [passed]") }
+      val line = memory.inspectionContext(includeScreenshots = true).referenceText.lines().single { it.startsWith("- [passed]") }
       assertThat(line).isEqualTo("- [passed] ${"x".repeat(299)}…: ${"x".repeat(299)}…")
     }
   }
@@ -202,21 +202,24 @@ class JourneyMemoryTest {
   @Test
   fun `screenshots are copied, deduplicated, bounded to two and removed on close`() {
     withMemory { memory, root ->
-      assertThat(memory.inspectionContext().referenceScreenshots).isEmpty()
-      assertThat(memory.inspectionContext().referenceText).isEqualTo("")
+      assertThat(memory.inspectionContext(includeScreenshots = true).referenceScreenshots).isEmpty()
+      assertThat(memory.inspectionContext(includeScreenshots = true).referenceText).isEqualTo("")
 
       val a = file(root, "a.png", 1)
       memory.recordScreenshot(a)
-      val one = memory.inspectionContext()
+      val one = memory.inspectionContext(includeScreenshots = true)
       assertThat(one.referenceScreenshots).hasSize(1)
       assertThat(one.referenceText).contains("only earlier screenshot")
 
       memory.recordScreenshot(file(root, "b.png", 2))
       memory.recordScreenshot(file(root, "c.png", 3))
-      val two = memory.inspectionContext()
+      val two = memory.inspectionContext(includeScreenshots = true)
       assertThat(two.referenceScreenshots.map { Files.readAllBytes(it).toList() }).containsExactly(listOf<Byte>(1), listOf<Byte>(3))
       assertThat(two.referenceText).contains("Reference screenshot 1 is the first earlier screenshot")
       assertThat(two.referenceText).contains("Reference screenshot 2 is the most recent earlier screenshot")
+      val textOnly = memory.inspectionContext(includeScreenshots = false)
+      assertThat(textOnly.referenceScreenshots).isEmpty()
+      assertThat(textOnly.referenceText).isEqualTo("")
 
       Files.write(a, byteArrayOf(9))
       Files.delete(a)
@@ -234,7 +237,7 @@ class JourneyMemoryTest {
     withMemory { memory, root ->
       memory.recordScreenshot(file(root, "a.png", 1))
       memory.recordScreenshot(root.resolve("missing.png"))
-      val context = memory.inspectionContext()
+      val context = memory.inspectionContext(includeScreenshots = true)
       assertThat(context.referenceScreenshots).hasSize(1)
       assertThat(Files.readAllBytes(context.referenceScreenshots.single()).toList()).isEqualTo(listOf<Byte>(1))
     }
