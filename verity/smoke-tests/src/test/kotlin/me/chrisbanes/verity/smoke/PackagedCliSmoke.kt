@@ -767,8 +767,14 @@ class PackagedCliPlatformOptionTest {
         assertThat(help.second.contains("Usage:")).isTrue()
         // The mapped scroll step and visible assertion need neither a navigator nor a device.
         val dryRun = launch(
-          "dry-run", "--provider", "ollama", "--api-key", "http://127.0.0.1:${trap.address.port}",
-          "run", "--dry-run", File(journeys, "settings.journey.yaml").absolutePath,
+          "dry-run",
+          "--provider",
+          "ollama",
+          "--api-key",
+          "http://127.0.0.1:${trap.address.port}",
+          "run",
+          "--dry-run",
+          File(journeys, "settings.journey.yaml").absolutePath,
         )
         assertThat(dryRun.first, dryRun.third).isEqualTo(0)
         assertThat(dryRun.second.contains("Kind: FAST_PATH\nInteractions:\n- Scroll(DOWN)"), dryRun.second).isTrue()

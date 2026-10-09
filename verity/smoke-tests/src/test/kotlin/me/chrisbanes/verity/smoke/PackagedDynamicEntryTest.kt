@@ -20,9 +20,12 @@ class PackagedDynamicEntryTest {
       val stdout = File(directory, "stdout")
       val stderr = File(directory, "stderr")
       val process = ProcessBuilder(
-        File(System.getProperty("java.home"), "bin/java").path, "-Xmx512m",
-        "-cp", "${jar.absolutePath}${File.pathSeparator}${probe.absolutePath}",
-        "me.chrisbanes.verity.smoke.PackagedRuntimeProbe", mode,
+        File(System.getProperty("java.home"), "bin/java").path,
+        "-Xmx512m",
+        "-cp",
+        "${jar.absolutePath}${File.pathSeparator}${probe.absolutePath}",
+        "me.chrisbanes.verity.smoke.PackagedRuntimeProbe",
+        mode,
       ).directory(directory).redirectOutput(stdout).redirectError(stderr).apply { environment().putAll(env) }.start()
       val child = PackagedChild(process, stdout, stderr)
       try {

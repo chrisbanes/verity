@@ -170,8 +170,12 @@ tasks.test {
   jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dverity.cli.test.classpath=${testRuntimeClasspath.asPath}") })
   dependsOn(hostJars, shrunkJars)
   val archives = files(
-    tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile },
-    universalShrunkJar.flatMap { it.archiveFile }, macosArm64ShrunkJar.flatMap { it.archiveFile }, linuxX64ShrunkJar.flatMap { it.archiveFile },
+    tasks.shadowJar.flatMap { it.archiveFile },
+    macosArm64Jar.flatMap { it.archiveFile },
+    linuxX64Jar.flatMap { it.archiveFile },
+    universalShrunkJar.flatMap { it.archiveFile },
+    macosArm64ShrunkJar.flatMap { it.archiveFile },
+    linuxX64ShrunkJar.flatMap { it.archiveFile },
   )
   inputs.files(archives).withPropertyName("packagedLoggingArchives")
   systemProperty("verity.cli.packaged.jars", archives.asPath)

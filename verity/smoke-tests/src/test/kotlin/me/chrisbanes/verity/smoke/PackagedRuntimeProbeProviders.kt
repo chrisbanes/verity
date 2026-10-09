@@ -46,14 +46,19 @@ internal object PackagedRuntimeProbeProviders {
   private fun reply(path: String, text: String, model: String): String = when {
     path.endsWith("/messages") || path.endsWith("/invoke") ->
       """{"id":"msg_probe","type":"message","role":"assistant","model":"$model","content":[{"type":"text","text":"$text"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"""
+
     path.contains(":generateContent") ->
       """{"candidates":[{"content":{"role":"model","parts":[{"text":"$text"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2},"modelVersion":"$model"}"""
+
     path.endsWith("/api/chat") ->
       """{"model":"$model","created_at":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":"$text"},"done":true,"done_reason":"stop","prompt_eval_count":1,"eval_count":1}"""
+
     path.endsWith("/converse") ->
       """{"output":{"message":{"role":"assistant","content":[{"text":"$text"}]}},"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2},"metrics":{"latencyMs":1}}"""
+
     path.endsWith("/responses") ->
       """{"id":"resp_probe","object":"response","created_at":1,"status":"completed","model":"$model","output":[{"type":"message","id":"msg_probe","status":"completed","role":"assistant","content":[{"type":"output_text","text":"$text","annotations":[]}]}],"parallel_tool_calls":false,"tool_choice":"auto","tools":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2,"input_tokens_details":{"cached_tokens":0},"output_tokens_details":{"reasoning_tokens":0}}}"""
+
     else ->
       """{"id":"chatcmpl_probe","object":"chat.completion","created":1,"model":"$model","system_fingerprint":"fp_probe","choices":[{"index":0,"message":{"role":"assistant","content":"$text"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"""
   }
@@ -89,9 +94,13 @@ internal object PackagedRuntimeProbeProviders {
         provider.createClient(if (provider is VerityProvider.Ollama) url else "fixture-key").close()
         val client = when (provider) {
           VerityProvider.Anthropic -> AnthropicLLMClient("fixture-key", AnthropicClientSettings(baseUrl = url))
+
           VerityProvider.OpenAI -> OpenAILLMClient("fixture-key", OpenAIClientSettings(baseUrl = url))
+
           VerityProvider.Google -> GoogleLLMClient("fixture-key", GoogleClientSettings(baseUrl = url))
+
           VerityProvider.OpenRouter -> OpenRouterLLMClient("fixture-key", OpenRouterClientSettings(baseUrl = url))
+
           VerityProvider.Bedrock -> BedrockLLMClient(
             identityProvider = StaticCredentialsProvider {
               accessKeyId = "fixture-key"
@@ -99,9 +108,13 @@ internal object PackagedRuntimeProbeProviders {
             },
             settings = BedrockClientSettings(endpointUrl = url),
           )
+
           VerityProvider.DeepSeek -> DeepSeekLLMClient("fixture-key", DeepSeekClientSettings(baseUrl = url))
+
           VerityProvider.MistralAI -> MistralAILLMClient("fixture-key", MistralAIClientSettings(baseUrl = url))
+
           VerityProvider.Ollama -> OllamaClient(baseUrl = url)
+
           VerityProvider.DashScope -> DashscopeLLMClient("fixture-key", DashscopeClientSettings(baseUrl = url))
         }
         MultiLLMPromptExecutor(client).use { executor ->
