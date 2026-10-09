@@ -80,9 +80,9 @@ class CodexIsolationTest {
   }
 
   @Test
-  fun `effective policy denial redirected origin and inherited name drift fail once with complete cleanup`() = runTest {
+  fun `effective policy denial redirected origin layered tools drift and inherited name drift fail once with complete cleanup`() = runTest {
     withContext(Dispatchers.Default) {
-      listOf("denied-policy", "redirected-chatgpt-origin", "redirected-openai-origin", "drift").forEach { scenario ->
+      listOf("denied-policy", "redirected-chatgpt-origin", "redirected-openai-origin", "managed-tools-enabled", "managed-tools-table", "layers-missing", "origin-mismatch", "string-false", "typed-key-missing", "drift").forEach { scenario ->
         val fake = FakeCodexLauncher(scenario)
         assertThat(assertFailsWith<CodexFailure> { fake.prepare() }.kind).isEqualTo(CodexFailureKind.ISOLATION)
         assertThat(fake.children.size).isEqualTo(if (scenario == "drift") 4 else 3)

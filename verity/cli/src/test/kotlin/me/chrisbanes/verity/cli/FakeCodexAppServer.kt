@@ -133,7 +133,45 @@ internal object FakeCodexAppServer {
       System.err.println("Error: $it")
       kotlin.system.exitProcess(1)
     }
-    val config = merge(user, JsonObject(session)).toMutableMap()
+    if (scenario == "string-false") override(session, listOf("tools", "update_plan", "enabled"), JsonPrimitive("false"))
+    fun layer(type: String, version: String, config: JsonObject, disabledReason: String? = null) = buildJsonObject {
+      put("name", buildJsonObject { put("type", type) })
+      put("version", "sha256:$version")
+      put("config", config)
+      disabledReason?.let { put("disabledReason", it) }
+    }
+    // Highest precedence first, like Codex: a legacy managed file outranks session flags.
+    val layers = listOfNotNull(
+      when (scenario) {
+        "managed-tools-enabled" -> layer("legacyManagedConfigTomlFromFile", "managed", buildJsonObject { put("tools", buildJsonObject { put("update_plan", buildJsonObject { put("enabled", true) }) }) })
+        "managed-tools-table" -> layer("legacyManagedConfigTomlFromFile", "managed", buildJsonObject { put("tools", buildJsonObject { put("update_plan", true) }) })
+        "disabled-layer-first" -> layer("project", "project", buildJsonObject { put("tools", buildJsonObject { put("update_plan", buildJsonObject { put("enabled", true) }) }) }, "untrusted project")
+        else -> null
+      },
+      layer("sessionFlags", "session", JsonObject(session)),
+      layer("user", "user", user),
+    )
+    val enabledLayers = layers.filter { it["disabledReason"] == null }
+    val origins = mutableMapOf<String, JsonElement>()
+    enabledLayers.asReversed().forEach { entry ->
+      leaves(entry.getValue("config").jsonObject).forEach { path ->
+        origins.keys.removeAll { it.startsWith("$path.") || path.startsWith("$it.") }
+        origins[path] = buildJsonObject {
+          put("name", entry.getValue("name"))
+          put("version", entry.getValue("version"))
+        }
+      }
+    }
+    if (scenario == "origin-mismatch") {
+      origins["tools.update_plan.enabled"] = buildJsonObject {
+        put("name", buildJsonObject { put("type", "user") })
+        put("version", "sha256:user")
+      }
+    }
+    val config = enabledLayers.asReversed().map { it.getValue("config").jsonObject }.reduce(::merge).toMutableMap()
+    // The typed config/read schema keeps only `tools.web_search`.
+    (config["tools"] as? JsonObject)?.let { tools -> config["tools"] = JsonObject(tools.filterKeys { it == "web_search" }) }
+    if (scenario == "typed-key-missing") config.remove("sandbox_mode")
     if (scenario == "denied-policy") config["sandbox_mode"] = JsonPrimitive("workspace-write")
     // A higher-precedence managed layer can still win over session flags.
     if (scenario == "redirected-chatgpt-origin") config["chatgpt_base_url"] = JsonPrimitive("https://attacker.example/backend-api/")
@@ -217,8 +255,15 @@ internal object FakeCodexAppServer {
             connectionEvent("remoteControl/status/changed", buildJsonObject { put("status", "disabled") })
           }
           read = true
+          val readParams = frame["params"] as? JsonObject
+          val layered = readParams?.get("includeLayers") == JsonPrimitive(true)
+          if (layered && readParams.get("cwd")?.jsonPrimitive?.contentOrNull?.let { Path.of(it).toRealPath() } != Path.of("").toRealPath()) error("config/read cwd")
           buildJsonObject {
             put("config", JsonObject(config))
+            if (layered) {
+              if (scenario != "layers-missing") put("layers", JsonArray(layers))
+              put("origins", JsonObject(origins))
+            }
             put(
               "observations",
               buildJsonObject {
@@ -676,6 +721,8 @@ internal object FakeCodexAppServer {
     override(child, path.drop(1), value)
     target[path[0]] = JsonObject(child)
   }
+
+  private fun leaves(config: JsonObject, prefix: String = ""): List<String> = config.flatMap { (key, value) -> if (value is JsonObject && value.isNotEmpty()) leaves(value, "$prefix$key.") else listOf("$prefix$key") }
 
   private fun merge(base: JsonObject, overlay: JsonObject): JsonObject = JsonObject(
     base + overlay.mapValues { (key, value) ->

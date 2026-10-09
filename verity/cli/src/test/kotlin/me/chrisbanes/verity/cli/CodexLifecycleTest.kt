@@ -35,7 +35,7 @@ class CodexLifecycleTest {
   @Test
   fun `real child startup verifies both launch environments empty cwd and final policy then closes idempotently`() = runTest {
     withContext(Dispatchers.Default) {
-      listOf("success", "newer", "delta-flood").forEach { scenario ->
+      listOf("success", "newer", "delta-flood", "disabled-layer-first").forEach { scenario ->
         val fake = FakeCodexLauncher(scenario)
         val backend = fake.prepare()
         try {

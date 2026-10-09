@@ -572,12 +572,12 @@ internal class CodexModelBackend private constructor(
           val bootstrapDirectory = resources.directory()
           val bootstrap = resources.client(resources.launch(listOf(binary.toString(), "app-server", "--listen", "stdio://") + bootstrapPolicy.arguments(), bootstrapDirectory, childEnvironment, launch))
           initialize(bootstrap)
-          val discoveredPolicy = bootstrapPolicy.verify(readConfig(bootstrap))
+          val discoveredPolicy = bootstrapPolicy.verify(readConfig(bootstrap, bootstrapDirectory))
           bootstrap.stop()
           val finalDirectory = resources.directory()
           val final = resources.client(resources.launch(listOf(binary.toString(), "app-server", "--listen", "stdio://") + discoveredPolicy.arguments(), finalDirectory, childEnvironment, launch))
           initialize(final)
-          discoveredPolicy.verify(readConfig(final))
+          discoveredPolicy.verify(readConfig(final, finalDirectory))
           CodexModelBackend(final, discoveredPolicy, finalDirectory, resources, echoFields)
         }
       } catch (e: CancellationException) {
@@ -624,7 +624,13 @@ internal class CodexModelBackend private constructor(
       client.notify("initialized")
     }
 
-    private suspend fun readConfig(client: CodexAppServerClient): JsonObject = client.request("config/read")["config"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+    private suspend fun readConfig(client: CodexAppServerClient, cwd: Path): JsonObject = client.request(
+      "config/read",
+      buildJsonObject {
+        put("includeLayers", true)
+        put("cwd", cwd.toString())
+      },
+    )
 
     private suspend fun awaitExit(process: Process) {
       while (process.isAlive) delay(10)

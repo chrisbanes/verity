@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -59,8 +60,13 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
   // Codex splits override keys on every '.', ignoring quotes, so each group is one inline table keyed by name.
   private fun disabledNames(): Map<String, Set<String>> = groups.associateWith { group -> names[group].orEmpty() + if (group == "apps") setOf("_default") else emptySet() }.filterValues { it.isNotEmpty() }
 
-  fun verify(config: JsonObject): CodexIsolation {
-    policy.forEach { (key, expected) -> if (lookup(config, key.split('.')) != expected) throw CodexFailure(CodexFailureKind.ISOLATION) }
+  /** [read] is a `config/read` result with `includeLayers`; untyped keys are resolved from the winning layer. */
+  fun verify(read: JsonObject): CodexIsolation {
+    val config = read["config"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
+    policy.forEach { (key, expected) ->
+      val actual = if (key in untypedKeys) layered(read, key) else lookup(config, key.split('.'))
+      if (actual != expected) throw CodexFailure(CodexFailureKind.ISOLATION)
+    }
     val discovered = groups.associateWith { group ->
       val objectValue = config[group]
       if (objectValue != null && objectValue !is JsonObject) throw CodexFailure(CodexFailureKind.ISOLATION)
@@ -76,6 +82,32 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
 
   companion object {
     val groups = listOf("mcp_servers", "plugins", "apps")
+
+    /** Pinned keys absent from the typed `config/read` schema (`tools` is `ToolsV2 { web_search }`). */
+    private val untypedKeys = setOf("tools.update_plan.enabled", "tools.experimental_request_user_input.enabled")
+
+    /** The highest-precedence enabled layer defining [key] (or a non-table prefix of it) decides, and `origins` must name that layer. */
+    private fun layered(read: JsonObject, key: String): JsonElement? {
+      val origins = read["origins"] as? JsonObject ?: return null
+      val layers = read["layers"] as? JsonArray ?: return null
+      for (entry in layers) {
+        val layer = entry as? JsonObject ?: return null
+        if (layer["disabledReason"].let { it != null && it != JsonNull }) continue
+        val value = definedAt(layer["config"] ?: return null, key.split('.')) ?: continue
+        val origin = origins[key] as? JsonObject ?: return null
+        return value.takeIf { layer["name"] != null && origin["name"] == layer["name"] && origin["version"] == layer["version"] }
+      }
+      return null
+    }
+
+    private fun definedAt(config: JsonElement, path: List<String>): JsonElement? {
+      var value = config
+      for (segment in path) {
+        if (value !is JsonObject) return value
+        value = value[segment] ?: return null
+      }
+      return value
+    }
     val features = "apps plugins remote_plugin plugin_sharing hooks memories shell_tool unified_exec shell_snapshot multi_agent multi_agent_v2 code_mode code_mode_host code_mode_only browser_use browser_use_external browser_use_full_cdp_access computer_use in_app_browser image_generation view_image skill_search skill_mcp_dependency_install tool_suggest default_mode_request_user_input sleep_tool goals workspace_dependencies realtime_conversation in_app_local_automation prevent_idle_sleep request_permissions_tool context_management current_time_reminder deferred_executor standalone_web_search token_budget".split(' ')
     fun tomlKey(value: String): String = JsonPrimitive(value).toString()
     private fun lookup(config: JsonElement, path: List<String>): JsonElement? = path.fold(config as JsonElement?) { value, key -> (value as? JsonObject)?.get(key) }
