@@ -277,4 +277,36 @@ class RunResultContractTest {
     assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.MODEL_FAILURE)).isEqualTo("\"model_failure\"")
     assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"model_failure\"")).isEqualTo(ArtifactErrorKind.MODEL_FAILURE)
   }
+
+  @Test
+  fun `trail round trips with unknown focus omitted and empty focus kept`() {
+    val result = JourneyArtifactResult(
+      journey = JourneyArtifactIdentity("j", "j.md", "app", Platform.ANDROID_TV),
+      passed = true,
+      trail = JourneyTrailArtifact(
+        entries = listOf(
+          TrailEntryArtifact(0, TrailGranularity.INTERACTION, TrailOrigin.SCROLL_TO_FIND, instructions = listOf("Scroll"), succeeded = true, focusBefore = listOf(FocusNodeArtifact("/0", "menu:home")), focusAfter = null),
+          TrailEntryArtifact(1, TrailGranularity.FLOW, TrailOrigin.LOOP, iteration = 1, instructions = listOf("a", "b"), succeeded = false, focusBefore = null, focusAfter = emptyList(), truncated = true),
+        ),
+        droppedEntries = 3,
+        maxEntries = 20,
+        maxTextChars = 300,
+        maxFocusedNodes = 5,
+      ),
+    )
+    val encoded = json.encodeToString(result)
+    assertThat(encoded).contains("\"granularity\":\"interaction\"")
+    assertThat(encoded).contains("\"origin\":\"scroll-to-find\"")
+    assertThat(encoded).contains("\"focusAfter\":[]")
+    assertThat(encoded.substringBefore("\"granularity\":\"flow\"")).doesNotContain("focusAfter")
+    assertThat(json.decodeFromString<JourneyArtifactResult>(encoded)).isEqualTo(result)
+  }
+
+  @Test
+  fun `journey result without trail decodes with null trail`() {
+    val decoded = json.decodeFromString<JourneyArtifactResult>(
+      """{"journey":{"name":"j","file":"j.md","app":"app","platform":"android-tv"},"passed":true}""",
+    )
+    assertThat(decoded.trail).isEqualTo(null)
+  }
 }
