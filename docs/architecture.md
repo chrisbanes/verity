@@ -23,7 +23,7 @@ Use the [domain glossary](../CONTEXT.md) for terminology and the [documentation 
 |--------|-----------|---------|
 | `:verity:core` | nothing (kotlinx.serialization, Kaml) | Models, journey format, step parsing, focus-condition grammar, segmenter, interaction mapper, hierarchy renderer, assertion mode inferrer |
 | `:verity:device` | `:verity:core` | `DeviceSession` interface and platform-specific implementations (Android via Dadb + Maestro gRPC, iOS via Maestro XCTest HTTP) |
-| `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, ConditionWaiter, Orchestrator |
+| `:verity:agent` | `:verity:core`, `:verity:device` | Koog LLM setup, NavigatorAgent, InspectorAgent, ConditionEvaluator, ConditionWaiter, JourneyMemory, Orchestrator |
 | `:verity:mcp` | `:verity:core`, `:verity:device` | MCP server (stdio + HTTP), 14 tools, session manager, snapshot store |
 | `:verity:cli` | `:verity:agent`, `:verity:mcp` | Clikt commands: `run`, `list`, `mcp` |
 | `:verity:smoke-tests` | `:verity:cli` | Offline archive/protocol fixtures and explicit Android/iOS device smoke tests |
@@ -370,7 +370,7 @@ Evaluates assertions and semantic conditions using constructor-injected one-shot
 - `evaluateTree(hierarchy, assertion, context)` evaluates the current hierarchy.
 - `evaluateVisual(screenshotPath, assertion, context)` evaluates a current screenshot.
 
-Both accept empty-by-default `InspectionContext` reference text and earlier images, labelled separately from current state. Normal runs produce no reference history. Completion metadata is retained until known truncation reasons are rejected, then strict JSON requires boolean `passed` and string `reasoning`; code fences, extra keys and empty reasoning are supported.
+Both accept empty-by-default `InspectionContext` reference text and earlier images, labelled separately from current state. `Orchestrator` fills them from journey memory (below); other callers pass none. Completion metadata is retained until known truncation reasons are rejected, then strict JSON requires boolean `passed` and string `reasoning`; code fences, extra keys and empty reasoning are supported.
 
 ### Shared model request policy
 
@@ -406,6 +406,8 @@ Runs journeys segment by segment using a **subagent pattern** to keep context wi
 **Loop execution:** an immediate condition check precedes any body; one check follows every successful complete body, including the last permitted body. All mapped instructions execute in order. A body containing an unmapped instruction is generated once as a complete ordered flow. Only completed bodies count. Failed mapped/generated flows or automatic scrolls interrupt immediately without a new condition check or count; cancellation and navigator/inspector model failures propagate. Loop results retain condition, count, tier and reasoning separately from execution-error reasoning.
 
 **Wait execution:** a wait dispatches before action/assertion fallthrough, performs no action or navigator generation, and returns mode `wait` with configured limit, actual elapsed milliseconds, completed-check count and optional last tier/reasoning/evidence. Timeout stops later segments as a failed journey result; fatal model/cancellation policy stays shared with other execution paths.
+
+**Journey memory:** `Orchestrator.run` creates one `JourneyMemory` per journey and closes it when the run ends. It records an execution-trail entry (granularity `interaction` or `flow`, with focus observed before and after via `FocusChangeObserver.capture`) around every fast-path interaction, scroll-to-find scroll, loop body and slow-path `executeActions` call, plus a verdict for each completed assertion, loop and wait. Before each tree/visual assertion and loop/wait condition it renders memory into `InspectionContext`; visual inspections also get at most two earlier screenshot copies. Caps are 20 trail entries, 10 verdicts, 10 instructions per entry, 300 characters per text field and 5 focused nodes. `JourneyResult.trail` is written as the optional `trail` object in each journey result. See [journey memory](specs/journey-memory.md).
 
 Each segment creates fresh navigator and inspector instances. Their reasoning is scoped to that segment rather than carrying an accumulated conversation through the journey.
 

@@ -53,6 +53,8 @@ Effort metadata is suite-wide and is emitted when resolved run metadata is avail
 
 Each journey result contains `journey` identity (`name`, `file`, `app`, `platform`), `passed`, optional `failedAt`, `segments`, and an optional error. Each segment contains its `index`, `passed`, `executionMode`, source `actions`, optional assertion description/mode, `reasoning`, `generatedFlows`, `evidence`, and optional error. Evidence references contain `type` and `path`. Loop segments additionally contain optional `loop` metadata with `condition`, completed `iterations`, final `tier` and condition `reasoning`. An execution failure retains the previous evaluated condition metadata separately from the segment error. Non-loop segments omit `loop`. See [loop conditions](loop-conditions.md).
 
+A journey result from a normal run also contains an additive `trail` object with the retained execution `entries`, `droppedEntries` and the `maxEntries`, `maxTextChars`, `maxFocusedNodes` and `maxInstructions` caps that bounded it. Each entry has `segment`, `granularity`, `origin`, optional `iteration`, `instructions`, `omittedInstructions`, `succeeded`, `truncated` and optional `focusBefore`/`focusAfter` lists of focused nodes (`path`, optional `resourceId`); an omitted list means focus was unknown and `[]` means none was observed. Results written for an execution exception omit `trail`. See [journey memory](journey-memory.md).
+
 Wait segments add `wait` metadata (`condition`, `timeoutSeconds`, `elapsedMs`, completed `checks`, optional `tier`, and last completed condition `reasoning`). Their mode is `wait`; actions/generated flows are empty. Before any completed check, tier/evidence are absent. Nonwait segments omit `wait`. Each production wait check uses distinct evidence paths to preserve the last completed evaluation through a later incomplete poll. See [wait conditions](wait-conditions.md).
 
 JSON property names use camelCase. Default values are included; null-valued properties are omitted. Stable wire values are:
@@ -65,6 +67,8 @@ JSON property names use camelCase. Default values are included; null-valued prop
 | Evidence type | `flow`, `screenshot`, `hierarchy` |
 | Error kind | `parser_failure`, `setup_failure`, `journey_failure`, `model_failure` |
 | Loop/wait condition tier | `literal`, `focus`, `tree`, `visual` |
+| Trail granularity | `interaction`, `flow` |
+| Trail origin | `actions`, `loop`, `scroll-to-find` |
 | Platform | `android-tv`, `android`, `ios` |
 | Effort setting mode | `explicit`, `backend-default` |
 

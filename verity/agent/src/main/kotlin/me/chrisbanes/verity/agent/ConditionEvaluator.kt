@@ -26,13 +26,14 @@ class ConditionEvaluator(
   private val segmentIndex: Int = 0,
   private val temporaryScreenshot: suspend (suspend (Path) -> InspectionVerdict) -> InspectionVerdict = ::withTemporaryScreenshot,
   private val verifyScreenshot: suspend (Path) -> Unit = ::requireScreenshot,
+  private val onInspectedScreenshot: suspend (Path) -> Unit = {},
 ) {
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext()): ConditionEvaluation {
     require(condition.isNotBlank()) { "Condition must not be blank" }
     VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
       val description = condition.trim().substring(prefix.range.last + 1).trim()
       require(description.isNotBlank()) { "Visual condition must not be blank" }
-      val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot).visual(description, context)
+      val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot).visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
     if (session.containsText(condition)) {
@@ -45,13 +46,13 @@ class ConditionEvaluator(
         ConditionTier.FOCUS,
       )
     }
-    val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot).tree(condition, context)
+    val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot).tree(condition, context)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
     require(condition.isNotBlank()) { "Condition must not be blank" }
-    val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot)
+    val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot, onInspectedScreenshot)
     VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
       val description = condition.trim().substring(prefix.range.last + 1).trim()
       require(description.isNotBlank()) { "Visual condition must not be blank" }
@@ -75,8 +76,11 @@ class ConditionEvaluator(
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }
 
-  private companion object {
-    val VISUAL_PREFIX = Regex("""^visually(?:\s+|$)""", RegexOption.IGNORE_CASE)
+  companion object {
+    private val VISUAL_PREFIX = Regex("""^visually(?:\s+|$)""", RegexOption.IGNORE_CASE)
+
+    /** Whether [condition] is evaluated against a screenshot rather than the tree. */
+    internal fun isVisual(condition: String): Boolean = VISUAL_PREFIX.containsMatchIn(condition.trim())
   }
 }
 
@@ -100,6 +104,8 @@ internal class ScreenInspection(
   private val deadline: EvaluationDeadline? = null,
   private val temporaryScreenshot: suspend (suspend (Path) -> InspectionVerdict) -> InspectionVerdict = ::withTemporaryScreenshot,
   private val verifyScreenshot: suspend (Path) -> Unit = ::requireScreenshot,
+  /** Called with the inspected screenshot while it still exists, after the verdict and any deadline checkpoint. */
+  private val onInspectedScreenshot: suspend (Path) -> Unit = {},
 ) {
   suspend fun tree(description: String, context: InspectionContext = InspectionContext()): InspectionEvaluation {
     val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
@@ -148,10 +154,10 @@ internal class ScreenInspection(
       if (captured) {
         verifyScreenshot(artifact.path)
         deadline?.checkpoint()
-        return InspectionEvaluation(
-          inspector.evaluateVisual(artifact.path, description, context, deadline?.onModelFailure),
-          listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)),
-        )
+        val verdict = inspector.evaluateVisual(artifact.path, description, context, deadline?.onModelFailure)
+        deadline?.checkpoint()
+        onInspectedScreenshot(artifact.path)
+        return InspectionEvaluation(verdict, listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)))
       }
     }
     val verdict = temporaryScreenshot { path ->
@@ -160,7 +166,10 @@ internal class ScreenInspection(
       deadline?.checkpoint()
       verifyScreenshot(path)
       deadline?.checkpoint()
-      inspector.evaluateVisual(path, description, context, deadline?.onModelFailure)
+      val verdict = inspector.evaluateVisual(path, description, context, deadline?.onModelFailure)
+      deadline?.checkpoint()
+      onInspectedScreenshot(path)
+      verdict
     }
     deadline?.checkpoint()
     return InspectionEvaluation(verdict)

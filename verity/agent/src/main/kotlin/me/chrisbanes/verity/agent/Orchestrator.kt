@@ -19,6 +19,8 @@ import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.LoopArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
+import me.chrisbanes.verity.core.result.TrailGranularity
+import me.chrisbanes.verity.core.result.TrailOrigin
 import me.chrisbanes.verity.core.result.WaitArtifact
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.validateActionFlow
@@ -42,30 +44,35 @@ class Orchestrator(
 
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
+    // Run-local so nothing carries over between journeys, even on a reused Orchestrator.
+    val memory = JourneyMemory(session)
 
-    for (segment in segments) {
-      // Create fresh subagents for this segment to ensure isolation
-      val navigator = navigatorFactory()
-      val inspector = inspectorFactory()
+    try {
+      for (segment in segments) {
+        // Create fresh subagents for this segment to ensure isolation
+        val navigator = navigatorFactory()
+        val inspector = inspectorFactory()
 
-      val result = try {
-        executeSegment(segment, journey.app, journey.platform, navigator, inspector)
-      } catch (e: InteractionExecutionFailure) {
-        val instructions = segment.actions.map { it.instruction }
-        SegmentResult(
-          index = segment.index,
-          passed = false,
-          reasoning = e.message.orEmpty(),
-          executionMode = if (isFastPath(instructions, journey.platform)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
-          actions = instructions,
-          error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, e.message.orEmpty()),
-        )
+        val result = try {
+          executeSegment(segment, journey.app, journey.platform, navigator, inspector, memory)
+        } catch (e: InteractionExecutionFailure) {
+          val instructions = segment.actions.map { it.instruction }
+          SegmentResult(
+            index = segment.index,
+            passed = false,
+            reasoning = e.message.orEmpty(),
+            executionMode = if (isFastPath(instructions, journey.platform)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
+            actions = instructions,
+            error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, e.message.orEmpty()),
+          )
+        }
+        results.add(result)
+        if (!result.passed) break
       }
-      results.add(result)
-      if (!result.passed) break
+      return JourneyResult(journeyName = journey.name, segments = results, trail = memory.trail())
+    } finally {
+      memory.close()
     }
-
-    return JourneyResult(journeyName = journey.name, segments = results)
   }
 
   private suspend fun executeSegment(
@@ -74,11 +81,16 @@ class Orchestrator(
     platform: Platform,
     navigator: NavigatorAgent,
     inspector: InspectorAgent,
+    memory: JourneyMemory,
   ): SegmentResult {
     segment.wait?.let { wait ->
-      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index)
-      val result = ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds)
+      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index, onInspectedScreenshot = memory::recordScreenshot)
+      // Every poll sees the wait's starting references, even though polls keep recording newer screenshots.
+      val result = memory.withFrozenContext(ConditionEvaluator.isVisual(wait.until)) { context ->
+        ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds, context)
+      }
       val evaluation = result.lastEvaluation
+      if (evaluation != null) memory.recordVerdict("wait until: ${wait.until}", result.satisfied, evaluation.verdict.reasoning)
       val reasoning = if (result.satisfied) {
         evaluation?.verdict?.reasoning.orEmpty()
       } else {
@@ -104,7 +116,7 @@ class Orchestrator(
       val instructions = segment.actions.map { it.instruction }
       actions = instructions
       if (isFastPath(instructions, platform)) {
-        executeFastPath(instructions, appId, platform, navigator)
+        executeFastPath(instructions, appId, platform, navigator, memory, TrailSource(segment.index))
         executionMode = SegmentExecutionMode.FAST
       } else {
         val slowPathResult = executeSlowPath(
@@ -114,6 +126,8 @@ class Orchestrator(
           navigator = navigator,
           segmentIndex = segment.index,
           label = "actions",
+          memory = memory,
+          source = TrailSource(segment.index),
         )
         slowPathResult.reference?.let(generatedFlows::add)
         executionMode = SegmentExecutionMode.SLOW
@@ -134,7 +148,8 @@ class Orchestrator(
 
     // Execute loop
     segment.loop?.let { loop ->
-      val loopResult = executeLoop(loop, appId, platform, navigator, inspector, segment.index)
+      val loopResult = executeLoop(loop, appId, platform, navigator, inspector, segment.index, memory)
+      memory.recordVerdict("loop until: ${loop.until}", loopResult.satisfied, loopResult.conditionReasoning)
       return SegmentResult(
         index = segment.index,
         passed = loopResult.satisfied,
@@ -154,7 +169,8 @@ class Orchestrator(
 
     // Evaluate assertion
     segment.assertion?.let { assert ->
-      val evaluation = evaluateAssertion(assert.description, assert.mode, inspector, segment.index)
+      val evaluation = evaluateAssertion(assert.description, assert.mode, inspector, segment.index, memory)
+      memory.recordVerdict(assert.description, evaluation.verdict.passed, evaluation.verdict.reasoning)
       return SegmentResult(
         index = segment.index,
         passed = evaluation.verdict.passed,
@@ -188,6 +204,8 @@ class Orchestrator(
     appId: String,
     platform: Platform,
     navigator: NavigatorAgent,
+    memory: JourneyMemory,
+    source: TrailSource,
   ) {
     val mapper = InteractionMapper.forPlatform(platform)
     val interactions = instructions.map { instruction ->
@@ -196,17 +214,25 @@ class Orchestrator(
       }
     }
     validateActionFlow(ActionFlow(appId, interactions))
-    for (interaction in interactions) {
-      executeWithScrollToFind(interaction, appId, navigator)
+    // Mapping is one interaction per instruction, so the two lists align.
+    interactions.forEachIndexed { index, interaction ->
+      executeWithScrollToFind(interaction, instructions[index], appId, navigator, memory, source)
     }
   }
 
   private suspend fun executeWithScrollToFind(
     interaction: Interaction,
+    instruction: String,
     appId: String,
     navigator: NavigatorAgent,
+    memory: JourneyMemory,
+    source: TrailSource,
   ) {
     val executor = InteractionExecutor(session, appId)
+
+    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution<Unit>(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction)) {
+      executor.execute(executed)
+    }
 
     // For interactions that don't target a named element, just execute directly
     val targetText = when (interaction) {
@@ -217,14 +243,14 @@ class Orchestrator(
       is Interaction.LongPressOnText -> interaction.text
 
       else -> {
-        executor.execute(interaction)
+        record(interaction)
         return
       }
     }
 
     // Check if target is already on screen
     if (session.containsText(targetText)) {
-      executor.execute(interaction)
+      record(interaction)
       return
     }
 
@@ -234,16 +260,16 @@ class Orchestrator(
       val direction = navigator.suggestScrollDirection(targetText, hierarchy)
         ?: return@repeat // A valid NONE is an ordinary navigation outcome.
 
-      executor.execute(Interaction.Scroll(direction))
+      record(Interaction.Scroll(direction), TrailOrigin.SCROLL_TO_FIND)
 
       if (session.containsText(targetText)) {
-        executor.execute(interaction)
+        record(interaction)
         return
       }
     }
 
     // Fall through: execute anyway (Maestro may find it via its own matching)
-    executor.execute(interaction)
+    record(interaction)
   }
 
   private suspend fun executeSlowPath(
@@ -253,6 +279,8 @@ class Orchestrator(
     navigator: NavigatorAgent,
     segmentIndex: Int,
     label: String,
+    memory: JourneyMemory,
+    source: TrailSource,
   ): SlowPathResult {
     val selected = navigator.generate(instructions, appId, platform, context)
     val reference = try {
@@ -262,7 +290,9 @@ class Orchestrator(
     } catch (_: Exception) {
       null
     }
-    return SlowPathResult(session.executeActions(selected), reference)
+    // One device call, so one flow entry; focus is observed only around the whole flow.
+    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeActions(selected) }
+    return SlowPathResult(flowResult, reference)
   }
 
   private suspend fun executeLoop(
@@ -272,11 +302,12 @@ class Orchestrator(
     navigator: NavigatorAgent,
     inspector: InspectorAgent,
     segmentIndex: Int,
+    memory: JourneyMemory,
   ): LoopResult {
     val instructions = loop.actionInstructions
     val fastPath = isFastPath(instructions, platform)
-    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex)
-    var evaluation = evaluator.evaluate(loop.until)
+    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot)
+    var evaluation = evaluator.evaluate(loop.until, memory.inspectionContext(ConditionEvaluator.isVisual(loop.until)))
     var completedBodies = 0
     val generatedFlows = mutableListOf<String>()
 
@@ -301,11 +332,12 @@ class Orchestrator(
     if (evaluation.verdict.passed) return result()
     repeat(loop.max) {
       try {
+        val source = TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies)
         if (fastPath) {
-          executeFastPath(instructions, appId, platform, navigator)
+          executeFastPath(instructions, appId, platform, navigator, memory, source)
         } else {
           val label = "loop-${completedBodies.toString().padStart(3, '0')}"
-          val slowPathResult = executeSlowPath(instructions, appId, platform, navigator, segmentIndex, label)
+          val slowPathResult = executeSlowPath(instructions, appId, platform, navigator, segmentIndex, label, memory, source)
           slowPathResult.reference?.let(generatedFlows::add)
           if (!slowPathResult.flowResult.success) throw InteractionExecutionFailure(slowPathResult.flowResult)
         }
@@ -313,7 +345,7 @@ class Orchestrator(
         return result(e.message.orEmpty())
       }
       completedBodies++
-      evaluation = evaluator.evaluate(loop.until)
+      evaluation = evaluator.evaluate(loop.until, memory.inspectionContext(ConditionEvaluator.isVisual(loop.until)))
       if (evaluation.verdict.passed) return result()
     }
     return result()
@@ -324,6 +356,7 @@ class Orchestrator(
     mode: AssertMode,
     inspector: InspectorAgent,
     segmentIndex: Int,
+    memory: JourneyMemory,
   ): InspectionEvaluation = when (mode) {
     AssertMode.VISIBLE -> {
       val passed = session.containsText(description)
@@ -345,9 +378,9 @@ class Orchestrator(
       )
     }
 
-    AssertMode.TREE -> ScreenInspection(session, inspector, artifactRecorder, segmentIndex).tree(description)
+    AssertMode.TREE -> ScreenInspection(session, inspector, artifactRecorder, segmentIndex).tree(description, memory.inspectionContext(includeScreenshots = false))
 
-    AssertMode.VISUAL -> ScreenInspection(session, inspector, artifactRecorder, segmentIndex).visual(description)
+    AssertMode.VISUAL -> ScreenInspection(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot).visual(description, memory.inspectionContext(includeScreenshots = true))
   }
 
   private data class SlowPathResult(

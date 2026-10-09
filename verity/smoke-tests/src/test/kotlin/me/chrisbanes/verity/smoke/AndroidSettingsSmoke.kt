@@ -19,6 +19,7 @@ import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.journey.JourneyLoader
+import me.chrisbanes.verity.core.result.TrailGranularity
 import me.chrisbanes.verity.device.DeviceSession
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -60,6 +61,9 @@ class AndroidSettingsSmoke {
     val result = orchestrator.run(journey)
     val failedSegment = result.segments.firstOrNull { !it.passed }
     assertThat(result.passed, "segment ${failedSegment?.index} failed: ${failedSegment?.reasoning}")
+      .isTrue()
+    // Focus values depend on device capture timing, so only the entries are asserted.
+    assertThat(result.trail?.entries?.any { it.granularity == TrailGranularity.INTERACTION } == true, "trail should record an interaction")
       .isTrue()
   }
 
