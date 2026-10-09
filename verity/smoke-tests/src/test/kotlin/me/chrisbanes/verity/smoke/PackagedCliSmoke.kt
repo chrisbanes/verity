@@ -124,7 +124,9 @@ private data class PackagedInputs(val variant: String, val jar: File, val expect
     val mac = os.lowercase().contains("mac") && arch in listOf("aarch64", "arm64")
     val linux = os.lowercase().contains("linux") && arch in listOf("amd64", "x86_64", "x86-64")
     check(mac || linux) { "Unsupported advertised host $os/$arch" }
-    check(variant == "universal" || (variant == "macos-aarch64" && mac) || (variant == "linux-x86_64" && linux)) { "Variant $variant does not match $os/$arch" }
+    // Shrunk variants qualify on the same hosts as their unshrunk counterparts.
+    val host = variant.removeSuffix("-shrunk")
+    check(host == "universal" || (host == "macos-aarch64" && mac) || (host == "linux-x86_64" && linux)) { "Variant $variant does not match $os/$arch" }
     check(platform != Platform.IOS || mac) { "iOS simulator qualification requires macOS ARM64" }
     check(jar.isFile && probe.isFile) { "Missing production or test-only probe artifact" }
     check(packagedSha256(jar) == expectedJarHash && packagedSha256(probe) == expectedProbeHash) { "Artifact hash changed before setup" }
@@ -1426,7 +1428,16 @@ class PackagedInputsTest {
       input("linux-x86_64").validate("Linux", "x86_64", Platform.ANDROID_MOBILE)
       input("macos-aarch64").validate("Mac OS X", "aarch64", Platform.IOS)
       input("universal").validate("Mac OS X", "arm64", Platform.IOS)
+      input("universal-shrunk").validate("Linux", "amd64", Platform.ANDROID_MOBILE)
+      input("linux-x86_64-shrunk").validate("Linux", "x86_64", Platform.ANDROID_MOBILE)
+      input("macos-aarch64-shrunk").validate("Mac OS X", "aarch64", Platform.IOS)
+      input("universal-shrunk").validate("Mac OS X", "arm64", Platform.IOS)
       for (invalid in listOf(
+        Triple("macos-aarch64-shrunk", "Linux", "amd64"),
+        Triple("linux-x86_64-shrunk", "Mac OS X", "arm64"),
+        Triple("universal-shrunk", "Linux", "aarch64"),
+        Triple("universal-minified", "Linux", "amd64"),
+        Triple("linux-x86_64-shrunk-shrunk", "Linux", "amd64"),
         Triple("macos-aarch64", "Linux", "amd64"),
         Triple("linux-x86_64", "Mac OS X", "arm64"),
         Triple("universal", "Linux", "aarch64"),

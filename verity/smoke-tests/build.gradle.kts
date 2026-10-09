@@ -157,15 +157,20 @@ fun packagedHost(name: String, exported: String) = configurations.create(name) {
 }
 val packagedMacos = packagedHost("packagedMacos", "packagedMacosArm64")
 val packagedLinux = packagedHost("packagedLinux", "packagedLinuxX64")
+val packagedMacosShrunk = packagedHost("packagedMacosShrunk", "packagedMacosArm64Shrunk")
+val packagedLinuxShrunk = packagedHost("packagedLinuxShrunk", "packagedLinuxX64Shrunk")
 val productionJars = mapOf(
   "universal" to universalJar,
   "macos-aarch64" to packagedMacos.elements.map { it.single().asFile },
   "linux-x86_64" to packagedLinux.elements.map { it.single().asFile },
+  "universal-shrunk" to universalShrunkJar,
+  "macos-aarch64-shrunk" to packagedMacosShrunk.elements.map { it.single().asFile },
+  "linux-x86_64-shrunk" to packagedLinuxShrunk.elements.map { it.single().asFile },
 )
 val selectedVariants = providers.gradleProperty("packagedVariant").orElse("universal")
 val packagedReports = layout.buildDirectory.dir("reports/packaged")
 fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
-  dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", packagedProbeJar)
+  dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", ":verity:cli:verifyShrunkJars", packagedProbeJar)
   testClassesDirs = sourceSets.test.get().output.classesDirs
   classpath = sourceSets.test.get().runtimeClasspath
   maxHeapSize = "512m"
