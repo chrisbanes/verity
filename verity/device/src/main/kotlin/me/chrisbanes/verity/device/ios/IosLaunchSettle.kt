@@ -26,9 +26,10 @@ internal suspend fun awaitIosLaunchSettled(
   capture: suspend (Duration) -> HierarchyNode,
   timeout: Duration = IOS_LAUNCH_SETTLE_TIMEOUT,
   poll: Duration = IOS_LAUNCH_SETTLE_POLL,
+  timeSource: TimeSource = TimeSource.Monotonic,
 ) {
   val card = "card:$appId:"
-  val deadline = TimeSource.Monotonic.markNow() + timeout
+  val deadline = timeSource.markNow() + timeout
   while (true) {
     val remaining = -deadline.elapsedNow()
     if (!remaining.isPositive()) return
