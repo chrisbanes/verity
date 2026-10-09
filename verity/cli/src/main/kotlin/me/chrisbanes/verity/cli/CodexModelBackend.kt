@@ -344,7 +344,7 @@ internal class CodexModelBackend private constructor(
           return
         }
         if (params["threadId"] != JsonPrimitive(threadId ?: observedThreadId ?: reject())) reject()
-        if (method != "thread/status/changed" && !turnStartInitiated) reject()
+        if (method !in setOf("thread/status/changed", "thread/settings/updated", "warning") && !turnStartInitiated) reject()
         when (method) {
           "turn/started", "turn/completed" -> {
             val turn = params["turn"] as? JsonObject ?: reject()
@@ -369,6 +369,12 @@ internal class CodexModelBackend private constructor(
           }
 
           "thread/status/changed" -> verifyStatus(params, cleanup = false)
+
+          // Informational and non-executing; bound to the owned thread above. Content is never kept.
+          "thread/settings/updated", "warning" -> Unit
+
+          // Usage-only completion marker, unlike rawResponseItem/completed whose items are inspected.
+          "rawResponse/completed" -> if (params["turnId"] != JsonPrimitive(turnId ?: reject())) reject()
 
           "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated" -> {
             if (params["turnId"] != JsonPrimitive(turnId ?: reject())) reject()
@@ -513,6 +519,10 @@ internal class CodexModelBackend private constructor(
         }
 
         "thread/status/changed" -> verifyStatus(params, cleanup = true)
+
+        "thread/settings/updated", "warning" -> Unit
+
+        "rawResponse/completed" -> if (turnId == null || params["turnId"] != JsonPrimitive(turnId)) throw CodexFailure(CodexFailureKind.CLEANUP)
 
         "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated" -> {
           if (params["turnId"] != JsonPrimitive(turnId)) throw CodexFailure(CodexFailureKind.CLEANUP)

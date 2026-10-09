@@ -316,6 +316,28 @@ class CodexModelBackendTest {
   }
 
   @Test
+  fun `informational notifications are accepted only when bound to the owned thread and turn`() = runTest {
+    withContext(Dispatchers.Default) {
+      listOf("model-bound-foreign-settings", "model-bound-foreign-warning", "model-bound-null-warning", "model-bound-absent-warning", "model-bound-foreign-raw-completed", "model-bound-raw-completed-foreign-turn", "model-bound-raw-completed-missing-turn", "model-bound-raw-completed-before-turn", "model-bound-mcp-status").forEach { scenario ->
+        fixture(scenario) { fake, backend ->
+          assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) }
+          // Before the turn ID is known there is no owned turn to interrupt; the exact process is closed instead.
+          val owned = scenario != "model-bound-raw-completed-before-turn"
+          assertThat(fake.capturedFrames().count { it["method"] == JsonPrimitive("turn/interrupt") }, "scenario=$scenario").isEqualTo(if (owned) 1 else 0)
+          if (!owned) assertThat(fake.children.all { !it.process.isAlive }).isTrue()
+          assertThat(assertFailsWith<CodexFailure> { backend.execute(request()) }.kind).isEqualTo(CodexFailureKind.REQUEST)
+        }
+      }
+      fixture("model-interrupt-raw-completed") { fake, backend ->
+        val failure = assertFailsWith<CodexFailure> { backend.execute(request()) }
+        assertThat(failure.kind).isEqualTo(CodexFailureKind.PROTOCOL)
+        assertThat(failure.suppressed.isEmpty()).isTrue()
+        assertThat(fake.capturedFrames().count { it["method"] == JsonPrimitive("turn/interrupt") }).isEqualTo(1)
+      }
+    }
+  }
+
+  @Test
   fun `all raw calls outputs output-only and unknown executable variants permanently reject`() = runTest {
     withContext(Dispatchers.Default) {
       listOf("custom_tool_call", "custom_tool_call_output", "function_call", "function_call_output", "local_shell_call", "web_search_call", "tool_search_call", "tool_search_output", "image_generation_call", "configuration_update", "agent_message", "other", "unknown_call").forEach { type ->

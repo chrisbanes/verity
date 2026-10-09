@@ -338,6 +338,8 @@ internal object FakeCodexAppServer {
             )
           }
           event("thread/started", buildJsonObject { put("thread", thread) })
+          // Real Codex reports thread settings during thread and turn start.
+          event("thread/settings/updated", buildJsonObject { put("threadId", activeThread) })
           if (scenario == "model-unsolicited-turn") {
             event(
               "turn/started",
@@ -376,6 +378,7 @@ internal object FakeCodexAppServer {
           val params = frame.getValue("params").jsonObject
           if (params["threadId"] != JsonPrimitive(activeThread)) error("wrong thread")
           activeTurn = "turn-$threadCounter"
+          if (scenario == "model-bound-raw-completed-before-turn") boundEvent("rawResponse/completed", activeThread, activeTurn)
           if (scenario.startsWith("model-preack-turn-")) {
             val type = scenario.removePrefix("model-preack-turn-")
             if (type == "raw") {
@@ -403,6 +406,7 @@ internal object FakeCodexAppServer {
 
         "turn/interrupt" -> {
           if (frame.getValue("params").jsonObject["turnId"] != JsonPrimitive(activeTurn)) error("wrong interrupt")
+          if (scenario == "model-interrupt-raw-completed") boundEvent("rawResponse/completed", activeThread, activeTurn)
           JsonObject(emptyMap())
         }
 
@@ -528,6 +532,16 @@ internal object FakeCodexAppServer {
     put("items", JsonArray(emptyList()))
   }
 
+  /** Informational notifications carrying the given thread (JSON null when null) and, optionally, turn. */
+  private fun boundEvent(method: String, threadId: String?, turnId: String? = null) = event(
+    method,
+    buildJsonObject {
+      put("threadId", threadId)
+      turnId?.let { put("turnId", it) }
+      if (method == "warning") put("message", "fixture warning")
+    },
+  )
+
   private var receivedOptOut: JsonElement = kotlinx.serialization.json.JsonNull
   private var optedOut = emptySet<String>()
 
@@ -575,6 +589,19 @@ internal object FakeCodexAppServer {
   private fun emitModelOutput(scenario: String, threadId: String, turnId: String, captured: JsonObject) {
     if (scenario == "model-hang" || scenario == "model-no-stdin") return
     if (scenario == "model-loss") kotlin.system.exitProcess(0)
+    val foreign = "foreign-thread"
+    when (scenario) {
+      "model-bound-foreign-settings" -> boundEvent("thread/settings/updated", foreign)
+      "model-bound-foreign-warning" -> boundEvent("warning", foreign)
+      "model-bound-null-warning" -> boundEvent("warning", null)
+      "model-bound-absent-warning" -> event("warning", buildJsonObject { put("message", "fixture") })
+      "model-bound-foreign-raw-completed" -> boundEvent("rawResponse/completed", foreign, turnId)
+      "model-bound-raw-completed-foreign-turn" -> boundEvent("rawResponse/completed", threadId, "foreign-turn")
+      "model-bound-raw-completed-missing-turn" -> boundEvent("rawResponse/completed", threadId)
+      "model-bound-mcp-status" -> boundEvent("mcpServer/startupStatus/updated", threadId)
+      "model-interrupt-raw-completed" -> itemEvent("item/started", threadId, turnId, "commandExecution")
+      else -> boundEvent("thread/settings/updated", threadId)
+    }
     if (scenario == "model-malformed-json") {
       println("{broken")
       return
@@ -692,6 +719,8 @@ internal object FakeCodexAppServer {
       if (scenario == "model-final-priority") itemEvent("item/completed", threadId, turnId, "agentMessage", "legacy-after-final", null)
       if (scenario == "model-latest-final") itemEvent("item/completed", threadId, turnId, "agentMessage", "latest-final")
     }
+    boundEvent("warning", threadId)
+    boundEvent("rawResponse/completed", threadId, turnId)
     connectionEvent("account/rateLimits/updated", buildJsonObject { put("rateLimits", JsonObject(emptyMap())) })
     event(
       "turn/completed",
