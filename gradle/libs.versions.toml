@@ -18,7 +18,7 @@ grpc-kotlin = "1.5.0"
 assertk = "0.28.1"
 ktlint = "1.8.0"
 shadow = "9.6.1"
-r8 = "9.1.31"
+r8 = "9.5.23"
 spotless = "8.10.4"
 
 [libraries]
