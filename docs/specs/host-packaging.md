@@ -90,8 +90,7 @@ to snapshots of the actual three archives.
 `shrunkJars` builds R8-shrunk counterparts of the three archives in
 `verity/cli/build/libs/shrunk/`, with the same release filenames. The unshrunk
 `shadowJar`, `macosArm64Jar` and `linuxX64Jar` tasks, names and outputs are
-unchanged. They remain the comparison baseline and the recovery path, and
-releases still publish them.
+unchanged. They remain the comparison baseline and the release recovery path.
 
 `universalShrunkJar` is a ShadowJar with the shared archive settings and
 `minimize { r8 { } }`. R8 `com.android.tools:r8:9.1.31` comes from Google Maven,
@@ -129,6 +128,8 @@ current rules cover:
   and every member of other retained Maestro classes;
 - JNA, used by Mordant's terminal detection, and gRPC's shaded Netty epoll and
   tcnative classes, which JNI code reaches by name;
+- every member of retained Netty classes (both copies), which Netty resolves by
+  name through MethodHandles, VarHandles and field updaters;
 - Log4j plugins, their builder fields, visitors and validators;
 - Truffle's by-name accessors, generated libraries and DSL state fields;
 - missing-class diagnostics for optional integrations. Every class named by a
@@ -147,7 +148,7 @@ shrunk archive with its unshrunk counterpart:
   and owned by a retained class. R8 currently emits one. It throws for a
   non-null value cast to a type that has no retained subtype. Because every
   retained class keeps its constructors, only a `java.lang.reflect.Proxy`
-  instance could reach it. The receipt lists every caller (91 at present: Graal
+  instance could reach it. The receipt lists every caller (90 at present: Graal
   native-image types, absent optional integrations and interfaces Verity never
   configures). The verifier fails if a caller is in Verity, Koog or Maestro
   (including its XCTest, hierarchy, device and iOS packages).
@@ -182,15 +183,20 @@ CI runs the `-shrunk` variants of `packagedAndroidTest` and `packagedIosTest`
 beside the unshrunk variants. Each shrunk variant is accepted on its unshrunk
 counterpart's host.
 
-Shrinking becomes the release default only after these offline and device
-checks, and a granted live ChatGPT journey through the shrunk macOS archive, all
-pass on the same archive bytes. Until then, `packageRelease` publishes the
-unshrunk archives.
+`packageRelease` publishes the shrunk archives by default. The offline and
+device checks above, and a granted live ChatGPT journey through the shrunk macOS
+archive ([evidence](https://github.com/chrisbanes/verity/issues/104#issuecomment-6089666841)),
+passed on the same archive bytes. A change that alters the shrunk archives must
+pass them again. The Gradle property `releaseArchives` selects `shrunk`
+(default) or `unshrunk` and rejects any other value. To publish unshrunk
+archives, set `ORG_GRADLE_PROJECT_releaseArchives=unshrunk` in the release job.
+Asset names are identical either way, so the release workflow, release script
+and Homebrew formula are unchanged.
 
 ### Shrunk measurements
 
 Measured at
-[`4b2562615fec6839f85f96c53295c765de2d8f8f`](https://github.com/chrisbanes/verity/tree/4b2562615fec6839f85f96c53295c765de2d8f8f)
+[`8a1e31a79911da7d89a14532e5ad96c21e164054`](https://github.com/chrisbanes/verity/tree/8a1e31a79911da7d89a14532e5ad96c21e164054)
 on macOS 26.7 arm64, with the JDK 21.0.12.1 toolchain and launcher, Gradle
 9.8.1, Shadow 9.6.1 and R8 9.1.31. The SHA256 of the `artifact` lines of
 `host-packaging.tsv` is
@@ -200,12 +206,12 @@ identical bytes.
 
 | Archive pair | Unshrunk bytes | Shrunk bytes | Saved | Shrunk SHA256 |
 | --- | ---: | ---: | ---: | --- |
-| Universal | 190,285,922 | 133,851,108 | 56,434,814 (29.7%) | `e5ef1d35d081f2624ae1d6c050330de7d78ada7fb640d991c0b6dc5c7dbd3650` |
-| macOS ARM64 | 170,222,247 | 113,972,317 | 56,249,930 (33.0%) | `2af89db6849fd1f9917743fcc4124197c8c4572e96ccf0d94a9abffa5639976d` |
-| Linux x86-64 | 152,539,519 | 96,289,839 | 56,249,680 (36.9%) | `cfc987b098e4bd7144a54579fb5cb5c77145ed73967a1e0a87a9cd934ee5f8cd` |
+| Universal | 190,285,922 | 134,672,326 | 55,613,596 (29.2%) | `d28d13fd1d7580512fc8f7da4b6c1ecf1fff9ab296296b5a4118d36eddb5f86b` |
+| macOS ARM64 | 170,222,247 | 114,794,747 | 55,427,500 (32.6%) | `57edfc045c4b02cfedf826cf775bf722f3c2f611b20fc8ff0c1bba3169780e97` |
+| Linux x86-64 | 152,539,519 | 97,112,269 | 55,427,250 (36.3%) | `188a1cf9aa31b4951d3c765e2a136c96388a4b6b959c56e13a75444474b29cfd` |
 
-Classes fall from 65,140 to 37,396 in every archive, and compressed class bytes
-from 100,771,962 to 50,727,186. Compressed resource bytes fall by 19,838 only,
+Classes fall from 65,140 to 37,699 in every archive, and compressed class bytes
+from 100,771,962 to 51,478,388. Compressed resource bytes fall by 19,838 only,
 from the regenerated Kotlin module files and re-serialized service descriptors.
 The remaining compressed resource costs are:
 
@@ -221,15 +227,17 @@ filter's savings are separate and are described in the measurements below.
 
 Build time is the median of three `--rerun --profile` runs of
 `:verity:cli:shadowJar :verity:cli:universalShrunkJar` (`build/reports/profile/`).
-`shadowJar` took 16.0 s (15.9–16.8 s). `universalShrunkJar`, which assembles its
-own archive and then runs R8, took 99.0 s (89.9–191.8 s; the slowest was the
-first run in a fresh daemon). R8 runs in a separate
+`shadowJar` took 13.7 s (12.9–15.1 s). `universalShrunkJar`, which assembles its
+own archive and then runs R8, took 96.9 s (94.8–118.9 s). R8 runs in a separate
 JVM. Shadow then rewrites its output in the Gradle daemon and buffers every
-entry, so `gradle.properties` sets the daemon heap to 2 GiB, matching CI.
+entry, so `gradle.properties` sets the daemon heap to 2 GiB, matching CI. R8's
+own JVM uses the default heap, a quarter of physical memory; the macOS CI job
+raises it to 3 GiB through `JAVA_TOOL_OPTIONS` because that is too small there.
 
 ## Release assets and installation
 
-For version `V`, `packageRelease` produces exactly four publication assets:
+For version `V`, `packageRelease` produces exactly four publication assets, from
+the shrunk archives unless `releaseArchives=unshrunk`:
 
 - `verity-V.jar`
 - `verity-V-macos-aarch64.jar`

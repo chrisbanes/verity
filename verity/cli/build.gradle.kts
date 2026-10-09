@@ -232,20 +232,30 @@ val verifyShrunkJars = tasks.register<VerifyShrunkJars>("verifyShrunkJars") {
 tasks.check { dependsOn(verifyHostJars, verifyPackagedGrpc, verifyShrunkJars) }
 
 // Release input generation is offline and consumes only the three verified archives.
+// Releases publish the R8-shrunk archives; -PreleaseArchives=unshrunk restores the unshrunk ones.
 val releaseScript = layout.projectDirectory.file("../../scripts/release_artifacts.py")
 val releaseDirectory = layout.buildDirectory.dir("release")
 val releaseVersion = providers.gradleProperty("version").orElse(project.version.toString())
+val releaseArchives = providers.gradleProperty("releaseArchives").orElse("shrunk").get()
+require(releaseArchives in setOf("shrunk", "unshrunk")) { "releaseArchives must be 'shrunk' or 'unshrunk', not '$releaseArchives'" }
+val releaseJars = if (releaseArchives == "shrunk") listOf(universalShrunkJar, macosArm64ShrunkJar, linuxX64ShrunkJar) else listOf(tasks.shadowJar, macosArm64Jar, linuxX64Jar)
 tasks.register<Exec>("packageRelease") {
   dependsOn(verifyHostJars, verifyPackagedGrpc)
+  if (releaseArchives == "shrunk") dependsOn(verifyShrunkJars)
   inputs.file(releaseScript)
-  inputs.files(tasks.shadowJar.flatMap { it.archiveFile }, macosArm64Jar.flatMap { it.archiveFile }, linuxX64Jar.flatMap { it.archiveFile })
+  inputs.files(releaseJars.map { jar -> jar.flatMap { it.archiveFile } })
   inputs.property("releaseVersion", releaseVersion)
+  inputs.property("releaseArchives", releaseArchives)
   outputs.dir(releaseDirectory)
   commandLine(
-    "python3", releaseScript.asFile.absolutePath, "build", "--version", releaseVersion.get(),
-    "--output", releaseDirectory.get().asFile.absolutePath,
-    tasks.shadowJar.get().archiveFile.get().asFile.absolutePath,
-    macosArm64Jar.get().archiveFile.get().asFile.absolutePath,
-    linuxX64Jar.get().archiveFile.get().asFile.absolutePath,
+    listOf(
+      "python3",
+      releaseScript.asFile.absolutePath,
+      "build",
+      "--version",
+      releaseVersion.get(),
+      "--output",
+      releaseDirectory.get().asFile.absolutePath,
+    ) + releaseJars.map { it.get().archiveFile.get().asFile.absolutePath },
   )
 }
