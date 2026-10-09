@@ -69,6 +69,13 @@ ChatGPT mode checks readable local paths first, then prepares the isolated backe
 
 Safe diagnostics use `codex.installation`, `codex.version`, `codex.host`, `codex.auth`, `codex.model`, `codex.modality`, `codex.effort`, `codex.protocol`, `codex.isolation`, `codex.startup_timeout`, or `codex.cleanup`. Invalid local auth configuration uses `codex.auth.invalid`. Messages and remediation are fixed; raw account, configuration, stderr, RPC failures and causes are excluded. Failed preparation or later device checks close any acquired backend. These are setup failures, exit `3`, before session creation.
 
-The conservative minimum is Codex CLI **0.159.0** on macOS, with required experimental raw events and schema/effective-policy checks. The [historical checkpoint](https://github.com/chrisbanes/verity/issues/92#issuecomment-5955708208) demonstrated text and synthetic screenshot inference on **macOS 26.7 arm64**, using **gpt-6-luna / low**. It did not qualify Linux, Windows, other hosts or all future versions. Offline fake-child tests cover client behavior and owned cleanup; they are not new real inference or entitlement evidence.
+The conservative minimum is Codex CLI **0.159.0** on macOS, with required experimental raw events and schema/effective-policy checks. Effective policy is read with `includeLayers`. The `tools.update_plan.enabled` and `tools.experimental_request_user_input.enabled` keys, which the typed configuration omits, must be `false` in the winning layer, so a managed layer that enables either fails `codex.isolation`.
+
+Evidence by version and host:
+- **codex-cli 0.161.0** is runtime-qualified on **macOS 26.7 arm64**. Verity's own backend passed the opt-in `codexQualification` task (preparation, role validation, navigator text, inspector screenshot, cleanup) with **gpt-6-luna / low** on 2026-10-09.
+- **0.159.0** is source-verified against rust-v0.159.0 ([evidence](https://github.com/chrisbanes/verity/issues/92#issuecomment-6085385043)), not runtime-qualified. The [historical checkpoint](https://github.com/chrisbanes/verity/issues/92#issuecomment-5955708208) ran a 0.159.0 binary with a probe client, not Verity's backend.
+- Linux, Windows, other hosts and other versions are not qualified; newer versions remain gated by runtime checks.
+
+Offline fake-child tests cover client behavior and owned cleanup; they are not real inference or entitlement evidence.
 
 See the [official app-server documentation](https://learn.chatgpt.com/docs/app-server) and [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) for the upstream interfaces. Verity's required isolation is version-specific and fails closed when it cannot verify the contract.
