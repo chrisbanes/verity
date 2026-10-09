@@ -6,7 +6,7 @@ Inspect a journey one segment at a time through Verity MCP. Preview generated Ma
 
 Use `load_journey(path)`, or `list_journeys` followed by the selected path, before opening a session. Show the resolved name, app ID and platform and use shared [Step Classification](../context/procedures.md#step-classification) to derive zero-based segments from the typed steps. Obtain any needed context and follow [Prerequisites](../context/procedures.md#prerequisites) after the user agrees to connect.
 
-`load_journey` supplies parsed steps, not generated flows. The caller segments and generates them. Show source step references, actions, assertion mode, loop body/condition/maximum and segment count. For actions A/B followed by assertion C, pending action D, standalone loop E, assertion-only F and trailing action G, the segments are `[A,B]+C`, `[D]`, `[E]`, `[F]`, `[G]`.
+`load_journey` supplies parsed steps, not generated flows. The caller segments and generates them. Show source step references, actions, assertion mode, loop body/condition/maximum and segment count.
 
 ## Preview and Choose
 
@@ -19,7 +19,7 @@ For each segment, show its index, original source, planned actions/assertion and
 - **Edit:** accept segment-local replacement Maestro YAML, validate its `appId`/commands shape and current Maestro syntax, then redisplay it for acceptance before execution. Malformed edits return for correction and never execute. Keep the original journey file unchanged unless saving a change is separately requested. `edited=true` is independent of success/failure.
 - **Stop:** leave remaining segments unexecuted, report the partial exploration and close the session.
 
-An assertion-only segment offers execute-check, skip or stop. For a loop, preview its complete body, condition and maximum, then apply shared [Loop Execution](../context/procedures.md#loop-execution). Check initially; a satisfied condition performs no body. Each newly generated or edited complete body requires its own preview and execution choice. Count only successful complete bodies; honour the maximum. Do not hide debugger choices inside `run_loop`.
+An assertion-only segment offers execute-check, skip or stop. For a loop, preview its complete body, condition and maximum, then apply shared [Loop Execution](../context/procedures.md#loop-execution); an exercised loop segment never uses `run_loop` or [Overshoot and Correct](../context/procedures.md#overshoot-and-correct), so every body gets its own preview. Check initially; a satisfied condition performs no body. Each newly generated or edited complete body requires its own preview and execution choice. Count only successful complete bodies; honour the maximum. Exploration outside a journey step, such as repositioning the user requests, may use Overshoot and Correct.
 
 A wait segment has no action flow. Show its condition and parsed time limit, explain that semantic execution requires CLI `verity run`, and leave it unexecuted through MCP before session cleanup. Do not claim a wait pass from a single exploratory capture or translate it to the key-loop tool.
 
@@ -27,7 +27,7 @@ A wait segment has no action flow. Show its condition and parsed time limit, exp
 
 Interpret returned `SUCCESS`/`FAILED: ...` text separately from MCP error flags. After an actual action flow, capture a current screenshot and/or hierarchy even on reported execution failure if the session still responds. Retain returned content, snapshot ID or the actual saved absolute path using [Screenshot Evidence](../context/procedures.md#screenshot-evidence). Capture failure is explicit unavailable evidence.
 
-Evaluate assertions through shared [Assertion Evaluation](../context/procedures.md#assertion-evaluation). Show deterministic tool input/result and basis, or explain the tree/image evidence supporting the verdict. An assertion-only execution still obtains its required current check/capture. Never infer a pass without evidence. Edited or failed flows invalidate cached state.
+Evaluate assertions through shared [Assertion Evaluation](../context/procedures.md#assertion-evaluation). Show deterministic tool input/result and basis, or explain the tree/image evidence supporting the verdict. An assertion-only execution still obtains its required current check/capture. Never infer a pass without evidence. Edited or failed flows invalidate captures under [Hierarchy Reuse](../context/procedures.md#hierarchy-reuse).
 
 On execution, assertion, capture or external evaluation failure, show the reason and offer continue or stop. Continuing after a failure or skip is exploratory state, not proof that the original journey passes. If a successful flow has no assertion, its pass means execution succeeded, not that an unstated UI expectation was verified.
 
@@ -42,6 +42,6 @@ Report every segment, separating outcome from edits:
 | 2 | Accepted replacement YAML | failed | true | Flow FAILED; current hierarchy retained |
 | 3 | Original assertion | unexecuted | false | User stopped |
 
-Identify replacement references, actual captured evidence, missing evidence and the effect of skips/edits on the original journey. Saved screenshots are caller-owned; MCP does not manufacture the CLI's run artifacts or result schema.
+Identify replacement references, actual captured evidence, missing evidence and the effect of skips/edits on the original journey. MCP does not manufacture the CLI's run artifacts or result schema.
 
-Every exit follows shared [Session Cleanup](../context/procedures.md#session-cleanup), including tool, generation, evaluation, edit/save and capture failures. Report cleanup errors separately and retain user files/evidence. Closing restores available saved Android animation scales when disabled, but does not undo app navigation or data; iOS ignores disabling.
+Every exit follows shared [Session Cleanup](../context/procedures.md#session-cleanup), including tool, generation, evaluation, edit/save and capture failures. Report cleanup errors separately.
