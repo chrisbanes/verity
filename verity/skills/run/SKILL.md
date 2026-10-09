@@ -11,9 +11,9 @@ Execute a journey through Verity MCP, with an initial confirmation and assertion
 
 ## Execute Segments
 
-For each segment in order, generate action YAML using [Flow Generation](../context/procedures.md#flow-generation). Batch static actions within this segment only. Run loops through [Loop Execution](../context/procedures.md#loop-execution), passing a parsed maximum explicitly if using the literal single-key `run_loop` shortcut.
+For each segment in order, generate action YAML using [Flow Generation](../context/procedures.md#flow-generation). Batch static actions within this segment only. Run each loop as [Loop Strategy](../context/procedures.md#loop-strategy) selects.
 
-Interpret actual `run_flow` text and MCP error flags; `FAILED` text is an execution failure. After successful actions, evaluate that segment's assertion through [Assertion Evaluation](../context/procedures.md#assertion-evaluation) before executing later actions. Preserve assertion-only, trailing-action and standalone-loop and wait segments. Reuse hierarchy only under the shared freshness rule.
+Interpret actual `run_flow` text and MCP error flags; `FAILED` text is an execution failure. After successful actions, evaluate that segment's assertion through [Assertion Evaluation](../context/procedures.md#assertion-evaluation) before executing later actions. Preserve assertion-only, trailing-action and standalone-loop and wait segments. Reuse captures only under [Hierarchy Reuse](../context/procedures.md#hierarchy-reuse).
 
 Show deterministic input/result or the captured tree/image and reasoning for each assertion. A failed flow, false assertion, tool error, unavailable evidence or external evaluation failure identifies the segment and actual reason. Offer continue or stop. Continuing is an explicit choice to explore the resulting state; it cannot turn the failed segment into a pass. On stop, mark the remaining segments unexecuted.
 
@@ -27,12 +27,6 @@ Report after completion or early exit:
 | 1 | Press down | Settings / FOCUSED | failed | `check_focused("Settings")` returned false |
 | 2 | Press select | Account / TREE | unexecuted | User stopped after segment 1 |
 
-Describe what ran, what passed/failed and any observations. Reference actual returned hierarchy/snapshot or screenshot evidence. For saved images, follow [Screenshot Evidence](../context/procedures.md#screenshot-evidence) and use the returned absolute path, keeping its caller-owned PNG available while the report needs it. An error response is not a successful saved-path response. MCP does not automatically create the CLI's `result.json` or artifact directory.
+Describe what ran, what passed/failed and any observations. Reference actual returned hierarchy/snapshot or screenshot evidence; saved images follow [Screenshot Evidence](../context/procedures.md#screenshot-evidence). MCP does not automatically create the CLI's `result.json` or artifact directory.
 
-Every exit follows [Session Cleanup](../context/procedures.md#session-cleanup); report close/restoration failure separately. Saved screenshots and journey files remain caller-owned.
-
-## Cost and Batching
-
-- Prefer deterministic checks when they establish the requested assertion.
-- Use `capture_hierarchy(filter: "focus")` when focused context is sufficient.
-- Batch actions within checkpoints and reuse only demonstrably fresh evidence.
+Every exit follows [Session Cleanup](../context/procedures.md#session-cleanup); report close/restoration failure separately.

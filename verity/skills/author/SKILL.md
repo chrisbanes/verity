@@ -12,7 +12,7 @@ Follow shared [Prerequisites](../context/procedures.md#prerequisites) after the 
 
 ## Capture the Starting State
 
-Call `capture_screenshot(session_id)` and show the image, then `capture_hierarchy(session_id)` to describe the accessible state. Ask whether this is the intended starting point. Use [Screenshot Evidence](../context/procedures.md#screenshot-evidence) for a retained reference PNG; it survives session closure and the caller owns eventual deletion.
+Call `capture_screenshot(session_id)` and show the image, then `capture_hierarchy(session_id)` to describe the accessible state. Ask whether this is the intended starting point. Use [Screenshot Evidence](../context/procedures.md#screenshot-evidence) for a retained reference PNG.
 
 Ask what the journey should test. Retain that goal as authoring context while keeping the resolved name.
 
@@ -20,16 +20,16 @@ Ask what the journey should test. Retain that goal as authoring context while ke
 
 Repeat until the user finishes:
 
-1. Propose a plain-English action based on the current state and platform: D-pad movement may suit TV, while taps/swipes suit mobile or iOS. Offer accept, edit or skip. Redisplay an edited proposal and obtain acceptance before executing it or adding it.
+1. Propose a plain-English action based on the current state and platform: D-pad movement may suit TV, while taps/swipes suit mobile or iOS. Word every proposal under [Journey Authoring](../context/procedures.md#journey-authoring) and offer accept, edit or skip. Redisplay an edited proposal and obtain acceptance before executing it or adding it.
 2. Generate the accepted action's flow through shared [Flow Generation](../context/procedures.md#flow-generation). Execute only after review; capture updated state before the next proposal. Report failed execution honestly and let the user retry, revise, retain an explicitly unverified step or skip it; never represent a failed action as successfully exercised. Skipped proposals are not added.
-3. Propose the cheapest useful assertion through [Assertion Evaluation](../context/procedures.md#assertion-evaluation): pin `[?visible]` for literal text, `[?focused]` for focus, `[?tree]` for relationships and `[?visual]` for appearance. Explain the mode choice, then offer accept, edit or skip before adding/checking it. Generic `[?]` uses parser heuristics; it does not automatically choose FOCUSED.
-4. Offer another action, a loop, a wait, a reference screenshot or finish. For a wait, review its condition and positive whole-second limit; use `Wait until <condition> up to N seconds`, defaulting to 20 seconds when omitted. Semantic waits are executed by the CLI, so mark an authored wait unverified during MCP exploration. For a loop, review/edit the complete ordered body, condition and explicit maximum before adding or executing it. Use shared [Loop Execution](../context/procedures.md#loop-execution) and current scalar grammar: semicolon-separated nonempty instructions followed by `until` and an anchored `up to N times` limit. A zero bound checks once without a body. Show any replacement body before executing it.
+3. Propose the cheapest sufficient assertion using the [Assertion Evaluation](../context/procedures.md#assertion-evaluation) mode mapping: pin that mode and explain the choice, then offer accept, edit or skip before adding/checking it.
+4. Offer another action, a loop, a wait, a reference screenshot or finish. For a wait, review its condition and positive whole-second limit; use `Wait until <condition> up to N seconds`, defaulting to 20 seconds when omitted. Semantic waits are executed by the CLI, so mark an authored wait unverified during MCP exploration. For a loop, review/edit the complete ordered body, condition and explicit maximum before adding or executing it. Execute a proposed loop step with shared [Loop Execution](../context/procedures.md#loop-execution) and current scalar grammar: semicolon-separated nonempty instructions followed by `until` and an anchored `up to N times` limit. Show any replacement body before executing it. Repositioning that is not itself a proposed step may use [Overshoot and Correct](../context/procedures.md#overshoot-and-correct).
 
-Maintain a reviewed draft and distinguish steps actually exercised from unverified edits. After an edit or failed flow, follow the shared evidence-freshness rule.
+Maintain a reviewed draft and distinguish steps actually exercised from unverified edits. After an edit or failed flow, follow [Hierarchy Reuse](../context/procedures.md#hierarchy-reuse).
 
 ## Review and Save
 
-Show final YAML and the exact proposed output path. Current journeys have `name`, `app`, `platform` and string `steps`; action/assertion/loop/wait mappings are not the schema. Quote assertion prefixes and ambiguous scalar strings. For example:
+Show final YAML and the exact proposed output path, with any proposed app-context notes listed beside it for the user to add to project context. Current journeys have `name`, `app`, `platform` and string `steps`; action/assertion/loop/wait mappings are not the schema. Quote assertion prefixes and ambiguous scalar strings. For example:
 
 ```yaml
 name: Open account settings
@@ -39,8 +39,11 @@ steps:
   - Tap Settings
   - "[?visible] Settings"
   - "[?focused] Account"
-  - "Scroll down; tap Account until account page is ready up to 2 times"
+  - "Scroll down until Account up to 5 times"
+  - Tap Account
+  - "Wait until Profile up to 10 seconds"
   - "[?tree] The account page contains a profile section"
+  - "Wait until visually the profile picture is loaded up to 10 seconds"
   - "[?visual] The profile picture is visible"
 ```
 
@@ -50,4 +53,4 @@ After a verified save, point to the [run skill](../run/SKILL.md) or [debug skill
 
 ## Close
 
-Follow shared [Session Cleanup](../context/procedures.md#session-cleanup) on completion, early exit and every failure. State which Android animation settings were restored only when closure succeeded; closure does not undo app navigation/data, saved journeys or screenshot evidence.
+Follow shared [Session Cleanup](../context/procedures.md#session-cleanup) on completion, early exit and every failure.
