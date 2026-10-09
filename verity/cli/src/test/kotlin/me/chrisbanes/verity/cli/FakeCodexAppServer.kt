@@ -91,10 +91,10 @@ internal object FakeCodexAppServer {
           val status = definitions.getValue("TurnStatus").jsonObject
           schema = JsonObject(schema + ("definitions" to JsonObject(definitions + ("TurnStatus" to JsonObject(status + ("enum" to JsonArray(listOf(JsonPrimitive("inProgress")))))))))
         }
-        if (name.endsWith("InitializeParams.json") && scenario == "missing-gateway") {
+        if (name.endsWith("InitializeParams.json") && scenario in setOf("missing-gateway", "missing-opt-out")) {
           val definitions = schema.getValue("definitions").jsonObject
           val capabilities = definitions.getValue("InitializeCapabilities").jsonObject
-          val properties = capabilities.getValue("properties").jsonObject - "explicitGatewayOauth"
+          val properties = capabilities.getValue("properties").jsonObject - (if (scenario == "missing-gateway") "explicitGatewayOauth" else "optOutNotificationMethods")
           schema = JsonObject(schema + ("definitions" to JsonObject(definitions + ("InitializeCapabilities" to JsonObject(capabilities + ("properties" to JsonObject(properties)))))))
         }
         if (name.endsWith("RawResponseItemCompletedNotification.json") && scenario == "missing-raw-definition") schema = JsonObject(schema - "definitions")
@@ -190,6 +190,9 @@ internal object FakeCodexAppServer {
           if (initialized) error("duplicate initialize")
           val capabilities = frame.getValue("params").jsonObject.getValue("capabilities").jsonObject
           if (capabilities["experimentalApi"] != JsonPrimitive(true) || capabilities["explicitGatewayOauth"] != JsonPrimitive(true) || capabilities["requestAttestation"] != JsonPrimitive(false)) error("unsafe capabilities")
+          receivedOptOut = capabilities["optOutNotificationMethods"] ?: kotlinx.serialization.json.JsonNull
+          optedOut = if (scenario == "ignore-opt-out") emptySet() else (receivedOptOut as? JsonArray)?.map { it.jsonPrimitive.content }?.toSet().orEmpty()
+          System.getProperty("verity.fake.receipt")?.let { Files.writeString(Path.of(it), buildJsonObject { put("initializeOptOut", receivedOptOut) }.toString() + "\n", java.nio.file.StandardOpenOption.APPEND) }
           initialized = true
           JsonObject(emptyMap())
         }
@@ -202,6 +205,11 @@ internal object FakeCodexAppServer {
 
         "config/read" -> {
           if (!initialized || !notified) error("config order")
+          if (!read) {
+            // Real Codex queues these after initialize, so they interleave into the next response.
+            if (scenario == "config-warning") connectionEvent("configWarning", buildJsonObject { put("summary", "fixture warning") })
+            connectionEvent("remoteControl/status/changed", buildJsonObject { put("status", "disabled") })
+          }
           read = true
           buildJsonObject {
             put("config", JsonObject(config))
@@ -211,23 +219,27 @@ internal object FakeCodexAppServer {
                 put("pid", ProcessHandle.current().pid())
                 put("emptyCwd", emptyCwd)
                 put("removedEnvironmentAbsent", REMOVED_ENVIRONMENT.none { System.getenv(it) != null })
+                put("optOutNotificationMethods", receivedOptOut)
               },
             )
           }
         }
 
-        "account/read" -> buildJsonObject {
-          put(
-            "account",
-            if (scenario == "model-signed-out") {
-              kotlinx.serialization.json.JsonNull
-            } else {
-              buildJsonObject {
-                put("type", if (scenario == "model-api-account") "apiKey" else "chatgpt")
-                put("email", "sk-secret-account")
-              }
-            },
-          )
+        "account/read" -> {
+          connectionEvent("account/updated", buildJsonObject { put("authMode", "chatgpt") })
+          buildJsonObject {
+            put(
+              "account",
+              if (scenario == "model-signed-out") {
+                kotlinx.serialization.json.JsonNull
+              } else {
+                buildJsonObject {
+                  put("type", if (scenario == "model-api-account") "apiKey" else "chatgpt")
+                  put("email", "sk-secret-account")
+                }
+              },
+            )
+          }
         }
 
         "model/list" -> buildJsonObject {
@@ -454,6 +466,14 @@ internal object FakeCodexAppServer {
     put("items", JsonArray(emptyList()))
   }
 
+  private var receivedOptOut: JsonElement = kotlinx.serialization.json.JsonNull
+  private var optedOut = emptySet<String>()
+
+  /** Connection-level notifications carry no thread identity; Codex drops them only for opted-out methods. */
+  private fun connectionEvent(method: String, params: JsonObject) {
+    if (method !in optedOut) event(method, params)
+  }
+
   private fun event(method: String, params: JsonObject) {
     println(
       buildJsonObject {
@@ -610,6 +630,7 @@ internal object FakeCodexAppServer {
       if (scenario == "model-final-priority") itemEvent("item/completed", threadId, turnId, "agentMessage", "legacy-after-final", null)
       if (scenario == "model-latest-final") itemEvent("item/completed", threadId, turnId, "agentMessage", "latest-final")
     }
+    connectionEvent("account/rateLimits/updated", buildJsonObject { put("rateLimits", JsonObject(emptyMap())) })
     event(
       "turn/completed",
       buildJsonObject {
@@ -677,6 +698,9 @@ internal object FakeCodexAppServer {
     "v2/ThreadStatusChangedNotification.json" to """{"properties":{"status":{"${'$'}ref":"#/definitions/ThreadStatus"},"threadId":{"type":"string"}},"required":["status","threadId"],"type":"object","definitions":{"ThreadStatus":{"oneOf":[{"properties":{"type":{"enum":["notLoaded"],"title":"NotLoadedThreadStatusType","type":"string"}},"required":["type"],"title":"NotLoadedThreadStatus","type":"object"},{"properties":{"type":{"enum":["idle"],"title":"IdleThreadStatusType","type":"string"}},"required":["type"],"title":"IdleThreadStatus","type":"object"},{"properties":{"type":{"enum":["systemError"],"title":"SystemErrorThreadStatusType","type":"string"}},"required":["type"],"title":"SystemErrorThreadStatus","type":"object"},{"properties":{"activeFlags":{"items":{"${'$'}ref":"#/definitions/ThreadActiveFlag"},"type":"array"},"type":{"enum":["active"],"title":"ActiveThreadStatusType","type":"string"}},"required":["activeFlags","type"],"title":"ActiveThreadStatus","type":"object"}]},"ThreadActiveFlag":{"enum":["waitingOnApproval","waitingOnUserInput"],"type":"string"}}}""",
   )
 }
+
+/** Independent spec of the connection-level notifications Verity must opt out of. */
+internal val OPTED_OUT_NOTIFICATIONS = listOf("configWarning", "remoteControl/status/changed", "account/updated", "account/rateLimits/updated")
 
 /** Independent spec of what the child must never inherit: API keys and origin overrides. */
 internal val REMOVED_ENVIRONMENT = setOf("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "CODEX_APP_SERVER_CHATGPT_BASE_URL", "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE")

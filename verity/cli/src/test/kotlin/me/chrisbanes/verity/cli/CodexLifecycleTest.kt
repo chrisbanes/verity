@@ -49,6 +49,7 @@ class CodexLifecycleTest {
           assertThat(observations["pid"]).isEqualTo(JsonPrimitive(fake.children.last().process.pid()))
           assertThat(observations["emptyCwd"]).isEqualTo(JsonPrimitive(true))
           assertThat(observations["removedEnvironmentAbsent"]).isEqualTo(JsonPrimitive(true))
+          assertThat(observations["optOutNotificationMethods"]).isEqualTo(JsonArray(OPTED_OUT_NOTIFICATIONS.map(::JsonPrimitive)))
           assertThat(backend.isolation.names.values.all { it.size == 2 }).isTrue()
         } finally {
           backend.close()
@@ -91,7 +92,7 @@ class CodexLifecycleTest {
   @Test
   fun `bootstrap final EOF and every server callback fail closed and clean actual children`() = runTest {
     withContext(Dispatchers.Default) {
-      listOf("bootstrap-eof", "final-eof", "callback", "callback-unknown", "relevant-flood", "rerouted").forEach { scenario ->
+      listOf("bootstrap-eof", "final-eof", "callback", "callback-unknown", "relevant-flood", "rerouted", "ignore-opt-out").forEach { scenario ->
         val fake = FakeCodexLauncher(scenario)
         assertThat(assertFailsWith<CodexFailure> { fake.prepare() }.kind).isEqualTo(CodexFailureKind.PROTOCOL)
         fake.verifyCleanup()

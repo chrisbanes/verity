@@ -524,6 +524,9 @@ internal class CodexModelBackend private constructor(
   }
 
   companion object {
+    /** Connection-level notifications Codex pushes without thread identity; suppressed server-side so every other one stays rejected. */
+    internal val optedOutNotifications = listOf("configWarning", "remoteControl/status/changed", "account/updated", "account/rateLimits/updated")
+
     /** API keys and origin overrides invisible to config/read: token refresh/revoke URLs carry credentials; the rest only reach disabled features (defence in depth). */
     internal val removedEnvironment = setOf("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "CODEX_APP_SERVER_CHATGPT_BASE_URL", "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE")
 
@@ -613,6 +616,7 @@ internal class CodexModelBackend private constructor(
               put("experimentalApi", true)
               put("explicitGatewayOauth", true)
               put("requestAttestation", false)
+              put("optOutNotificationMethods", JsonArray(optedOutNotifications.map(::JsonPrimitive)))
             },
           )
         },

@@ -96,6 +96,7 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
       }
       val capabilities = schema("v1/InitializeParams.json")["definitions"]?.jsonObject?.get("InitializeCapabilities")?.jsonObject?.get("properties")?.jsonObject
       listOf("experimentalApi", "explicitGatewayOauth", "requestAttestation").forEach { if (!hasType(capabilities?.get(it), "boolean")) throw CodexFailure(CodexFailureKind.PROTOCOL) }
+      if (!hasType(capabilities?.get("optOutNotificationMethods"), "array")) throw CodexFailure(CodexFailureKind.PROTOCOL)
       val raw = schema("v2/RawResponseItemCompletedNotification.json")
       if (raw["required"]?.jsonArray?.map { it.jsonPrimitive.content }?.containsAll(listOf("item", "threadId", "turnId")) != true || raw["properties"]?.jsonObject?.get("item")?.jsonObject?.get("\$ref") != JsonPrimitive("#/definitions/ResponseItem")) throw CodexFailure(CodexFailureKind.PROTOCOL)
       fun reference(value: JsonElement?, name: String): Boolean = (value as? JsonObject)?.get("\$ref") == JsonPrimitive("#/definitions/$name")

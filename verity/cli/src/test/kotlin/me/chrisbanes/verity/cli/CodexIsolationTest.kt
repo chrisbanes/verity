@@ -49,7 +49,7 @@ class CodexIsolationTest {
   @Test
   fun `required experimental schema absent or root type changed fails closed with actual child cleanup`() = runTest {
     withContext(Dispatchers.Default) {
-      listOf("missing-raw", "missing-roots", "wrong-root-type", "missing-raw-definition", "wrong-echo-type", "schema-symlink", "missing-gateway").forEach { scenario ->
+      listOf("missing-raw", "missing-roots", "wrong-root-type", "missing-raw-definition", "wrong-echo-type", "schema-symlink", "missing-gateway", "missing-opt-out").forEach { scenario ->
         val fake = FakeCodexLauncher(scenario)
         val failure = assertFailsWith<CodexFailure> { fake.prepare() }
         assertThat(failure.kind).isEqualTo(CodexFailureKind.PROTOCOL)

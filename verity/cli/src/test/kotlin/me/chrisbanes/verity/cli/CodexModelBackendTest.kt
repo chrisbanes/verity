@@ -273,6 +273,20 @@ class CodexModelBackendTest {
   }
 
   @Test
+  fun `both connections opt out of connection notifications so emitted ones cannot break preflight or turns`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture { fake, backend ->
+        backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low", SelectedRoleModel.Codex("gpt-6-luna") to "low"))
+        assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
+        assertThat(fake.capturedFrames().mapNotNull { it["initializeOptOut"] }).isEqualTo(List(2) { JsonArray(OPTED_OUT_NOTIFICATIONS.map(::JsonPrimitive)) })
+      }
+      val warned = FakeCodexLauncher("config-warning")
+      warned.prepare().close()
+      warned.verifyCleanup()
+    }
+  }
+
+  @Test
   fun `concurrent callers serialize whole ephemeral requests`() = runTest {
     withContext(Dispatchers.Default) {
       fixture { fake, backend ->
