@@ -85,7 +85,10 @@ class Orchestrator(
   ): SegmentResult {
     segment.wait?.let { wait ->
       val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index, onInspectedScreenshot = memory::recordScreenshot)
-      val result = ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds, memory.inspectionContext(ConditionEvaluator.isVisual(wait.until)))
+      // Every poll sees the wait's starting references, even though polls keep recording newer screenshots.
+      val result = memory.withFrozenContext(ConditionEvaluator.isVisual(wait.until)) { context ->
+        ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds, context)
+      }
       val evaluation = result.lastEvaluation
       if (evaluation != null) memory.recordVerdict("wait until: ${wait.until}", result.satisfied, evaluation.verdict.reasoning)
       val reasoning = if (result.satisfied) {

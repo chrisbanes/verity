@@ -94,10 +94,41 @@ internal class JourneyMemory(
   /**
    * Empty when there is nothing to say, so a fresh journey sends no reference context.
    * Tree inspections pass `includeScreenshots = false` and receive text only.
+   * The screenshot paths are live: use this only for a single immediate inspection.
    */
-  fun inspectionContext(includeScreenshots: Boolean): InspectionContext {
-    val dir = directory
-    val screenshots = if (dir == null || !includeScreenshots) emptyList() else listOfNotNull(dir.resolve(FIRST).takeIf { hasFirst }, dir.resolve(LATEST).takeIf { hasLatest })
+  fun inspectionContext(includeScreenshots: Boolean): InspectionContext = contextOf(if (includeScreenshots) liveScreenshots() else emptyList())
+
+  /**
+   * Like [inspectionContext], but its screenshots are private copies that stay unchanged while [block]
+   * runs, for a context reused across repeated inspections whose captures keep replacing the live files.
+   */
+  suspend fun <T> withFrozenContext(includeScreenshots: Boolean, block: suspend (InspectionContext) -> T): T {
+    val live = if (includeScreenshots) liveScreenshots() else emptyList()
+    if (live.isEmpty()) return block(contextOf(emptyList()))
+    var snapshot: Path? = null
+    try {
+      val frozen = withContext(Dispatchers.IO) {
+        try {
+          val dir = Files.createTempDirectory(live.first().parent, "frozen-").also { snapshot = it }
+          live.map { Files.copy(it, dir.resolve(it.fileName), StandardCopyOption.REPLACE_EXISTING) }
+        } catch (_: IOException) {
+          emptyList() // Labels depend on which screenshots are attached, so attach none rather than a wrong pair.
+        } catch (_: SecurityException) {
+          emptyList()
+        }
+      }
+      return block(contextOf(frozen))
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) { snapshot?.toFile()?.deleteRecursively() }
+    }
+  }
+
+  private fun liveScreenshots(): List<Path> {
+    val dir = directory ?: return emptyList()
+    return listOfNotNull(dir.resolve(FIRST).takeIf { hasFirst }, dir.resolve(LATEST).takeIf { hasLatest })
+  }
+
+  private fun contextOf(screenshots: List<Path>): InspectionContext {
     if (verdicts.isEmpty() && trail.isEmpty() && screenshots.isEmpty()) return InspectionContext()
     return InspectionContext(render(screenshots.size), screenshots)
   }

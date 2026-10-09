@@ -249,6 +249,34 @@ class JourneyMemoryTest {
   }
 
   @Test
+  fun `frozen context keeps its screenshots while newer ones are recorded and is cleaned up`() {
+    withMemory { memory, root ->
+      memory.recordScreenshot(file(root, "a.png", 1))
+      memory.recordScreenshot(file(root, "b.png", 2))
+      var frozenPaths = emptyList<Path>()
+      memory.withFrozenContext(includeScreenshots = true) { context ->
+        frozenPaths = context.referenceScreenshots
+        memory.recordScreenshot(file(root, "c.png", 3))
+        memory.recordScreenshot(file(root, "d.png", 4))
+        assertThat(context.referenceScreenshots.map { Files.readAllBytes(it).toList() }).containsExactly(listOf<Byte>(1), listOf<Byte>(2))
+      }
+      assertThat(frozenPaths.none { Files.exists(it) }).isTrue()
+      assertThat(memory.inspectionContext(includeScreenshots = true).referenceScreenshots.map { Files.readAllBytes(it).toList() })
+        .containsExactly(listOf<Byte>(1), listOf<Byte>(4))
+    }
+  }
+
+  @Test
+  fun `frozen context without earlier screenshots attaches none`() {
+    withMemory { memory, root ->
+      memory.withFrozenContext(includeScreenshots = true) { context ->
+        memory.recordScreenshot(file(root, "a.png", 1))
+        assertThat(context.referenceScreenshots).isEmpty()
+      }
+    }
+  }
+
+  @Test
   fun `missing source screenshot is ignored and keeps the previous reference`() {
     withMemory { memory, root ->
       memory.recordScreenshot(file(root, "a.png", 1))

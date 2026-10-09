@@ -12,7 +12,9 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.time.Duration
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
@@ -65,6 +67,7 @@ class OrchestratorJourneyMemoryTest {
       Files.write(output, byteArrayOf((++screenshots).toByte()))
     }
 
+    override suspend fun captureScreenshot(output: Path, timeout: Duration) = captureScreenshot(output)
     override suspend fun executeFlow(yaml: String) = error("unused")
     override suspend fun shell(command: String) = ""
     override suspend fun waitForAnimationToEnd() = Unit
@@ -233,6 +236,38 @@ class OrchestratorJourneyMemoryTest {
       assertThat(inspector.calls[2].message).contains("Reference screenshot 2 is the most recent earlier screenshot")
     } finally {
       directory.toFile().deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `visual wait polls all see the references from the start of the wait`() = runTest {
+    // Real dispatchers and time: virtual time would expire the wait while screenshot file I/O is in flight.
+    withContext(Dispatchers.Default) {
+      val directory = Files.createTempDirectory("memory-wait")
+      try {
+        val inspector = Inspector(ArrayDeque(listOf(true, true, false, false, true)))
+        val result = orchestrator(
+          Session(Platform.ANDROID_MOBILE),
+          inspector,
+          recorder = FixedScreenshotRecorder(directory.resolve("current.png")),
+        ).run(
+          journey(
+            Platform.ANDROID_MOBILE,
+            JourneyStep.Assert("One", AssertMode.VISUAL),
+            JourneyStep.Assert("Two", AssertMode.VISUAL),
+            JourneyStep.Wait("visually Ready", 10),
+          ),
+        )
+
+        assertThat(result.passed).isEqualTo(true)
+        assertThat(inspector.calls.drop(2).map { it.referenceBytes }).containsExactly(
+          listOf<Byte>(1, 2),
+          listOf<Byte>(1, 2),
+          listOf<Byte>(1, 2),
+        )
+      } finally {
+        directory.toFile().deleteRecursively()
+      }
     }
   }
 

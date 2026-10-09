@@ -26,7 +26,7 @@ A check uses the same tiers as [loop conditions](loop-conditions.md#one-current-
 
 For nonvisual waits, one bounded hierarchy capture supplies the literal, focus and tree checks for that poll. `visually` bypasses those checks and requires a screenshot. Tree and visual inspection use the configured inspector and can incur provider costs. No navigator request is generated for a wait.
 
-The CLI gives each inspector-backed check the journey's bounded earlier verdicts and execution trail, and earlier screenshots for `visually` waits, as reference rather than proof. This context is built once when the wait starts; see [journey memory](journey-memory.md).
+The CLI gives each inspector-backed check the journey's bounded earlier verdicts and execution trail, and earlier screenshots for `visually` waits, as reference rather than proof. This context is built once when the wait starts and stays unchanged for every poll; see [journey memory](journey-memory.md).
 
 ## One deadline and serial checks
 
