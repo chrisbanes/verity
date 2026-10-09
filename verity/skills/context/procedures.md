@@ -2,11 +2,11 @@
 
 ## Prerequisites
 
-Resolve the journey's name, app ID and platform before device work. Wire platform values are `android-tv`, `android` and `ios`; map parsed `ANDROID_TV`, `ANDROID_MOBILE` and `IOS` to those values.
+Resolve the platform, and for journey workflows the journey's name and app ID, before device work. Wire platform values are `android-tv`, `android` and `ios`; map parsed `ANDROID_TV`, `ANDROID_MOBILE` and `IOS` to those values.
 
-1. Connect the host agent to Verity MCP over stdio or HTTP. Resolve the journey with `list_journeys`/`load_journey` before opening a device session; these tools need no session. `load_journey` returns identity and typed steps, not segments or generated flows.
+1. Connect the host agent to Verity MCP over stdio or HTTP. For journey workflows, resolve the journey with `list_journeys`/`load_journey` before opening a device session; these tools need no session. `load_journey` returns identity and typed steps, not segments or generated flows.
 2. Use `get_context` for bundled platform/Maestro guidance and available project context. Respect required-context errors. Resolve app-specific details rather than guessing them. See [project context](../../../docs/specs/project-context.md).
-3. After the workflow's execution confirmation, call `open_session(platform, device?)`. Omit `disable_animations` to use the configured server default; pass an explicit value only when the user requests that override. The server performs [device preflight](../../../docs/specs/preflight-checks.md); show its errors and remediation before retrying. Local `adb devices` or `xcrun simctl list` can help diagnose co-located devices, but a remote HTTP client need not have those tools.
+3. After the workflow's execution confirmation (audit: its validated input), call `open_session(platform, device?)`. Omit `disable_animations` to use the configured server default; pass an explicit value only when the user requests that override. The server performs [device preflight](../../../docs/specs/preflight-checks.md); show its errors and remediation before retrying. Local `adb devices` or `xcrun simctl list` can help diagnose co-located devices, but a remote HTTP client need not have those tools.
 4. Store the actual returned `session_id` only after a successful open. Every later exit follows [Session Cleanup](#session-cleanup). If opening fails, there is no opened session to close. An error encountered after opening, including missing context, requires cleanup.
 
 Server defaults come from [project configuration](../../../docs/specs/project-configuration.md). MCP callers own flow generation and semantic evaluation; CLI model settings and result writers are separate facilities.
@@ -76,11 +76,11 @@ Reach a stated target with side-effect-free movement by batching an estimate, th
    - `capture_screenshot` only for a `visually` condition.
 4. If the condition is unsatisfied, run one precise correction flow computed from that inspection, then inspect once again. Allow at most two correction flows.
 
-Success is the condition satisfied on an inspection after the batch or a correction. Failure is any of:
+Success is the condition satisfied on any inspection: the initial check (no movement), or one after the batch or a correction. Failure is any of:
 
 - a `FAILED: ...` flow result or an MCP error;
 - the condition still unsatisfied after the second correction;
-- an inspection that cannot locate the target or the current position, so the next move would be a guess;
+- a post-batch or post-correction inspection that cannot locate the target or the current position, so the next move would be a guess;
 - a correction that would exceed the caller's bound.
 
 Report failure as a navigation failure; audit marks the target `Incomplete`.
