@@ -48,10 +48,9 @@ A typed `Wait` is a standalone, action-free segment with its parsed condition an
 
 Pick the first rule that applies:
 
-1. **Authored journey loop** (run, debug, author): execute it with [Loop Execution](#loop-execution), which honours the authored body and bound. `run_loop(session_id, action, until, max)` may replace it only for a single raw key with a literal visible-text condition whose semantics match exactly. Pass the parsed maximum explicitly, because the tool defaults to 10. It returns `SATISFIED` or `NOT SATISFIED` text and an iteration count.
+1. **Authored journey loop** (always this rule, even when the loop seeks a target): execute it with [Loop Execution](#loop-execution), which honours the authored body and bound. In run only, `run_loop(session_id, action, until, max)` may replace it for a single raw key with a literal visible-text condition whose semantics match exactly. Pass the parsed maximum explicitly, because the tool defaults to 10. It returns `SATISFIED` or `NOT SATISFIED` text and an iteration count. Debug and author execute every body through Loop Execution so each body is reviewed. Semantic, focus, visual and multi-action loops always use Loop Execution; MCP does not expose the agent module's semantic evaluator.
 2. **Target-seeking navigation** (reach a stated target with no authored iteration contract, such as an audit `kind: "loop"` step or exploratory repositioning in author or debug): use `run_loop` under the same single-key, literal-text match. Otherwise use [Overshoot and Correct](#overshoot-and-correct) when every key or scroll only moves focus or the viewport (directional keys, scroll, swipe). Anything that activates, selects, types or submits uses [Loop Execution](#loop-execution) with the caller's bound.
 
-Semantic, focus, visual and multi-action authored loops use Loop Execution; MCP does not expose the agent module's semantic evaluator.
 
 ## Loop Execution
 
@@ -61,20 +60,18 @@ Show the complete ordered body, condition and parsed maximum before execution. A
 2. If satisfied, execute no body. A zero maximum still checks once.
 3. Otherwise generate and execute one complete ordered body through `run_flow`. Debugging requires preview/choice before each newly generated or edited body.
 4. Count an iteration only after the whole body succeeds. Then check the condition again, including after the last permitted body.
-5. Stop at satisfaction, the maximum, user stop or failure. A failed body stops without counting it or performing a post-body condition check. Report execution failure separately from the last condition result.
+5. Stop at satisfaction, the maximum, user stop or failure. A failed body stops without counting it or performing a post-body condition check. Reaching the maximum with the condition unsatisfied is a failed loop, an ordinary journey failure. Report execution failure separately from the last condition result.
 
-Authored loops execute complete bodies with a check after each; every body and checkpoint stays within its bound.
-
-For an unprefixed condition, first check the complete literal condition with `check_visible`. If it does not match, recognise only `<target> is focused`, `<target> has focus` and `focus is on <target>` as focus forms; their `check_focused` result is final, including false. Otherwise evaluate the current hierarchy from `capture_focused_tree` or `capture_hierarchy` under the [Hierarchy Reuse](#hierarchy-reuse) bounds rule. A leading `visually` requires a current screenshot instead. Seeing a target label alone cannot satisfy a false focus check. The [loop specification](../../../docs/specs/loop-conditions.md#one-current-state-check) defines these tiers.
+For an unprefixed condition, first check the complete literal condition with `check_visible`. If it does not match, recognise only `<target> is focused`, `<target> has focus` and `focus is on <target>` as focus forms; their `check_focused` result is final, including false. Otherwise evaluate the current hierarchy from `capture_focused_tree` or `capture_hierarchy`, limited to the capture's returned content. A leading `visually` requires a current screenshot instead. Seeing a target label alone cannot satisfy a false focus check. The [loop specification](../../../docs/specs/loop-conditions.md#one-current-state-check) defines these tiers.
 
 ## Overshoot and Correct
 
-Reach a stated target with side-effect-free movement by batching an estimate, then correcting once from evidence. It never executes an authored journey loop.
+Reach a stated target with side-effect-free movement by batching an estimate, then correcting from evidence (at most two corrections). It never executes an authored journey loop.
 
-1. Estimate the presses from current evidence, erring high. When the target is in the captured evidence, use its observed distance plus one. Otherwise use one viewport of visible items in the movement direction. Stay within the caller's bound (for example, the audit step's `max`).
-2. Send the estimate as one batched `run_flow`.
+1. Estimate the presses from evidence that passes [Hierarchy Reuse](#hierarchy-reuse), erring high. When the target is in the captured evidence, use its observed distance plus one. Otherwise use one viewport of visible items in the movement direction. Keep the total of batch and correction presses within the caller's bound (for example, the audit step's `max`).
+2. Send the estimate as one batched `run_flow`. A debugger previews it and each correction flow, as for any generated flow.
 3. Inspect once with the cheapest check that evaluates the `until` condition and, if unsatisfied, locates the correction:
-   - `check_visible` when presence of literal text is the condition;
+   - `check_visible` when presence of literal text is the condition. A false result is followed by one locating `capture_focused_tree` or `capture_hierarchy`, which belongs to the same inspection;
    - `capture_focused_tree(session_id, filter: "focus")` for focus or position targets;
    - `capture_hierarchy` for structure outside the focused region;
    - `capture_screenshot` only for a `visually` condition.
@@ -91,7 +88,7 @@ Report failure as a navigation failure; audit marks the target `Incomplete`.
 
 ## Assertion Evaluation
 
-Choose the cheapest sufficient evidence, retaining the parsed or user-approved mode:
+Choose the cheapest sufficient evidence, retaining the parsed or user-approved mode. When proposing a mode, pin `[?visible]` for literal text, `[?focused]` for focus, `[?tree]` for relationships and `[?visual]` for appearance:
 
 | Mode | Tool and basis |
 | --- | --- |
@@ -101,7 +98,7 @@ Choose the cheapest sufficient evidence, retaining the parsed or user-approved m
 | `[?visual]` | `capture_screenshot(session_id)` and caller evaluation of the actual current image |
 | `[?]` | Use the mode reported by `load_journey`; parser heuristics infer it and never automatically choose FOCUSED |
 
-Loop and `until` conditions keep the literal, focus, tree, then `visually` tiers. `capture_focused_tree` and `capture_hierarchy` are both tree-tier evidence under the same bounds rule. `diff_hierarchy` is change evidence only, never an assertion verdict on its own.
+Loop and `until` conditions follow the tiers in [Loop Execution](#loop-execution). `capture_focused_tree` and `capture_hierarchy` are both tree-tier evidence under the same bounds rule. `diff_hierarchy` is change evidence only, never an assertion verdict on its own.
 
 Report deterministic tool input/result and its basis. For tree/visual checks, explain how the captured state supports the verdict. Missing evidence, a tool error or failed/invalid external evaluation is a failure, never a fabricated pass. `load_journey` has no assertion-strategy argument; server configuration does not override its INFER parser behaviour.
 
@@ -117,8 +114,6 @@ A previous `capture_hierarchy` or `capture_focused_tree` result may answer a lat
 Otherwise capture again. A `visually` or `[?visual]` check always needs a current screenshot. Keep returned snapshot IDs with hierarchy evidence.
 
 ## Journey Authoring
-
-Write journey steps as intent, then state what must be true:
 
 - Describe what to do and what must be true. Project app context (`get_context`, `verity/skills/context/app.md`) describes how the UI behaves, so propose app-context notes instead of embedding UI mechanics in steps.
 - Default to loops for repeated movement. Use a bare key-press step only when the exact count is the point of the step.
