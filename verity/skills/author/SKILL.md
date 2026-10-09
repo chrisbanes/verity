@@ -39,9 +39,9 @@ steps:
   - Tap Settings
   - "[?visible] Settings"
   - "[?focused] Account"
-  - "Scroll down until Account is visible up to 5 times"
+  - "Scroll down until Account up to 5 times"
   - Tap Account
-  - "Wait until the account page is ready up to 10 seconds"
+  - "Wait until Profile up to 10 seconds"
   - "[?tree] The account page contains a profile section"
   - "Wait until visually the profile picture is loaded up to 10 seconds"
   - "[?visual] The profile picture is visible"

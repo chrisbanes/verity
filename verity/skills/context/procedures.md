@@ -117,14 +117,15 @@ Otherwise capture again. A `visually` or `[?visual]` check always needs a curren
 - Describe what to do and what must be true. Project app context (`get_context`, `verity/skills/context/app.md`) describes how the UI behaves, so propose app-context notes instead of embedding UI mechanics in steps.
 - Default to loops for repeated movement. Use a bare key-press step only when the exact count is the point of the step.
 - Use `Wait until <condition> [up to N seconds]` for state changes instead of fixed-duration waits.
+- Write a loop or wait condition as the literal label that must be visible (`until Account`), because the whole condition text is matched and anything else falls to a model-backed check. Use a focus form (`Account is focused`) for focus.
 - Prefix a loop or wait condition with `visually` only when screenshot evidence is needed.
 
 ```yaml
 steps:
   - Open the Settings screen
-  - Scroll down until Account is visible up to 5 times
+  - Scroll down until Account up to 5 times
   - Press Down 3 times
-  - "Wait until Sync complete is visible up to 15 seconds"
+  - "Wait until Sync complete up to 15 seconds"
   - "Wait until visually the profile picture is loaded up to 10 seconds"
 ```
 
