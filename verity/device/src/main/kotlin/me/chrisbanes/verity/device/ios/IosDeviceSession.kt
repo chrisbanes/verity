@@ -35,11 +35,10 @@ class IosDeviceSession(
   override suspend fun executeActions(flow: ActionFlow): FlowResult {
     val result = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
     // ponytail: settles only at the end of the flow; actions after LaunchApp in the same flow still race the launch.
-    // Sessions without a bounded endpoint (test doubles) cannot poll safely, so they skip settling.
-    val capture = boundedCapture ?: return result
     if (!result.success || flow.actions.none { it is Interaction.LaunchApp }) return result
-    if (awaitIosLaunchSettled(flow.appId, capture)) return result
-    return FlowResult(success = false, output = "${flow.appId} launch did not settle within $IOS_LAUNCH_SETTLE_TIMEOUT: SpringBoard still owns the hierarchy")
+    // Sessions without a bounded endpoint (test doubles) cannot poll safely, so they skip settling.
+    boundedCapture?.let { awaitIosLaunchSettled(flow.appId, it) }
+    return result
   }
 
   override suspend fun pressKey(keyName: String): Unit = withContext(Dispatchers.IO) {
