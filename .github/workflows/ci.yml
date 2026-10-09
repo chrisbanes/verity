@@ -101,6 +101,9 @@ jobs:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
       - name: Verify macOS packaged inputs
+        # Shadow runs R8 in its own JVM with the default heap (a quarter of the runner's RAM), which is too small here.
+        env:
+          JAVA_TOOL_OPTIONS: -Xmx3g
         run: ./gradlew :verity:cli:verifyHostJars :verity:cli:verifyShrunkJars :verity:smoke-tests:packagedProbeJar --no-daemon --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Install AppleSimulatorUtils

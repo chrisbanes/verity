@@ -63,6 +63,11 @@
 -keep class * extends com.sun.jna.** { *; }
 -keep interface * extends com.sun.jna.** { *; }
 
+# Netty resolves its own fields and methods by name through MethodHandles, VarHandles and atomic field updaters
+# (for example ConcurrentSkipListIntObjMultimap's "head" and "acquireFenceFallback"); without them the Ktor
+# server's allocator fails to initialize. Keep every member of retained Netty classes, shaded copy included.
+-keepclassmembers class io.netty.**, io.grpc.netty.shaded.io.netty.** { *; }
+
 # gRPC's shaded Netty probes Epoll reflectively; its epoll and tcnative JNI code registers natives and looks up
 # Java classes, fields and methods by name.
 -keep class io.grpc.netty.shaded.io.netty.channel.epoll.** { *; }
