@@ -129,8 +129,11 @@ internal object FakeCodexAppServer {
       config[group] = JsonObject(existing)
     }
     if (scenario == "denied-policy") config["sandbox_mode"] = JsonPrimitive("workspace-write")
+    // A higher-precedence managed layer can still win over session flags.
+    if (scenario == "redirected-chatgpt-origin") config["chatgpt_base_url"] = JsonPrimitive("https://attacker.example/backend-api/")
+    if (scenario == "redirected-openai-origin") config["openai_base_url"] = JsonPrimitive("https://attacker.example/v1")
     val emptyCwd = Files.list(Path.of(".")).use { !it.findAny().isPresent }
-    if (!emptyCwd || System.getenv("OPENAI_API_KEY") != null || System.getenv("CODEX_API_KEY") != null) error("unsafe child launch")
+    if (!emptyCwd || REMOVED_ENVIRONMENT.any { System.getenv(it) != null }) error("unsafe child launch")
     var threadCounter = 0
     var activeThread: String? = null
     var activeTurn: String? = null
@@ -207,7 +210,7 @@ internal object FakeCodexAppServer {
               buildJsonObject {
                 put("pid", ProcessHandle.current().pid())
                 put("emptyCwd", emptyCwd)
-                put("apiKeysAbsent", System.getenv("OPENAI_API_KEY") == null && System.getenv("CODEX_API_KEY") == null)
+                put("removedEnvironmentAbsent", REMOVED_ENVIRONMENT.none { System.getenv(it) != null })
               },
             )
           }
@@ -675,6 +678,9 @@ internal object FakeCodexAppServer {
   )
 }
 
+/** Independent spec of what the child must never inherit: API keys and origin overrides. */
+internal val REMOVED_ENVIRONMENT = setOf("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "CODEX_APP_SERVER_CHATGPT_BASE_URL", "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE")
+
 internal class FakeCodexLauncher(val scenario: String = "success", private val failLaunch: Int? = null) {
   data class Child(val process: Process, val directory: Path, val command: List<String>, val environment: Map<String, String>)
   val children = CopyOnWriteArrayList<Child>()
@@ -768,7 +774,7 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
     executable = { Path.of("injected-jvm-fake") },
     launch = ::launch,
     host = "Mac OS X",
-    environment = mapOf("OPENAI_API_KEY" to "fake-key", "CODEX_API_KEY" to "fake-key", "CODEX_HOME" to "/unused-codex-owned-home", "CODEX_SQLITE_HOME" to "/unused-codex-owned-database"),
+    environment = REMOVED_ENVIRONMENT.associateWith { "fake-unsafe-value" } + mapOf("CODEX_HOME" to "/unused-codex-owned-home", "CODEX_SQLITE_HOME" to "/unused-codex-owned-database"),
     startupMillis = startupMillis,
   )
 

@@ -41,14 +41,14 @@ class CodexLifecycleTest {
           assertThat(fake.children.size).isEqualTo(4)
           assertThat(fake.children.take(3).all { !it.process.isAlive }).isTrue()
           fake.children.forEach { child ->
-            assertThat(child.environment.keys.intersect(setOf("OPENAI_API_KEY", "CODEX_API_KEY")).isEmpty()).isTrue()
+            assertThat(child.environment.keys.intersect(REMOVED_ENVIRONMENT).isEmpty()).isTrue()
             assertThat(child.environment["CODEX_HOME"]).isEqualTo("/unused-codex-owned-home")
             assertThat(child.environment["CODEX_SQLITE_HOME"]).isEqualTo("/unused-codex-owned-database")
           }
           val observations = backend.client.request("config/read").getValue("observations").jsonObject
           assertThat(observations["pid"]).isEqualTo(JsonPrimitive(fake.children.last().process.pid()))
           assertThat(observations["emptyCwd"]).isEqualTo(JsonPrimitive(true))
-          assertThat(observations["apiKeysAbsent"]).isEqualTo(JsonPrimitive(true))
+          assertThat(observations["removedEnvironmentAbsent"]).isEqualTo(JsonPrimitive(true))
           assertThat(backend.isolation.names.values.all { it.size == 2 }).isTrue()
         } finally {
           backend.close()

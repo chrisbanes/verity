@@ -524,6 +524,9 @@ internal class CodexModelBackend private constructor(
   }
 
   companion object {
+    /** API keys, plus environment overrides that redirect ChatGPT credential or request origins outside config/read. */
+    internal val removedEnvironment = setOf("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL", "CODEX_APP_SERVER_CHATGPT_BASE_URL", "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE")
+
     suspend fun prepare(
       executable: suspend () -> Path? = { findExecutable() },
       launch: (List<String>, Path, Map<String, String>) -> Process = ::launchProcess,
@@ -536,7 +539,7 @@ internal class CodexModelBackend private constructor(
         return withTimeout(startupMillis) {
           if (host != "Mac OS X") throw CodexFailure(CodexFailureKind.HOST)
           val binary = executable() ?: throw CodexFailure(CodexFailureKind.INSTALLATION)
-          val childEnvironment = environment - setOf("OPENAI_API_KEY", "CODEX_API_KEY")
+          val childEnvironment = environment - removedEnvironment
           val versionDirectory = resources.directory()
           val versionProcess = resources.launch(listOf(binary.toString(), "--version"), versionDirectory, childEnvironment, launch)
           val versionOutput = resources.scope.async { CodexAppServerClient.readFrame(versionProcess.inputStream) }.await()

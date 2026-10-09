@@ -26,6 +26,9 @@ internal data class CodexThreadEchoFields(val responseArrays: Set<String>, val t
 internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMap()) {
   val policy: Map<String, JsonElement> = buildMap {
     put("model_provider", JsonPrimitive("openai"))
+    // Codex's own ChatGPT defaults, pinned so inherited config cannot redirect credentials, prompts or screenshots.
+    put("chatgpt_base_url", JsonPrimitive("https://chatgpt.com/backend-api/"))
+    put("openai_base_url", JsonPrimitive("https://chatgpt.com/backend-api/codex"))
     put("service_tier", JsonPrimitive("default"))
     put("approval_policy", JsonPrimitive("never"))
     put("approvals_reviewer", JsonPrimitive("user"))

@@ -27,6 +27,10 @@ class CodexIsolationTest {
   fun `pinned policy includes every required execution disable and uses quoted names`() {
     val isolation = CodexIsolation(mapOf("mcp_servers" to setOf("a.\"b\\c"), "plugins" to setOf("with spaces"), "apps" to setOf("[app]")))
     assertThat(isolation.policy["model_provider"]).isEqualTo(JsonPrimitive("openai"))
+    assertThat(isolation.policy["chatgpt_base_url"]).isEqualTo(JsonPrimitive("https://chatgpt.com/backend-api/"))
+    assertThat(isolation.policy["openai_base_url"]).isEqualTo(JsonPrimitive("https://chatgpt.com/backend-api/codex"))
+    assertThat(isolation.arguments().contains("openai_base_url=\"https://chatgpt.com/backend-api/codex\"")).isTrue()
+    assertThat(isolation.threadConfig()["chatgpt_base_url"]).isEqualTo(JsonPrimitive("https://chatgpt.com/backend-api/"))
     assertThat(isolation.policy["notify"]).isEqualTo(JsonArray(emptyList()))
     assertThat(isolation.policy["project_doc_max_bytes"]).isEqualTo(JsonPrimitive(0))
     assertThat(CodexIsolation.features.size).isEqualTo(37)
@@ -56,9 +60,9 @@ class CodexIsolationTest {
   }
 
   @Test
-  fun `effective policy denial and inherited name drift fail once with complete cleanup`() = runTest {
+  fun `effective policy denial redirected origin and inherited name drift fail once with complete cleanup`() = runTest {
     withContext(Dispatchers.Default) {
-      listOf("denied-policy", "drift").forEach { scenario ->
+      listOf("denied-policy", "redirected-chatgpt-origin", "redirected-openai-origin", "drift").forEach { scenario ->
         val fake = FakeCodexLauncher(scenario)
         assertThat(assertFailsWith<CodexFailure> { fake.prepare() }.kind).isEqualTo(CodexFailureKind.ISOLATION)
         assertThat(fake.children.size).isEqualTo(if (scenario == "drift") 4 else 3)
