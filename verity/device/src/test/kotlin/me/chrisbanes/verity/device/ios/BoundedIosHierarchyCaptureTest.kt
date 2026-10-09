@@ -198,4 +198,26 @@ class BoundedIosHierarchyCaptureTest {
     }
     assertThat(calls).isEqualTo(0)
   }
+
+  @Test
+  fun `caller budget outlasts the shared client's shorter read timeout`() = runTest {
+    withContext(Dispatchers.Default) {
+      val bytes = "{\"axElement\":{\"label\":\"slow\",\"identifier\":\"id\",\"frame\":{},\"children\":[],\"enabled\":true},\"depth\":0}".toByteArray()
+      val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+      server.createContext("/") { exchange ->
+        exchange.requestBody.use { it.readBytes() }
+        Thread.sleep(300)
+        exchange.sendResponseHeaders(200, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
+      }
+      server.start()
+      try {
+        val http = OkHttpClient.Builder().readTimeout(50, TimeUnit.MILLISECONDS).build()
+        val capture = BoundedIosHierarchyCapture({ XCTestClient("127.0.0.1", server.address.port) }, http)
+        assertThat(capture.capture(5.seconds).toString().contains("slow")).isEqualTo(true)
+      } finally {
+        server.stop(0)
+      }
+    }
+  }
 }
