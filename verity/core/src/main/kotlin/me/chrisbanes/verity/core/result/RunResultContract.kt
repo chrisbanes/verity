@@ -16,7 +16,7 @@ data class JourneyArtifactIdentity(
   val name: String,
   val file: String,
   val app: String,
-  @Serializable(with = PlatformWireSerializer::class) val platform: Platform,
+  val platform: Platform,
 )
 
 @Serializable
@@ -151,7 +151,7 @@ data class SuiteArtifactSummary(
   val failed: Int,
   val journeys: List<SuiteJourneyArtifact> = emptyList(),
   val error: ArtifactError? = null,
-  @Serializable(with = PlatformWireSerializer::class) val platform: Platform? = null,
+  val platform: Platform? = null,
   val provider: String? = null,
   val navigatorModel: String? = null,
   val inspectorModel: String? = null,
@@ -243,25 +243,6 @@ enum class ArtifactErrorKind {
 
   @SerialName("model_failure")
   MODEL_FAILURE,
-}
-
-object PlatformWireSerializer : KSerializer<Platform> {
-  override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("Platform", PrimitiveKind.STRING)
-
-  override fun serialize(encoder: Encoder, value: Platform) = encoder.encodeString(
-    when (value) {
-      Platform.ANDROID_TV -> "android-tv"
-      Platform.ANDROID_MOBILE -> "android"
-      Platform.IOS -> "ios"
-    },
-  )
-
-  override fun deserialize(decoder: Decoder): Platform = when (val value = decoder.decodeString()) {
-    "android-tv" -> Platform.ANDROID_TV
-    "android" -> Platform.ANDROID_MOBILE
-    "ios" -> Platform.IOS
-    else -> error("Unknown platform: $value")
-  }
 }
 
 object AssertModeWireSerializer : KSerializer<AssertMode> {

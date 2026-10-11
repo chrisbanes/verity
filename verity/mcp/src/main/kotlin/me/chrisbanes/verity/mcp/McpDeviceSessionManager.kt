@@ -15,11 +15,9 @@ data class SessionHandle(
   val deviceId: String,
 )
 
-data class SessionEntry(
-  val deviceId: String,
+private class SessionEntry(
   val session: DeviceSession,
   val mutex: Mutex = Mutex(),
-  var lastUsedAt: Long = System.currentTimeMillis(),
 )
 
 class McpDeviceSessionManager(
@@ -37,20 +35,14 @@ class McpDeviceSessionManager(
     val session = sessionFactory(platform, deviceId, disableAnimations)
     val id = UUID.randomUUID()
     val resolvedDeviceId = deviceId ?: "auto-discovered"
-    sessions[id] = SessionEntry(
-      deviceId = resolvedDeviceId,
-      session = session,
-    )
+    sessions[id] = SessionEntry(session)
     SessionHandle(sessionId = id, deviceId = resolvedDeviceId)
   }
 
   suspend fun <T> withSession(sessionId: UUID, block: suspend (DeviceSession) -> T): T {
     val entry = sessions[sessionId]
       ?: throw IllegalArgumentException("No session found with ID: $sessionId")
-    return entry.mutex.withLock {
-      entry.lastUsedAt = System.currentTimeMillis()
-      block(entry.session)
-    }
+    return entry.mutex.withLock { block(entry.session) }
   }
 
   suspend fun close(sessionId: UUID) {

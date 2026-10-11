@@ -7,23 +7,21 @@ import java.io.File
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import maestro.Maestro
 import maestro.android.AndroidDeviceConnection
 import maestro.drivers.AndroidDriver
 import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
+import me.chrisbanes.verity.device.android.AnimationState
 import me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture
 import me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 import me.chrisbanes.verity.device.ios.XCTestHierarchyIosDevice
+import me.chrisbanes.verity.device.preflight.LocalProcessRunner
+import me.chrisbanes.verity.device.preflight.isIpAddress
+import me.chrisbanes.verity.device.preflight.parseSimctlDevices
 import util.IOSDeviceType
 import xcuitest.XCTestClient
 import xcuitest.XCTestDriverClient
@@ -35,7 +33,7 @@ import xcuitest.installer.XCTestInstaller
  * Creates [DeviceSession] instances with auto-discovery and animation management.
  *
  * When [disableAnimations] is true (Android only):
- * - Reads current animation scale values via [DeviceSession.getAnimationState]
+ * - Reads current animation scale values via [AndroidDeviceSession.getAnimationState]
  * - Sets window_animation_scale, transition_animation_scale,
  *   animator_duration_scale to 0
  * - Restores original values when session is closed
@@ -158,27 +156,14 @@ object DeviceSessionFactory {
     return IosDeviceSession(maestro, iosDevice, onCommandStart, capture::capture, screenshot::capture)
   }
 
-  private suspend fun discoverBootedIosSimulatorIds(): List<String> = withContext(Dispatchers.IO) {
-    val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "booted", "-j")
-      .redirectErrorStream(true)
-      .start()
-    val output = process.inputStream.bufferedReader().readText()
-    check(process.waitFor() == 0) { "xcrun simctl list failed: $output" }
-
-    val root = Json.parseToJsonElement(output).jsonObject
-    val devices = root["devices"]?.jsonObject ?: return@withContext emptyList()
-    devices.values
-      .flatMap { runtimeDevices ->
-        runtimeDevices.jsonArray.mapNotNull { device ->
-          device.jsonObject["udid"]?.jsonPrimitive?.contentOrNull
-        }
-      }
-      .distinct()
+  private suspend fun discoverBootedIosSimulatorIds(): List<String> {
+    val (exitCode, output) = LocalProcessRunner.run(listOf("xcrun", "simctl", "list", "devices", "booted", "-j"))
+    check(exitCode == 0) { "xcrun simctl list failed: $output" }
+    return parseSimctlDevices(output).map { it.udid }.distinct()
   }
 
   private fun validateAndroidDeviceId(deviceId: String) {
-    val ipv4WithOptionalPort = Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""")
-    require(!ipv4WithOptionalPort.matches(deviceId)) {
+    require(!isIpAddress(deviceId)) {
       "Invalid Android device ID '$deviceId'. Expected an ADB serial (for example, " +
         "emulator-5554), not an IP address."
     }
@@ -190,7 +175,7 @@ object DeviceSessionFactory {
  */
 private class AnimationRestoringSession(
   private val delegate: AndroidDeviceSession,
-  private val savedState: DeviceSession.AnimationState?,
+  private val savedState: AnimationState?,
 ) : DeviceSession by delegate {
   override fun close() {
     try {

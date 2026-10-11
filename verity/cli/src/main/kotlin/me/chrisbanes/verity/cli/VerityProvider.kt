@@ -42,7 +42,7 @@ sealed class VerityProvider {
   abstract val envVar: String
 
   /** Whether an API key is required to use this provider. False only for Ollama. */
-  abstract val requiresAuth: Boolean
+  open val requiresAuth: Boolean = true
 
   /** All known chat models for this provider. */
   abstract fun allModels(): List<LLModel>
@@ -62,7 +62,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = AnthropicModels.Haiku_4_5
     override val defaultInspectorModel: LLModel = AnthropicModels.Opus_4_5
     override val envVar = "ANTHROPIC_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       AnthropicModels.Sonnet_4,
@@ -84,7 +83,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = OpenAIModels.Chat.GPT4oMini
     override val defaultInspectorModel: LLModel = OpenAIModels.Chat.GPT4o
     override val envVar = "OPENAI_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       OpenAIModels.Chat.GPT4o,
@@ -115,7 +113,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = GoogleModels.Gemini2_5FlashLite
     override val defaultInspectorModel: LLModel = GoogleModels.Gemini2_5Pro
     override val envVar = "GOOGLE_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       GoogleModels.Gemini2_0FlashLite001,
@@ -134,7 +131,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = OpenRouterModels.Phi4Reasoning
     override val defaultInspectorModel: LLModel = OpenRouterModels.Claude4_5Opus
     override val envVar = "OPENROUTER_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       OpenRouterModels.Phi4Reasoning,
@@ -183,7 +179,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = BedrockModels.AnthropicClaude4_5Haiku
     override val defaultInspectorModel: LLModel = BedrockModels.AnthropicClaude4_5Sonnet
     override val envVar = "AWS_ACCESS_KEY_ID"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       BedrockModels.AnthropicClaude4Opus,
@@ -238,7 +233,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = DeepSeekModels.DeepSeekV4Flash
     override val defaultInspectorModel: LLModel = DeepSeekModels.DeepSeekV4Pro
     override val envVar = "DEEPSEEK_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       DeepSeekModels.DeepSeekV4Flash,
@@ -253,7 +247,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = MistralAIModels.Chat.MistralSmall2
     override val defaultInspectorModel: LLModel = MistralAIModels.Chat.MagistralMedium12
     override val envVar = "MISTRAL_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       MistralAIModels.Chat.MistralMedium31,
@@ -297,7 +290,6 @@ sealed class VerityProvider {
     override val defaultNavigatorModel: LLModel = DashscopeModels.QWEN_FLASH
     override val defaultInspectorModel: LLModel = DashscopeModels.QWEN3_MAX
     override val envVar = "DASHSCOPE_API_KEY"
-    override val requiresAuth = true
 
     override fun allModels(): List<LLModel> = listOf(
       DashscopeModels.QWEN_FLASH,

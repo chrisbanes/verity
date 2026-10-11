@@ -4,8 +4,9 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isGreaterThan
 import assertk.assertions.isLessThan
-import assertk.assertions.isTrue
+import assertk.assertions.isNotNull
 import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.util.Random
 import javax.imageio.ImageIO
@@ -13,16 +14,12 @@ import kotlin.test.Test
 
 class ScreenshotCompressorTest {
   @Test
-  fun `compresses PNG to JPEG file`() {
+  fun `compresses PNG to JPEG bytes`() {
     val tempPng = createTestPng(800, 600)
     try {
       val jpeg = ScreenshotCompressor.compress(tempPng)
-      try {
-        assertThat(Files.exists(jpeg)).isTrue()
-        assertThat(Files.size(jpeg)).isGreaterThan(0)
-      } finally {
-        Files.deleteIfExists(jpeg)
-      }
+      assertThat(jpeg.size).isGreaterThan(0)
+      assertThat(ImageIO.read(ByteArrayInputStream(jpeg))).isNotNull()
     } finally {
       Files.deleteIfExists(tempPng)
     }
@@ -33,14 +30,10 @@ class ScreenshotCompressorTest {
     val tempPng = createNoisyTestPng(2560, 1440)
     try {
       val jpeg = ScreenshotCompressor.compress(tempPng, scale = 0.5f)
-      try {
-        assertThat(Files.size(jpeg)).isLessThan(Files.size(tempPng))
-        val img = ImageIO.read(jpeg.toFile())
-        assertThat(img.width).isEqualTo(1280)
-        assertThat(img.height).isEqualTo(720)
-      } finally {
-        Files.deleteIfExists(jpeg)
-      }
+      assertThat(jpeg.size.toLong()).isLessThan(Files.size(tempPng))
+      val img = ImageIO.read(ByteArrayInputStream(jpeg))
+      assertThat(img.width).isEqualTo(1280)
+      assertThat(img.height).isEqualTo(720)
     } finally {
       Files.deleteIfExists(tempPng)
     }
@@ -50,14 +43,9 @@ class ScreenshotCompressorTest {
   fun `scale of 1 preserves original dimensions`() {
     val tempPng = createTestPng(640, 480)
     try {
-      val jpeg = ScreenshotCompressor.compress(tempPng, scale = 1f)
-      try {
-        val img = ImageIO.read(jpeg.toFile())
-        assertThat(img.width).isEqualTo(640)
-        assertThat(img.height).isEqualTo(480)
-      } finally {
-        Files.deleteIfExists(jpeg)
-      }
+      val img = ImageIO.read(ByteArrayInputStream(ScreenshotCompressor.compress(tempPng, scale = 1f)))
+      assertThat(img.width).isEqualTo(640)
+      assertThat(img.height).isEqualTo(480)
     } finally {
       Files.deleteIfExists(tempPng)
     }

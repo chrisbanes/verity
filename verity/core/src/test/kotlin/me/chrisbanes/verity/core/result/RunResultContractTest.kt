@@ -198,13 +198,13 @@ class RunResultContractTest {
 
   @Test
   fun `platform encodes and decodes all stable wire values`() {
-    assertThat(json.encodeToString(PlatformWireSerializer, Platform.ANDROID_TV)).isEqualTo("\"android-tv\"")
-    assertThat(json.encodeToString(PlatformWireSerializer, Platform.ANDROID_MOBILE)).isEqualTo("\"android\"")
-    assertThat(json.encodeToString(PlatformWireSerializer, Platform.IOS)).isEqualTo("\"ios\"")
+    assertThat(json.encodeToString(Platform.serializer(), Platform.ANDROID_TV)).isEqualTo("\"android-tv\"")
+    assertThat(json.encodeToString(Platform.serializer(), Platform.ANDROID_MOBILE)).isEqualTo("\"android\"")
+    assertThat(json.encodeToString(Platform.serializer(), Platform.IOS)).isEqualTo("\"ios\"")
 
-    assertThat(json.decodeFromString(PlatformWireSerializer, "\"android-tv\"")).isEqualTo(Platform.ANDROID_TV)
-    assertThat(json.decodeFromString(PlatformWireSerializer, "\"android\"")).isEqualTo(Platform.ANDROID_MOBILE)
-    assertThat(json.decodeFromString(PlatformWireSerializer, "\"ios\"")).isEqualTo(Platform.IOS)
+    assertThat(json.decodeFromString(Platform.serializer(), "\"android-tv\"")).isEqualTo(Platform.ANDROID_TV)
+    assertThat(json.decodeFromString(Platform.serializer(), "\"android\"")).isEqualTo(Platform.ANDROID_MOBILE)
+    assertThat(json.decodeFromString(Platform.serializer(), "\"ios\"")).isEqualTo(Platform.IOS)
   }
 
   @Test

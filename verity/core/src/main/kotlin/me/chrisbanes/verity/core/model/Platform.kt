@@ -13,4 +13,12 @@ enum class Platform {
 
   @SerialName("ios")
   IOS,
+  ;
+
+  /** The stable wire name declared by [SerialName], e.g. `android-tv`. */
+  val wireName: String get() = serializer().descriptor.getElementName(ordinal)
+
+  companion object {
+    fun fromWireName(value: String): Platform? = entries.firstOrNull { it.wireName == value }
+  }
 }

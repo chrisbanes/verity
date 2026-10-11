@@ -136,8 +136,6 @@ class InteractionExecutorTest {
 
     override suspend fun captureScreenshot(output: Path) = Unit
 
-    override suspend fun shell(command: String): String = ""
-
     override suspend fun waitForAnimationToEnd() {
       waitCount++
     }

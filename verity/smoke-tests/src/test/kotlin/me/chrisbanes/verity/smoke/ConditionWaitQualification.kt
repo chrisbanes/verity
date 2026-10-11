@@ -82,7 +82,6 @@ internal suspend fun qualifyConditionWaits(production: DeviceSession, appId: Str
     override suspend fun pressKey(keyName: String): Unit = error("Wait pressed a key")
     override suspend fun pressKey(keyName: String, longPress: Boolean): Unit = error("Wait pressed a key")
     override suspend fun pressKey(keycode: Int, longPress: Boolean): Unit = error("Wait pressed a key")
-    override suspend fun shell(command: String): String = error("Wait ran shell")
     override suspend fun waitForAnimationToEnd(): Unit = error("Wait animated")
   }
   val images = mutableListOf<Path>()

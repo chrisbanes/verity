@@ -67,25 +67,19 @@ class CliPreflightChecker internal constructor(
     } catch (_: IllegalArgumentException) {
       return authFailure()
     }
-    val selectedProvider = runCatching { resolveProvider(request.cliProvider, config) }.getOrNull()
-    if (authValue != null && selectedProvider != VerityProvider.OpenAI) return authFailure()
+    val resolvedProvider = runCatching { resolveProvider(request.cliProvider, config) }
+    if (authValue != null && resolvedProvider.getOrNull() != VerityProvider.OpenAI) return authFailure()
     if (auth == OpenAiAuth.CHATGPT) return checkChatGpt(request, config, includeDevicePreflight, includeInspectorModelPreflight)
     var report = PreflightReport()
-    val provider = runCatching { resolveProvider(request.cliProvider, config) }
-      .getOrElse { error ->
-        report += PreflightReport(
-          listOf(
-            PreflightIssue(
-              code = PreflightCodes.PROVIDER_UNKNOWN,
-              severity = PreflightSeverity.ERROR,
-              message = error.message ?: "Unknown provider.",
-              remediation = "Choose one of: ${VerityProvider.all.joinToString { it.name }}.",
-              details = mapOf("provider" to (request.cliProvider ?: config.provider.orEmpty())),
-            ),
-          ),
-        )
-        null
-      }
+    val provider = resolvedProvider.getOrElse { error ->
+      report += errorReport(
+        PreflightCodes.PROVIDER_UNKNOWN,
+        error.message ?: "Unknown provider.",
+        "Choose one of: ${VerityProvider.all.joinToString { it.name }}.",
+        mapOf("provider" to (request.cliProvider ?: config.provider.orEmpty())),
+      )
+      null
+    }
 
     val navigatorModel = provider?.let {
       resolveModelSafely(
@@ -128,56 +122,23 @@ class CliPreflightChecker internal constructor(
       request.apiKey ?: environment(selectedProvider.envVar)
     }
     if (provider != null && provider.requiresAuth && resolvedApiKey.isNullOrBlank()) {
-      report += PreflightReport(
-        listOf(
-          PreflightIssue(
-            code = PreflightCodes.PROVIDER_CREDENTIAL_MISSING,
-            severity = PreflightSeverity.ERROR,
-            message = "Provider credentials are missing for '${provider.name}'.",
-            remediation = "Set ${provider.envVar} or pass --api-key.",
-            details = mapOf("provider" to provider.name, "env" to provider.envVar),
-          ),
-        ),
+      report += errorReport(
+        PreflightCodes.PROVIDER_CREDENTIAL_MISSING,
+        "Provider credentials are missing for '${provider.name}'.",
+        "Set ${provider.envVar} or pass --api-key.",
+        mapOf("provider" to provider.name, "env" to provider.envVar),
       )
     }
     if (provider == VerityProvider.Bedrock && environment("AWS_SECRET_ACCESS_KEY").isNullOrBlank()) {
-      report += PreflightReport(
-        listOf(
-          PreflightIssue(
-            code = PreflightCodes.PROVIDER_CREDENTIAL_MISSING,
-            severity = PreflightSeverity.ERROR,
-            message = "Bedrock secret credentials are missing.",
-            remediation = "Set AWS_SECRET_ACCESS_KEY for the Bedrock provider.",
-            details = mapOf("provider" to provider.name, "env" to "AWS_SECRET_ACCESS_KEY"),
-          ),
-        ),
+      report += errorReport(
+        PreflightCodes.PROVIDER_CREDENTIAL_MISSING,
+        "Bedrock secret credentials are missing.",
+        "Set AWS_SECRET_ACCESS_KEY for the Bedrock provider.",
+        mapOf("provider" to provider.name, "env" to "AWS_SECRET_ACCESS_KEY"),
       )
     }
 
-    if (request.journeyPath == null) {
-      report += PreflightReport(
-        listOf(
-          PreflightIssue(
-            code = PreflightCodes.PATH_MISSING,
-            severity = PreflightSeverity.ERROR,
-            message = "Journey path is required.",
-            remediation = "Run `verity run <path.journey.yaml>`.",
-          ),
-        ),
-      )
-    } else {
-      val path = Path.of(request.journeyPath)
-      report += when {
-        Files.isDirectory(path) -> pathPreflightChecker.requireReadableDirectory(path, "Journey directory")
-        else -> pathPreflightChecker.requireReadableFile(path, "Journey file")
-      }
-    }
-
-    if (request.contextPath != null) {
-      report += pathPreflightChecker.requireReadableDirectory(Path.of(request.contextPath), "Context path")
-    }
-
-    report += pathPreflightChecker.requireTempWritable()
+    report += pathReport(request, missingRemediation = "Run `verity run <path.journey.yaml>`.")
     if (includeDevicePreflight && !effortInvalid) {
       report += devicePreflightChecker.check(request.platform, request.deviceId)
     }
@@ -194,7 +155,7 @@ class CliPreflightChecker internal constructor(
   }
 
   private fun authFailure(): CliPreflightResult = CliPreflightResult(
-    report = codexReport(PreflightCodes.CODEX_AUTH_INVALID, "OpenAI authentication configuration is invalid.", "Choose api-key or chatgpt with provider openai."),
+    report = errorReport(PreflightCodes.CODEX_AUTH_INVALID, "OpenAI authentication configuration is invalid.", "Choose api-key or chatgpt with provider openai."),
     provider = null,
     apiKey = null,
     navigatorModel = null,
@@ -208,16 +169,7 @@ class CliPreflightChecker internal constructor(
     val inspector = if (includeInspector) SelectedRoleModel.Codex(request.cliInspectorModel ?: config.effectiveInspectorModel ?: CHATGPT_DEFAULT_MODEL_ID) else null
     val navigatorEffort = request.cliNavigatorEffort ?: config.effectiveNavigatorEffort
     val inspectorEffort = request.cliInspectorEffort ?: config.effectiveInspectorEffort
-    var report = withContext(Dispatchers.IO) {
-      var paths = if (request.journeyPath == null) {
-        codexReport(PreflightCodes.PATH_MISSING, "Journey path is required.", "Pass a journey file or directory.")
-      } else {
-        val path = Path.of(request.journeyPath)
-        if (Files.isDirectory(path)) pathPreflightChecker.requireReadableDirectory(path, "Journey directory") else pathPreflightChecker.requireReadableFile(path, "Journey file")
-      }
-      request.contextPath?.let { paths += pathPreflightChecker.requireReadableDirectory(Path.of(it), "Context path") }
-      paths + pathPreflightChecker.requireTempWritable()
-    }
+    var report = pathReport(request, missingRemediation = "Pass a journey file or directory.")
     var backend: CodexModelBackend? = null
     var transferred = false
     var primary: Throwable? = null
@@ -288,10 +240,27 @@ class CliPreflightChecker internal constructor(
       CodexFailureKind.MODALITY -> PreflightCodes.CODEX_MODALITY
       CodexFailureKind.EFFORT -> PreflightCodes.CODEX_EFFORT
     }
-    return codexReport(code, "Codex ${kind.name.lowercase()} preflight failed.", remediation)
+    return errorReport(code, "Codex ${kind.name.lowercase()} preflight failed.", remediation)
   }
 
-  private fun codexReport(code: String, message: String, remediation: String): PreflightReport = PreflightReport(listOf(PreflightIssue(code, PreflightSeverity.ERROR, message, remediation)))
+  private fun errorReport(
+    code: String,
+    message: String,
+    remediation: String,
+    details: Map<String, String> = emptyMap(),
+  ): PreflightReport = PreflightReport(listOf(PreflightIssue(code, PreflightSeverity.ERROR, message, remediation, details)))
+
+  /** Journey, context and temp-directory checks shared by both authentication modes. */
+  private suspend fun pathReport(request: CliPreflightRequest, missingRemediation: String): PreflightReport = withContext(Dispatchers.IO) {
+    var report = if (request.journeyPath == null) {
+      errorReport(PreflightCodes.PATH_MISSING, "Journey path is required.", missingRemediation)
+    } else {
+      val path = Path.of(request.journeyPath)
+      if (Files.isDirectory(path)) pathPreflightChecker.requireReadableDirectory(path, "Journey directory") else pathPreflightChecker.requireReadableFile(path, "Journey file")
+    }
+    request.contextPath?.let { report += pathPreflightChecker.requireReadableDirectory(Path.of(it), "Context path") }
+    report + pathPreflightChecker.requireTempWritable()
+  }
 
   private fun resolveEffortSafely(
     provider: VerityProvider?,
@@ -306,21 +275,16 @@ class CliPreflightChecker internal constructor(
       resolveReasoningEffort(provider, model, backendId, requested)
     } catch (error: UnsupportedReasoningEffortException) {
       addReport(
-        PreflightReport(
-          listOf(
-            PreflightIssue(
-              code = PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED,
-              severity = PreflightSeverity.ERROR,
-              message = error.message ?: "Reasoning effort is unsupported.",
-              remediation = "Choose a supported effort for this provider, model, and backend, or leave the setting unset.",
-              details = mapOf(
-                "provider" to provider.name,
-                "role" to role,
-                "model" to model.id,
-                "backend" to (backendId ?: "unvalidated"),
-                "requested" to requested,
-              ),
-            ),
+        errorReport(
+          PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED,
+          error.message ?: "Reasoning effort is unsupported.",
+          "Choose a supported effort for this provider, model, and backend, or leave the setting unset.",
+          mapOf(
+            "provider" to provider.name,
+            "role" to role,
+            "model" to model.id,
+            "backend" to (backendId ?: "unvalidated"),
+            "requested" to requested,
           ),
         ),
       )
@@ -339,16 +303,11 @@ class CliPreflightChecker internal constructor(
     resolveModel(cliModel, configModel, defaultModel, provider)
   }.getOrElse { error ->
     addReport(
-      PreflightReport(
-        listOf(
-          PreflightIssue(
-            code = PreflightCodes.PROVIDER_MODEL_UNKNOWN,
-            severity = PreflightSeverity.ERROR,
-            message = error.message ?: "Unknown $role model.",
-            remediation = "Choose a supported ${provider.name} model ID.",
-            details = mapOf("provider" to provider.name, "role" to role),
-          ),
-        ),
+      errorReport(
+        PreflightCodes.PROVIDER_MODEL_UNKNOWN,
+        error.message ?: "Unknown $role model.",
+        "Choose a supported ${provider.name} model ID.",
+        mapOf("provider" to provider.name, "role" to role),
       ),
     )
     null

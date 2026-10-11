@@ -452,7 +452,6 @@ class StructuredFlowQualificationTest {
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureHierarchyTree() = HierarchyNode()
     override suspend fun captureScreenshot(output: Path) = Unit
-    override suspend fun shell(command: String) = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override fun close() {
       closed = true

@@ -82,18 +82,10 @@ data class ResolvedProjectConfig(
   }
 }
 
-fun resolvePlatform(value: String?): Platform? = when (value) {
-  null -> null
-
-  "android-tv" -> Platform.ANDROID_TV
-
-  "android" -> Platform.ANDROID_MOBILE
-
-  "ios" -> Platform.IOS
-
-  else -> throw IllegalArgumentException(
-    "Invalid device.platform '$value'. Expected one of: android-tv, android, ios",
-  )
+fun resolvePlatform(value: String?): Platform? = value?.let {
+  requireNotNull(Platform.fromWireName(it)) {
+    "Invalid device.platform '$it'. Expected one of: ${Platform.entries.joinToString { p -> p.wireName }}"
+  }
 }
 
 fun resolveAssertionStrategy(value: String?): AssertionStrategy = value?.let(AssertionStrategy::fromConfig) ?: AssertionStrategy.INFER
@@ -125,10 +117,3 @@ private fun String?.toEffortArtifactSetting(): EffortArtifactSetting = if (this 
 } else {
   EffortArtifactSetting(EffortSettingMode.EXPLICIT, requested = this)
 }
-
-val Platform.serialName: String
-  get() = when (this) {
-    Platform.ANDROID_TV -> "android-tv"
-    Platform.ANDROID_MOBILE -> "android"
-    Platform.IOS -> "ios"
-  }

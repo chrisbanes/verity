@@ -169,11 +169,6 @@ abstract class VerifyShrunkJars : DefaultTask() {
   @get:Input abstract val mainClass: Property<String>
   @get:OutputFile abstract val receipt: RegularFileProperty
 
-  private fun expectRejected(name: String, block: () -> Unit) {
-    val failure = runCatching(block).exceptionOrNull()
-    check(failure is IllegalStateException) { "Negative fixture $name was not rejected: $failure" }
-  }
-
   @TaskAction
   fun verify() {
     val rulesText = rules.get().asFile.readText()

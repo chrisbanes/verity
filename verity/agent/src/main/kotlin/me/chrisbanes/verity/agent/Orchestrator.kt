@@ -115,8 +115,9 @@ class Orchestrator(
     if (segment.actions.isNotEmpty()) {
       val instructions = segment.actions.map { it.instruction }
       actions = instructions
-      if (isFastPath(instructions, platform)) {
-        executeFastPath(instructions, appId, platform, navigator, memory, TrailSource(segment.index))
+      val interactions = InteractionMapper.forPlatform(platform).mapAll(instructions)
+      if (interactions != null) {
+        executeFastPath(instructions, interactions, appId, navigator, memory, TrailSource(segment.index))
         executionMode = SegmentExecutionMode.FAST
       } else {
         val slowPathResult = executeSlowPath(
@@ -201,18 +202,12 @@ class Orchestrator(
 
   private suspend fun executeFastPath(
     instructions: List<String>,
+    interactions: List<Interaction>,
     appId: String,
-    platform: Platform,
     navigator: NavigatorAgent,
     memory: JourneyMemory,
     source: TrailSource,
   ) {
-    val mapper = InteractionMapper.forPlatform(platform)
-    val interactions = instructions.map { instruction ->
-      checkNotNull(mapper.map(instruction)) {
-        "Fast-path instruction '$instruction' did not map to an interaction for $platform"
-      }
-    }
     validateActionFlow(ActionFlow(appId, interactions))
     // Mapping is one interaction per instruction, so the two lists align.
     interactions.forEachIndexed { index, interaction ->
@@ -305,7 +300,7 @@ class Orchestrator(
     memory: JourneyMemory,
   ): LoopResult {
     val instructions = loop.actionInstructions
-    val fastPath = isFastPath(instructions, platform)
+    val fastPathInteractions = InteractionMapper.forPlatform(platform).mapAll(instructions)
     val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot)
     var evaluation = evaluator.evaluate(loop.until, memory.inspectionContext(ConditionEvaluator.isVisual(loop.until)))
     var completedBodies = 0
@@ -333,8 +328,8 @@ class Orchestrator(
     repeat(loop.max) {
       try {
         val source = TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies)
-        if (fastPath) {
-          executeFastPath(instructions, appId, platform, navigator, memory, source)
+        if (fastPathInteractions != null) {
+          executeFastPath(instructions, fastPathInteractions, appId, navigator, memory, source)
         } else {
           val label = "loop-${completedBodies.toString().padStart(3, '0')}"
           val slowPathResult = executeSlowPath(instructions, appId, platform, navigator, segmentIndex, label, memory, source)

@@ -473,7 +473,6 @@ class ConditionWaiterTest {
     override suspend fun executeFlow(yaml: String): FlowResult = error("action")
     override suspend fun executeActions(flow: ActionFlow): FlowResult = error("action")
     override suspend fun pressKey(keyName: String): Unit = error("action")
-    override suspend fun shell(command: String): String = error("shell")
     override suspend fun waitForAnimationToEnd(): Unit = error("animation")
     override fun close() = Unit
   }

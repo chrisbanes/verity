@@ -31,7 +31,6 @@ class McpDeviceSessionManagerTest {
     override suspend fun pressKey(keyName: String) {}
     override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = emptyMap())
     override suspend fun captureScreenshot(output: Path) {}
-    override suspend fun shell(command: String): String = ""
     override suspend fun waitForAnimationToEnd() {}
 
     override fun close() {
@@ -61,7 +60,7 @@ class McpDeviceSessionManagerTest {
   }
 
   @Test
-  fun `withSession executes block and updates lastUsedAt`() = runTest {
+  fun `withSession executes block with the session`() = runTest {
     val dummySession = DummyDeviceSession()
     val manager = McpDeviceSessionManager(sessionFactory = { _, _, _ -> dummySession })
     val handle = manager.open(Platform.ANDROID_MOBILE, "test-device")

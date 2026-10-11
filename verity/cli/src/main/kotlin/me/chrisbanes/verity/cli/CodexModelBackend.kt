@@ -183,16 +183,9 @@ internal class CodexModelBackend private constructor(
         throw CodexFailure(CodexFailureKind.CLEANUP)
       }
       return result
-    } catch (e: CancellationException) {
-      synchronized(stateLock) { closed = true }
-      try {
-        resources.close(resources.beginCleanup()) { session?.cleanup() }
-      } catch (_: Exception) {
-        e.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
-      }
-      throw e
     } catch (e: Exception) {
-      val primary = if (e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
+      // Cancellation stays cancellation; anything else surfaces as a Codex failure.
+      val primary = if (e is CancellationException || e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
       synchronized(stateLock) { closed = true }
       try {
         resources.close(resources.beginCleanup()) { session?.cleanup() }
@@ -570,18 +563,14 @@ internal class CodexModelBackend private constructor(
           val schemaDirectory = resources.directory()
           val schemaWorkingDirectory = resources.directory()
           val schemaProcess = resources.launch(listOf(binary.toString(), "app-server", "generate-json-schema", "--experimental", "--out", schemaDirectory.toString()), schemaWorkingDirectory, childEnvironment, launch)
-          val schemaDrain = resources.scope.launch {
-            schemaProcess.inputStream.use { stream ->
+          fun drain(stream: java.io.InputStream) = resources.scope.launch {
+            stream.use {
               val buffer = ByteArray(4096)
-              while (stream.read(buffer) != -1) { }
+              while (it.read(buffer) != -1) { }
             }
           }
-          val schemaErrorDrain = resources.scope.launch {
-            schemaProcess.errorStream.use { stream ->
-              val buffer = ByteArray(4096)
-              while (stream.read(buffer) != -1) { }
-            }
-          }
+          val schemaDrain = drain(schemaProcess.inputStream)
+          val schemaErrorDrain = drain(schemaProcess.errorStream)
           awaitExit(schemaProcess)
           schemaDrain.join()
           schemaErrorDrain.join()
@@ -599,16 +588,12 @@ internal class CodexModelBackend private constructor(
           discoveredPolicy.verify(readConfig(final, finalDirectory))
           CodexModelBackend(final, discoveredPolicy, finalDirectory, resources, echoFields)
         }
-      } catch (e: CancellationException) {
-        val primary = if (e is TimeoutCancellationException && currentCoroutineContext().isActive) CodexFailure(CodexFailureKind.STARTUP_TIMEOUT) else e
-        try {
-          resources.close()
-        } catch (_: Exception) {
-          primary.addSuppressed(CodexFailure(CodexFailureKind.CLEANUP))
-        }
-        throw primary
       } catch (e: Exception) {
-        val primary = if (e is CodexFailure) e else CodexFailure(CodexFailureKind.PROTOCOL)
+        val primary = when {
+          e is TimeoutCancellationException && currentCoroutineContext().isActive -> CodexFailure(CodexFailureKind.STARTUP_TIMEOUT)
+          e is CancellationException || e is CodexFailure -> e
+          else -> CodexFailure(CodexFailureKind.PROTOCOL)
+        }
         try {
           resources.close()
         } catch (_: Exception) {

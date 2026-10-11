@@ -30,54 +30,51 @@ class ConditionEvaluator(
 ) {
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext()): ConditionEvaluation {
     require(condition.isNotBlank()) { "Condition must not be blank" }
-    VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
-      val description = condition.trim().substring(prefix.range.last + 1).trim()
-      require(description.isNotBlank()) { "Visual condition must not be blank" }
-      val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot).visual(description, context)
+    val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot)
+    visualDescription(condition)?.let { description ->
+      val evaluation = inspection.visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
-    if (session.containsText(condition)) {
-      return ConditionEvaluation(InspectionVerdict(true, "Text '$condition' is visible"), ConditionTier.LITERAL)
-    }
-    FocusConditionParser.parse(condition)?.let { target ->
-      val passed = session.checkFocused(target)
-      return ConditionEvaluation(
-        InspectionVerdict(passed, if (passed) "Text '$target' is focused" else "Text '$target' is not focused"),
-        ConditionTier.FOCUS,
-      )
-    }
-    val evaluation = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot).tree(condition, context)
+    if (session.containsText(condition)) return literalEvaluation(condition)
+    FocusConditionParser.parse(condition)?.let { target -> return focusEvaluation(target, session.checkFocused(target)) }
+    val evaluation = inspection.tree(condition, context)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
     require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot, onInspectedScreenshot)
-    VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
-      val description = condition.trim().substring(prefix.range.last + 1).trim()
-      require(description.isNotBlank()) { "Visual condition must not be blank" }
+    visualDescription(condition)?.let { description ->
       val evaluation = inspection.visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
     val tree = session.captureHierarchyTree(deadline.remaining())
     deadline.checkpoint()
-    if (tree.containsText(condition, checkpoint = deadline::checkpoint)) {
-      return ConditionEvaluation(InspectionVerdict(true, "Text '$condition' is visible"), ConditionTier.LITERAL)
-    }
+    if (tree.containsText(condition, checkpoint = deadline::checkpoint)) return literalEvaluation(condition)
     FocusConditionParser.parse(condition)?.let { target ->
-      val passed = FocusDetector.containsFocused(tree, target, deadline::checkpoint)
-      return ConditionEvaluation(
-        InspectionVerdict(passed, if (passed) "Text '$target' is focused" else "Text '$target' is not focused"),
-        ConditionTier.FOCUS,
-      )
+      return focusEvaluation(target, FocusDetector.containsFocused(tree, target, deadline::checkpoint))
     }
     val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.CONTENT, deadline::checkpoint)
     val evaluation = inspection.inspectTree(hierarchy, condition, context)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }
 
+  private fun literalEvaluation(text: String) = ConditionEvaluation(InspectionVerdict(true, "Text '$text' is visible"), ConditionTier.LITERAL)
+
+  private fun focusEvaluation(target: String, passed: Boolean) = ConditionEvaluation(
+    InspectionVerdict(passed, if (passed) "Text '$target' is focused" else "Text '$target' is not focused"),
+    ConditionTier.FOCUS,
+  )
+
   companion object {
     private val VISUAL_PREFIX = Regex("""^visually(?:\s+|$)""", RegexOption.IGNORE_CASE)
+
+    /** The description after a `visually` prefix, or null for a non-visual condition. */
+    private fun visualDescription(condition: String): String? = VISUAL_PREFIX.find(condition.trim())?.let { prefix ->
+      condition.trim().substring(prefix.range.last + 1).trim().also {
+        require(it.isNotBlank()) { "Visual condition must not be blank" }
+      }
+    }
 
     /** Whether [condition] is evaluated against a screenshot rather than the tree. */
     internal fun isVisual(condition: String): Boolean = VISUAL_PREFIX.containsMatchIn(condition.trim())

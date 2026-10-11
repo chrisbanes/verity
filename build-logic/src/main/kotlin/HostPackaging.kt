@@ -212,6 +212,12 @@ object HostPackaging {
   fun hash(bytes: ByteArray): String = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
 }
 
+/** Asserts that a negative fixture is rejected by the verifier's own `check` failures. */
+internal fun expectRejected(name: String, block: () -> Unit) {
+  val failure = runCatching(block).exceptionOrNull()
+  check(failure is IllegalStateException) { "Negative fixture $name was not rejected: $failure" }
+}
+
 abstract class VerifyHostJars : DefaultTask() {
   @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val universal: RegularFileProperty
   @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val macos: RegularFileProperty
@@ -219,11 +225,6 @@ abstract class VerifyHostJars : DefaultTask() {
   @get:Classpath abstract val runtimeArtifacts: ConfigurableFileCollection
   @get:Input abstract val coordinates: ListProperty<String>
   @get:OutputFile abstract val receipt: RegularFileProperty
-
-  private fun expectRejected(name: String, block: () -> Unit) {
-    val failure = runCatching(block).exceptionOrNull()
-    check(failure is IllegalStateException) { "Negative fixture $name was not rejected: $failure" }
-  }
 
   @TaskAction
   fun verify() {
