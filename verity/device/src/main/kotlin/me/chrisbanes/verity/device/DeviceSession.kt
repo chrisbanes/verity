@@ -14,34 +14,6 @@ import me.chrisbanes.verity.core.model.Platform
 interface DeviceSession : AutoCloseable {
   val platform: Platform
 
-  data class AnimationState(
-    val windowScale: String,
-    val transitionScale: String,
-    val animatorScale: String,
-  ) {
-    init {
-      validateScale(windowScale, "window animation")
-      validateScale(transitionScale, "transition animation")
-      validateScale(animatorScale, "animator duration")
-    }
-
-    private companion object {
-      val SCALE_PATTERN = Regex("""\d+(\.\d+)?""")
-
-      /** Android animation scale bounds: 0.0 (off) to 10.0 (10x speed) */
-      private const val MIN_SCALE = 0.0
-      private const val MAX_SCALE = 10.0
-
-      fun validateScale(value: String, name: String) {
-        require(value.matches(SCALE_PATTERN)) { "Invalid $name scale: $value" }
-        val numeric = value.toDouble()
-        require(numeric in MIN_SCALE..MAX_SCALE) {
-          "$name scale $value out of bounds. Expected: $MIN_SCALE to $MAX_SCALE"
-        }
-      }
-    }
-  }
-
   /** Execute a Maestro YAML flow against the device. */
   suspend fun executeFlow(yaml: String): FlowResult
 
@@ -98,23 +70,8 @@ interface DeviceSession : AutoCloseable {
     return FocusDetector.containsFocused(tree, text)
   }
 
-  /** Execute a shell command on the device. */
-  suspend fun shell(command: String): String
-
   /** Wait for any in-progress animations to finish. */
   suspend fun waitForAnimationToEnd()
-
-  /**
-   * Android-only animation controls.
-   *
-   * Default implementations are no-op for platforms that don't expose
-   * Android global animation scale settings.
-   */
-  suspend fun getAnimationState(): AnimationState? = null
-
-  suspend fun disableAnimations() = Unit
-
-  suspend fun restoreAnimationState(state: AnimationState) = Unit
 }
 
 /** A capture exhausted its owned complete-capture budget. */

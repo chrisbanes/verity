@@ -1255,7 +1255,6 @@ class OrchestratorTest {
     override suspend fun captureHierarchyTree() = HierarchyNode(attributes = mapOf("text" to "Home"))
     override suspend fun containsText(text: String, ignoreCase: Boolean) = false
     override suspend fun captureScreenshot(output: Path) = Unit
-    override suspend fun shell(command: String) = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override fun close() = Unit
   }
@@ -1285,7 +1284,6 @@ class OrchestratorTest {
       capturedScreenshotPaths.add(output)
       Files.write(output, byteArrayOf(1, 2, 3))
     }
-    override suspend fun shell(command: String): String = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean = containsTextResults.removeFirstOrNull() ?: false
 

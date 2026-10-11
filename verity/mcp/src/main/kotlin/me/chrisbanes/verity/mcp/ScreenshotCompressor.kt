@@ -2,7 +2,7 @@ package me.chrisbanes.verity.mcp
 
 import java.awt.Image
 import java.awt.image.BufferedImage
-import java.nio.file.Files
+import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import javax.imageio.IIOImage
 import javax.imageio.ImageIO
@@ -14,7 +14,7 @@ object ScreenshotCompressor {
     pngFile: Path,
     scale: Float = 1f,
     jpegQuality: Float = 0.75f,
-  ): Path {
+  ): ByteArray {
     var image = ImageIO.read(pngFile.toFile())
 
     if (scale < 1f) {
@@ -27,7 +27,7 @@ object ScreenshotCompressor {
       image = scaled
     }
 
-    val output = Files.createTempFile("verity-screenshot-", ".jpg")
+    val output = ByteArrayOutputStream()
     val writer = ImageIO.getImageWritersByFormatName("jpeg").next()
     try {
       val param =
@@ -35,7 +35,7 @@ object ScreenshotCompressor {
           compressionMode = ImageWriteParam.MODE_EXPLICIT
           compressionQuality = jpegQuality
         }
-      ImageIO.createImageOutputStream(output.toFile()).use { ios ->
+      ImageIO.createImageOutputStream(output).use { ios ->
         writer.output = ios
         writer.write(null, IIOImage(image, null, null), param)
       }
@@ -43,6 +43,6 @@ object ScreenshotCompressor {
       writer.dispose()
     }
 
-    return output
+    return output.toByteArray()
   }
 }

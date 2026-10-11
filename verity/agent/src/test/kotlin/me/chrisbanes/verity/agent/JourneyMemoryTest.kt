@@ -46,7 +46,6 @@ class JourneyMemoryTest {
     override suspend fun executeActions(flow: ActionFlow) = FlowResult(true)
     override suspend fun pressKey(keyName: String) = Unit
     override suspend fun captureScreenshot(output: Path) = Unit
-    override suspend fun shell(command: String) = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override fun close() = Unit
   }

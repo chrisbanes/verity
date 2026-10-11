@@ -99,24 +99,11 @@ abstract class VerifyPackagedGrpc : DefaultTask() {
     PackagedGrpc.verifyCoordinates(path, artifacts)
     val signatures = if (archive.isPresent) PackagedGrpc.verifyArchive(archive.get().asFile, artifacts) else emptyList()
     val hashes = artifacts.map { artifact ->
-      "io.grpc:${artifact.name}:${artifact.version} sha256=${sha256(artifact.file)}"
+      "io.grpc:${artifact.name}:${artifact.version} sha256=${HostPackaging.hash(artifact.file)}"
     }.sorted()
     val output = receipt.get().asFile
     output.parentFile.mkdirs()
-    output.writeText((hashes + signatures + if (archive.isPresent) listOf("archive_sha256=${sha256(archive.get().asFile)}") else emptyList()).joinToString("\n", postfix = "\n"))
+    output.writeText((hashes + signatures + if (archive.isPresent) listOf("archive_sha256=${HostPackaging.hash(archive.get().asFile)}") else emptyList()).joinToString("\n", postfix = "\n"))
     logger.lifecycle("${path}: Java gRPC ${PackagedGrpc.VERSION} verified; Maestro descriptors=${signatures.size}")
-  }
-
-  private fun sha256(file: File): String {
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    file.inputStream().buffered().use { input ->
-      val buffer = ByteArray(8192)
-      while (true) {
-        val read = input.read(buffer)
-        if (read < 0) break
-        digest.update(buffer, 0, read)
-      }
-    }
-    return digest.digest().joinToString("") { "%02x".format(it) }
   }
 }

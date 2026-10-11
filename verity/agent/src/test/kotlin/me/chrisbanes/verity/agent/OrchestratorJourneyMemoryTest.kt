@@ -69,7 +69,6 @@ class OrchestratorJourneyMemoryTest {
 
     override suspend fun captureScreenshot(output: Path, timeout: Duration) = captureScreenshot(output)
     override suspend fun executeFlow(yaml: String) = error("unused")
-    override suspend fun shell(command: String) = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override fun close() = Unit
   }

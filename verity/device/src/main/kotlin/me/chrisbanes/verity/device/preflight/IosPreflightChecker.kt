@@ -47,7 +47,7 @@ class IosPreflightChecker(
       )
     }
 
-    val devices = parseDevices(result.output)
+    val devices = parseSimctlDevices(result.output)
     val booted = devices.filter { it.state == "Booted" }
 
     return if (deviceId != null) {
@@ -96,22 +96,23 @@ class IosPreflightChecker(
       }
     }
   }
+}
 
-  private fun parseDevices(json: String): List<IosDeviceState> {
-    val root = Json.parseToJsonElement(json).jsonObject
-    val devices = root["devices"]?.jsonObject ?: return emptyList()
-    return devices.values.flatMap { runtimeDevices ->
-      runtimeDevices.jsonArray.mapNotNull { device ->
-        val obj = device.jsonObject
-        val udid = obj["udid"]?.jsonPrimitive?.contentOrNull
-        val state = obj["state"]?.jsonPrimitive?.contentOrNull
-        if (udid != null && state != null) IosDeviceState(udid, state) else null
-      }
+internal data class SimctlDevice(
+  val udid: String,
+  val state: String,
+)
+
+/** Parses `xcrun simctl list devices -j` output across all runtimes. */
+internal fun parseSimctlDevices(json: String): List<SimctlDevice> {
+  val root = Json.parseToJsonElement(json).jsonObject
+  val devices = root["devices"]?.jsonObject ?: return emptyList()
+  return devices.values.flatMap { runtimeDevices ->
+    runtimeDevices.jsonArray.mapNotNull { device ->
+      val obj = device.jsonObject
+      val udid = obj["udid"]?.jsonPrimitive?.contentOrNull
+      val state = obj["state"]?.jsonPrimitive?.contentOrNull
+      if (udid != null && state != null) SimctlDevice(udid, state) else null
     }
   }
-
-  private data class IosDeviceState(
-    val udid: String,
-    val state: String,
-  )
 }

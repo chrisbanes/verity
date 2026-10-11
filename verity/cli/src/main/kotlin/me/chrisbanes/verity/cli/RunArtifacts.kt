@@ -51,8 +51,7 @@ class RunArtifactDirectory(
   }
 
   suspend fun writeJourneyResult(path: String, result: JourneyArtifactResult) = withContext(Dispatchers.IO) {
-    val target = resolveArtifactPath(directory, path)
-    Files.createDirectories(target.parent)
+    val target = resolveArtifactFile(directory, path)
     writeJsonAtomically(target, json.encodeToString(JourneyArtifactResult.serializer(), result))
   }
 
@@ -78,24 +77,21 @@ class JourneyRunArtifactRecorder(
 
   override suspend fun saveGeneratedFlow(segmentIndex: Int, label: String, yaml: String): String = withContext(Dispatchers.IO) {
     val relative = "flows/$key/segment-${segmentIndex.toString().padStart(3, '0')}-${slugArtifactName(label, "flow")}.yaml"
-    val target = resolveArtifactPath(directory, relative)
-    Files.createDirectories(target.parent)
+    val target = resolveArtifactFile(directory, relative)
     Files.writeString(target, yaml)
     relative
   }
 
   override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String = withContext(Dispatchers.IO) {
     val relative = "${evidencePrefix(segmentIndex)}-tree.txt"
-    val target = resolveArtifactPath(directory, relative)
-    Files.createDirectories(target.parent)
+    val target = resolveArtifactFile(directory, relative)
     Files.writeString(target, hierarchy)
     relative
   }
 
   override suspend fun screenshotPath(segmentIndex: Int): JourneyScreenshotArtifact = withContext(Dispatchers.IO) {
     val relative = "${evidencePrefix(segmentIndex)}-visual.png"
-    val target = resolveArtifactPath(directory, relative)
-    Files.createDirectories(target.parent)
+    val target = resolveArtifactFile(directory, relative)
     JourneyScreenshotArtifact(path = target, relativePath = relative)
   }
 }
@@ -117,6 +113,9 @@ private fun createUniqueDirectory(parent: Path, baseName: String): Path {
     }
   }
 }
+
+/** Resolves [relative] inside [directory] and creates its parent directories. */
+private fun resolveArtifactFile(directory: Path, relative: String): Path = resolveArtifactPath(directory, relative).also { Files.createDirectories(it.parent) }
 
 private fun resolveArtifactPath(directory: Path, relative: String): Path {
   val relativePath = Path.of(relative)

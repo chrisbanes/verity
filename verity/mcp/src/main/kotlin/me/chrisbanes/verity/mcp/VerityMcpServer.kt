@@ -33,6 +33,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
@@ -42,10 +43,9 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import me.chrisbanes.verity.core.context.ContextBundle
 import me.chrisbanes.verity.core.context.ContextLoader
-import me.chrisbanes.verity.core.context.ContextStatus
 import me.chrisbanes.verity.core.context.ContextValidationException
+import me.chrisbanes.verity.core.context.describe
 import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
@@ -159,11 +159,43 @@ class VerityMcpServer(
     }
   }
 
-  private fun parsePlatform(value: String): Platform = when (value) {
-    "android-tv" -> Platform.ANDROID_TV
-    "android" -> Platform.ANDROID_MOBILE
-    "ios" -> Platform.IOS
-    else -> throw IllegalArgumentException("Unknown platform: $value. Expected: android-tv, android, or ios")
+  private val platformNames = Platform.entries.map { it.wireName }
+
+  private fun parsePlatform(value: String): Platform = Platform.fromWireName(value)
+    ?: throw IllegalArgumentException("Unknown platform: $value. Expected: ${platformNames.joinToString()}")
+
+  private fun JsonObjectBuilder.sessionIdProperty() {
+    putJsonObject("session_id") {
+      put("type", "string")
+      put("description", "Session ID returned by open_session")
+    }
+  }
+
+  private fun JsonObjectBuilder.filterProperty() {
+    putJsonObject("filter") {
+      put("type", "string")
+      put("description", "Filter level: focus, content (default), or all")
+      putJsonArray("enum") {
+        add(JsonPrimitive("focus"))
+        add(JsonPrimitive("content"))
+        add(JsonPrimitive("all"))
+      }
+    }
+  }
+
+  private fun JsonObject?.filter(): HierarchyFilter = when (string("filter")) {
+    "focus" -> HierarchyFilter.FOCUS
+    "all" -> HierarchyFilter.ALL
+    else -> HierarchyFilter.CONTENT
+  }
+
+  /** A JSON boolean, or null when absent; rejects strings such as `"true"`. */
+  private fun JsonObject?.strictBool(key: String): Boolean? {
+    val value = this?.get(key) ?: return null
+    val primitive = value as? JsonPrimitive
+    val bool = primitive?.takeUnless { it.isString }?.booleanOrNull
+    require(bool != null) { "$key must be a JSON boolean" }
+    return bool
   }
 
   // --- Tool Registrations ---
@@ -176,12 +208,8 @@ class VerityMcpServer(
         properties = buildJsonObject {
           putJsonObject("platform") {
             put("type", "string")
-            put("description", "Target platform: android-tv, android, or ios")
-            putJsonArray("enum") {
-              add(JsonPrimitive("android-tv"))
-              add(JsonPrimitive("android"))
-              add(JsonPrimitive("ios"))
-            }
+            put("description", "Target platform: ${platformNames.joinToString()}")
+            putJsonArray("enum") { platformNames.forEach { add(JsonPrimitive(it)) } }
           }
           putJsonObject("device") {
             put("type", "string")
@@ -216,10 +244,7 @@ class VerityMcpServer(
       description = "Close a device testing session and restore device state",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
+          sessionIdProperty()
         },
       ),
       required = listOf("session_id"),
@@ -299,16 +324,7 @@ class VerityMcpServer(
   private data class FocusWaitOptions(val await: Boolean, val timeoutMs: Int)
 
   private fun JsonObject?.focusWaitOptions(): FocusWaitOptions {
-    val awaitValue = this?.get("await_focus_change")
-    val await = if (awaitValue == null) {
-      false
-    } else {
-      val primitive = awaitValue as? JsonPrimitive
-      require(primitive != null && !primitive.isString && primitive.booleanOrNull != null) {
-        "await_focus_change must be a JSON boolean"
-      }
-      primitive.booleanOrNull!!
-    }
+    val await = strictBool("await_focus_change") ?: false
     if (!await) return FocusWaitOptions(false, 2000)
     val value = this?.get("focus_timeout_ms") ?: return FocusWaitOptions(true, 2000)
     val primitive = value as? JsonPrimitive
@@ -319,7 +335,7 @@ class VerityMcpServer(
     return FocusWaitOptions(true, timeout)
   }
 
-  private fun kotlinx.serialization.json.JsonObjectBuilder.focusWaitSchema() {
+  private fun JsonObjectBuilder.focusWaitSchema() {
     putJsonObject("await_focus_change") {
       put("type", "boolean")
       put("default", false)
@@ -418,10 +434,7 @@ class VerityMcpServer(
       description = "Execute a Maestro YAML flow on the device, optionally waiting for focus to change",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
+          sessionIdProperty()
           putJsonObject("yaml") {
             put("type", "string")
             put("description", "Maestro YAML flow content to execute")
@@ -454,10 +467,7 @@ class VerityMcpServer(
       description = "Press a named key or raw Android keycode, optionally holding it or waiting for focus to change",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
+          sessionIdProperty()
           putJsonObject("key") {
             put("type", "string")
             put("description", "Key name to press (e.g., DPAD_UP, DPAD_CENTER, BACK)")
@@ -497,13 +507,7 @@ class VerityMcpServer(
       } else {
         null
       }
-      val longPress = if (args?.containsKey("long_press") == true) {
-        val value = args["long_press"] as? JsonPrimitive
-        require(value != null && !value.isString && value.booleanOrNull != null) { "long_press must be a JSON Boolean" }
-        value.booleanOrNull!!
-      } else {
-        false
-      }
+      val longPress = args.strictBool("long_press") ?: false
       val sessionId = UUID.fromString(args.requireString("session_id"))
       sessionManager.withSession(sessionId) { session ->
         if (session.platform == Platform.IOS && (keycode != null || longPress)) {
@@ -540,10 +544,7 @@ class VerityMcpServer(
       description = "Capture a screenshot from the device",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
+          sessionIdProperty()
           putJsonObject("save_to_file") {
             put("type", "string")
             put("description", "Optional PNG file path relative to the server working directory. Requires an existing writable parent and refuses existing destinations; returns the normalised absolute saved path.")
@@ -577,31 +578,20 @@ class VerityMcpServer(
           }
           success("Screenshot saved to: $saved")
         } else {
-          // Use a single cleanup block to ensure all temp files are deleted
-          val tempFiles = mutableListOf<Path>()
+          val tempPng = withContext(Dispatchers.IO) {
+            Files.createTempFile("verity-screenshot-", ".png")
+          }
           try {
-            val tempPng = withContext(Dispatchers.IO) {
-              Files.createTempFile("verity-screenshot-", ".png")
-            }
-            tempFiles.add(tempPng)
-
             session.captureScreenshot(tempPng)
-
-            val jpegPath = withContext(Dispatchers.IO) {
+            val bytes = withContext(Dispatchers.IO) {
               ScreenshotCompressor.compress(tempPng)
             }
-            tempFiles.add(jpegPath)
-
-            val bytes = withContext(Dispatchers.IO) {
-              Files.readAllBytes(jpegPath)
-            }
-            val base64 = Base64.getEncoder().encodeToString(bytes)
             CallToolResult(
-              content = listOf(ImageContent(data = base64, mimeType = "image/jpeg")),
+              content = listOf(ImageContent(data = Base64.getEncoder().encodeToString(bytes), mimeType = "image/jpeg")),
             )
           } finally {
             withContext(NonCancellable + Dispatchers.IO) {
-              tempFiles.forEach { Files.deleteIfExists(it) }
+              Files.deleteIfExists(tempPng)
             }
           }
         }
@@ -615,29 +605,14 @@ class VerityMcpServer(
       description = "Capture the accessibility hierarchy from the device",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
-          putJsonObject("filter") {
-            put("type", "string")
-            put("description", "Filter level: focus, content, or all")
-            putJsonArray("enum") {
-              add(JsonPrimitive("focus"))
-              add(JsonPrimitive("content"))
-              add(JsonPrimitive("all"))
-            }
-          }
+          sessionIdProperty()
+          filterProperty()
         },
       ),
       required = listOf("session_id"),
     ) { args ->
       val sessionId = UUID.fromString(args.requireString("session_id"))
-      val filter = when (args.string("filter")) {
-        "focus" -> HierarchyFilter.FOCUS
-        "all" -> HierarchyFilter.ALL
-        else -> HierarchyFilter.CONTENT
-      }
+      val filter = args.filter()
       sessionManager.withSession(sessionId) { session ->
         val tree = session.captureHierarchyTree()
         val snapshotId = snapshotStore.add(sessionId, tree)
@@ -653,29 +628,14 @@ class VerityMcpServer(
       description = "Capture bounded focused context (100 nodes, 12,000 UTF-16 units) with a full hierarchy snapshot",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
-          putJsonObject("filter") {
-            put("type", "string")
-            put("description", "Filter level: focus, content (default), or all")
-            putJsonArray("enum") {
-              add(JsonPrimitive("focus"))
-              add(JsonPrimitive("content"))
-              add(JsonPrimitive("all"))
-            }
-          }
+          sessionIdProperty()
+          filterProperty()
         },
       ),
       required = listOf("session_id"),
     ) { args ->
       val sessionId = UUID.fromString(args.requireString("session_id"))
-      val filter = when (args.string("filter")) {
-        "focus" -> HierarchyFilter.FOCUS
-        "all" -> HierarchyFilter.ALL
-        else -> HierarchyFilter.CONTENT
-      }
+      val filter = args.filter()
       sessionManager.withSession(sessionId) { session ->
         val tree = session.captureHierarchyTree()
         val snapshotId = snapshotStore.add(sessionId, tree)
@@ -802,46 +762,36 @@ class VerityMcpServer(
     }
   }
 
-  private fun registerCheckVisible(server: Server) {
-    server.addSafeTool(
-      name = "check_visible",
-      description = "Check if text is visible on screen (deterministic substring match)",
-      inputSchema = ToolSchema(
-        properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
-          putJsonObject("text") {
-            put("type", "string")
-            put("description", "Text to search for (case-insensitive)")
-          }
-        },
-      ),
-      required = listOf("session_id", "text"),
-    ) { args ->
-      val sessionId = UUID.fromString(args.requireString("session_id"))
-      val text = args.requireString("text")
-      val visible = sessionManager.withSession(sessionId) { session ->
-        session.containsText(text)
-      }
-      success(if (visible) "true" else "false")
-    }
-  }
+  private fun registerCheckVisible(server: Server) = registerTextCheck(
+    server,
+    name = "check_visible",
+    description = "Check if text is visible on screen (deterministic substring match)",
+    textDescription = "Text to search for (case-insensitive)",
+  ) { text -> containsText(text) }
 
-  private fun registerCheckFocused(server: Server) {
+  private fun registerCheckFocused(server: Server) = registerTextCheck(
+    server,
+    name = "check_focused",
+    description = "Check if an element containing the given text is focused",
+    textDescription = "Text of the element to check focus on",
+  ) { text -> checkFocused(text) }
+
+  private fun registerTextCheck(
+    server: Server,
+    name: String,
+    description: String,
+    textDescription: String,
+    check: suspend DeviceSession.(String) -> Boolean,
+  ) {
     server.addSafeTool(
-      name = "check_focused",
-      description = "Check if an element containing the given text is focused",
+      name = name,
+      description = description,
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
+          sessionIdProperty()
           putJsonObject("text") {
             put("type", "string")
-            put("description", "Text of the element to check focus on")
+            put("description", textDescription)
           }
         },
       ),
@@ -849,10 +799,8 @@ class VerityMcpServer(
     ) { args ->
       val sessionId = UUID.fromString(args.requireString("session_id"))
       val text = args.requireString("text")
-      val focused = sessionManager.withSession(sessionId) { session ->
-        session.checkFocused(text)
-      }
-      success(if (focused) "true" else "false")
+      val result = sessionManager.withSession(sessionId) { session -> session.check(text) }
+      success(result.toString())
     }
   }
 
@@ -862,10 +810,7 @@ class VerityMcpServer(
       description = "Repeat an action until a condition is met or max iterations reached",
       inputSchema = ToolSchema(
         properties = buildJsonObject {
-          putJsonObject("session_id") {
-            put("type", "string")
-            put("description", "Session ID returned by open_session")
-          }
+          sessionIdProperty()
           putJsonObject("action") {
             put("type", "string")
             put("description", "Key name to press each iteration (e.g., DPAD_DOWN)")
@@ -935,7 +880,7 @@ class VerityMcpServer(
         return@addSafeTool error(e.message ?: "Project context validation failed")
       }
       val bundled = if (skipBundledContext) "" else ContextLoader.loadBundled()
-      val metadata = projectContext.describeForMcp(contextDir, requireContext)
+      val metadata = projectContext.describe(contextDir, requireContext) { "- ${it.absolutePath}" }.joinToString("\n")
       val usableContext = listOf(bundled, projectContext.text)
         .filter { it.isNotBlank() }
         .joinToString("\n\n")
@@ -948,24 +893,6 @@ class VerityMcpServer(
           .joinToString("\n\n")
         success(content)
       }
-    }
-  }
-
-  private fun ContextBundle.describeForMcp(contextDir: File?, required: Boolean): String {
-    val mode = if (required) "required" else "optional"
-    return when (status) {
-      ContextStatus.LOADED -> buildString {
-        appendLine("Project context: loaded ${loadedFiles.size} file(s)")
-        loadedFiles.forEach { appendLine("- ${it.absolutePath}") }
-      }.trim()
-
-      ContextStatus.NOT_CONFIGURED -> "Project context: $mode, not configured"
-
-      ContextStatus.MISSING_DIRECTORY ->
-        "Project context: $mode, missing directory: ${contextDir!!.absolutePath}"
-
-      ContextStatus.EMPTY_DIRECTORY ->
-        "Project context: $mode, no markdown files found in: ${contextDir!!.absolutePath}"
     }
   }
 

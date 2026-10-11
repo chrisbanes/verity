@@ -62,10 +62,11 @@ data class DryRunLoopReport(
   val until: String,
   val max: Int,
   val kind: DryRunExecutionKind,
-  val interaction: String? = null,
   val yaml: String? = null,
-  val interactions: List<String> = listOfNotNull(interaction),
-)
+  val interactions: List<String> = emptyList(),
+) {
+  val interaction: String? get() = interactions.singleOrNull()
+}
 
 data class DryRunWaitReport(val condition: String, val timeoutSeconds: Int)
 
@@ -89,27 +90,23 @@ class DryRunPlanner(
     )
   }
 
-  private suspend fun planSegment(segment: JourneySegment, resolvedJourney: ResolvedJourney): DryRunSegmentReport {
-    val journey = resolvedJourney.journey
-    return DryRunSegmentReport(
-      index = segment.index,
-      actions = planActions(segment.actions.map { it.instruction }, segment, resolvedJourney),
-      loop = segment.loop?.let { loop ->
-        val body = checkNotNull(planActions(loop.actionInstructions, segment, resolvedJourney))
-        DryRunLoopReport(
-          action = loop.action,
-          until = loop.until,
-          max = loop.max,
-          kind = body.kind,
-          interaction = body.interactions.singleOrNull(),
-          interactions = body.interactions,
-          yaml = body.yaml,
-        )
-      },
-      assertion = segment.assertion?.let { DryRunAssertionReport(it.description, it.mode) },
-      wait = segment.wait?.let { DryRunWaitReport(it.until, it.timeoutSeconds) },
-    )
-  }
+  private suspend fun planSegment(segment: JourneySegment, resolvedJourney: ResolvedJourney): DryRunSegmentReport = DryRunSegmentReport(
+    index = segment.index,
+    actions = planActions(segment.actions.map { it.instruction }, segment, resolvedJourney),
+    loop = segment.loop?.let { loop ->
+      val body = checkNotNull(planActions(loop.actionInstructions, segment, resolvedJourney))
+      DryRunLoopReport(
+        action = loop.action,
+        until = loop.until,
+        max = loop.max,
+        kind = body.kind,
+        interactions = body.interactions,
+        yaml = body.yaml,
+      )
+    },
+    assertion = segment.assertion?.let { DryRunAssertionReport(it.description, it.mode) },
+    wait = segment.wait?.let { DryRunWaitReport(it.until, it.timeoutSeconds) },
+  )
 
   private suspend fun planActions(
     instructions: List<String>,
@@ -119,11 +116,10 @@ class DryRunPlanner(
     if (instructions.isEmpty()) return null
 
     val journey = resolvedJourney.journey
-    val mapper = InteractionMapper.forPlatform(journey.platform)
-    val interactions = instructions.map { mapper.map(it) }
-    return if (interactions.all { it != null }) {
+    val interactions = InteractionMapper.forPlatform(journey.platform).mapAll(instructions)
+    return if (interactions != null) {
       try {
-        validateActionFlow(ActionFlow(journey.app, interactions.filterNotNull()))
+        validateActionFlow(ActionFlow(journey.app, interactions))
       } catch (error: CancellationException) {
         throw error
       } catch (_: Exception) {
@@ -132,7 +128,7 @@ class DryRunPlanner(
       DryRunActionGroupReport(
         instructions = instructions,
         kind = DryRunExecutionKind.FAST_PATH,
-        interactions = interactions.filterNotNull().map(::describeInteraction),
+        interactions = interactions.map(::describeInteraction),
       )
     } else {
       DryRunActionGroupReport(

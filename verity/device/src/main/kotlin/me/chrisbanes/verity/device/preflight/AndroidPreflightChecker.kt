@@ -111,6 +111,9 @@ class AndroidPreflightChecker(
   } catch (e: IOException) {
     null
   }
-
-  private fun isIpAddress(value: String): Boolean = Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""").matches(value)
 }
+
+private val IPV4_WITH_OPTIONAL_PORT = Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""")
+
+/** ADB device IDs must be serials; IP addresses are rejected by both preflight and connect. */
+internal fun isIpAddress(value: String): Boolean = IPV4_WITH_OPTIONAL_PORT.matches(value)

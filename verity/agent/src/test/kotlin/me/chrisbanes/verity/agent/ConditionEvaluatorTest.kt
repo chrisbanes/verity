@@ -210,7 +210,6 @@ class ConditionEvaluatorTest {
       screenshots.add(output)
       capture(output)
     }
-    override suspend fun shell(command: String) = ""
     override suspend fun waitForAnimationToEnd() = Unit
     override fun close() = Unit
   }

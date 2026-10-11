@@ -27,8 +27,8 @@ import me.chrisbanes.verity.agent.Orchestrator
 import me.chrisbanes.verity.agent.redactModelDiagnostic
 import me.chrisbanes.verity.core.context.ContextBundle
 import me.chrisbanes.verity.core.context.ContextLoader
-import me.chrisbanes.verity.core.context.ContextStatus
 import me.chrisbanes.verity.core.context.ContextValidationException
+import me.chrisbanes.verity.core.context.describe
 import me.chrisbanes.verity.core.journey.JourneyLoader
 import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.InvalidActionFlowException
@@ -348,24 +348,17 @@ class RunCommand(
   ): DryRunSuiteReport {
     val contextDir = resolved.contextPath
     val requireContext = resolveRequiredContext(parent.requireContext, config)
-    val projectContext = try {
-      withContext(Dispatchers.IO) {
-        ContextLoader.loadProject(directory = contextDir, required = requireContext)
-      }
-    } catch (e: ContextValidationException) {
-      throw CliktError(redactModelDiagnostic(e.message ?: "Project context validation failed"), statusCode = EXIT_SETUP)
-    }
-    projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
+    val projectContext = loadProjectContext(contextDir, requireContext) { throw CliktError(redactModelDiagnostic(it), statusCode = EXIT_SETUP) }
+    projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
     var backend: ModelRequestBackend? = null
-    var dryRunNavigator: DryRunNavigator? = null
     var primary: Throwable? = null
     try {
       val planner = DryRunPlanner(
         context = projectContext.text,
+        // DryRunPlanner memoizes the navigator, so the backend is acquired at most once.
         navigatorFactory = {
-          dryRunNavigator ?: createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform) { backend = it }
-            .also { dryRunNavigator = it }
+          createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform) { backend = it }
         },
       )
       val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
@@ -393,31 +386,49 @@ class RunCommand(
     acquired: (ModelRequestBackend) -> Unit,
   ): DryRunNavigator {
     val preflight = preflightChecker(
-      CliPreflightRequest(
-        cliProvider = parent.provider,
-        cliOpenaiAuth = parent.openaiAuth,
-        cliNavigatorModel = parent.navigatorModel,
-        cliInspectorModel = parent.inspectorModel,
-        cliNavigatorEffort = parent.navigatorEffort,
-        cliInspectorEffort = parent.inspectorEffort,
-        apiKey = parent.apiKey,
-        journeyPath = path.path,
-        contextPath = null,
-        platform = platform,
-        deviceId = resolved.deviceId,
-      ),
+      parent.preflightRequest(path, platform, resolved.deviceId),
       config,
       false,
       false,
     )
     if (!preflight.report.passed) throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
     val backend = backendFor(preflight).also(acquired)
-    val navigatorAgent = NavigatorAgent(
-      bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
-      executeRequest = { systemPrompt, userMessage -> backend.execute(ModelRequest("navigator", systemPrompt, userMessage, emptyList(), checkNotNull(preflight.navigatorModel), navigatorSettings(preflight))) },
-    )
+    val navigatorAgent = navigatorAgent(parent, backend, preflight)
     return DryRunNavigator { actions, appId, targetPlatform, context -> navigatorAgent.generate(actions, appId, targetPlatform, context) }
   }
+
+  private fun Verity.preflightRequest(path: File, platform: Platform, deviceId: String?) = CliPreflightRequest(
+    cliProvider = provider,
+    cliOpenaiAuth = openaiAuth,
+    cliNavigatorModel = navigatorModel,
+    cliInspectorModel = inspectorModel,
+    cliNavigatorEffort = navigatorEffort,
+    cliInspectorEffort = inspectorEffort,
+    apiKey = apiKey,
+    journeyPath = path.path,
+    contextPath = null,
+    platform = platform,
+    deviceId = deviceId,
+  )
+
+  private suspend fun loadProjectContext(
+    contextDir: File?,
+    required: Boolean,
+    onInvalid: (String) -> Nothing,
+  ): ContextBundle = try {
+    withContext(Dispatchers.IO) {
+      ContextLoader.loadProject(directory = contextDir, required = required)
+    }
+  } catch (e: ContextValidationException) {
+    onInvalid(e.message ?: "Project context validation failed")
+  }
+
+  private fun navigatorAgent(parent: Verity, backend: ModelRequestBackend, preflight: CliPreflightResult) = NavigatorAgent(
+    bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
+    executeRequest = { systemPrompt, userMessage ->
+      backend.execute(ModelRequest("navigator", systemPrompt, userMessage, emptyList(), checkNotNull(preflight.navigatorModel), navigatorSettings(preflight)))
+    },
+  )
 
   private fun backendFor(preflight: CliPreflightResult): ModelRequestBackend {
     preflight.backend?.let { return it }
@@ -469,66 +480,17 @@ class RunCommand(
     message: String,
     metadata: RunArtifactMetadata? = null,
   ) {
-    writeSummary(
-      runArtifacts,
-      SuiteArtifactSummary(
-        formatVersion = 1,
-        timestamp = Instant.now(clock).toString(),
-        inputPath = inputPath,
-        status = ArtifactStatus.FAILED,
-        total = 0,
-        passed = 0,
-        failed = 0,
-        error = ArtifactError(ArtifactErrorKind.PARSER_FAILURE, message),
-        provider = metadata?.provider,
-        navigatorModel = metadata?.navigatorModel,
-        inspectorModel = metadata?.inspectorModel,
-        navigatorEffort = metadata?.navigatorEffort,
-        inspectorEffort = metadata?.inspectorEffort,
-        openaiAuth = metadata?.openaiAuth,
-        modelBackend = metadata?.modelBackend,
-      ),
-    )
+    writeSummary(runArtifacts, summary(inputPath, ArtifactError(ArtifactErrorKind.PARSER_FAILURE, message), metadata))
   }
 
   private suspend fun writeSetupFailureSummary(
     runArtifacts: RunArtifactDirectory,
     inputPath: String,
     message: String,
-    suiteResult: SuiteRunResult? = null,
     metadata: RunArtifactMetadata? = null,
   ) {
-    val summaryMetadata = suiteResult?.metadata ?: metadata
     try {
-      writeSummary(
-        runArtifacts,
-        SuiteArtifactSummary(
-          formatVersion = 1,
-          timestamp = Instant.now(clock).toString(),
-          inputPath = inputPath,
-          status = ArtifactStatus.FAILED,
-          total = suiteResult?.results?.size ?: 0,
-          passed = suiteResult?.passedCount ?: 0,
-          failed = suiteResult?.failedCount ?: 0,
-          journeys = suiteResult?.results?.mapIndexed { index, item ->
-            val recorder = runArtifacts.journey(index + 1, item.resolvedJourney.journey.name)
-            SuiteJourneyArtifact(
-              path = recorder.resultPath,
-              name = item.resolvedJourney.journey.name,
-              status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
-            )
-          } ?: emptyList(),
-          error = ArtifactError(ArtifactErrorKind.SETUP_FAILURE, message),
-          platform = suiteResult?.results?.firstOrNull()?.resolvedJourney?.journey?.platform,
-          provider = summaryMetadata?.provider,
-          navigatorModel = summaryMetadata?.navigatorModel,
-          inspectorModel = summaryMetadata?.inspectorModel,
-          navigatorEffort = summaryMetadata?.navigatorEffort,
-          inspectorEffort = summaryMetadata?.inspectorEffort,
-          openaiAuth = summaryMetadata?.openaiAuth,
-          modelBackend = summaryMetadata?.modelBackend,
-        ),
-      )
+      writeSummary(runArtifacts, summary(inputPath, ArtifactError(ArtifactErrorKind.SETUP_FAILURE, message), metadata))
     } catch (e: CancellationException) {
       throw e
     } catch (_: Exception) {
@@ -547,52 +509,16 @@ class RunCommand(
     completedResults: List<ResolvedJourneyResult> = emptyList(),
     kind: ArtifactErrorKind = ArtifactErrorKind.JOURNEY_FAILURE,
   ) {
+    fun indexOf(journey: ResolvedJourney) = journeys.indexOf(journey).takeIf { it >= 0 }?.plus(1) ?: 1
     val completedRefs = completedResults.map { item ->
-      val index = journeys.indexOf(item.resolvedJourney).takeIf { it >= 0 }?.plus(1) ?: 1
-      val recorder = runArtifacts.journey(index, item.resolvedJourney.journey.name)
-      writeJourneyResult(runArtifacts, recorder.resultPath, item.toArtifactResult())
-      SuiteJourneyArtifact(
-        path = recorder.resultPath,
-        name = item.resolvedJourney.journey.name,
-        status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
-      )
+      writeJourneyArtifact(runArtifacts, indexOf(item.resolvedJourney), item.resolvedJourney, item.toArtifactResult())
     }
     val failedRef = failedJourney?.let { item ->
-      val index = journeys.indexOf(item).takeIf { it >= 0 }?.plus(1) ?: 1
-      val recorder = runArtifacts.journey(index, item.journey.name)
-      writeJourneyResult(
-        runArtifacts,
-        recorder.resultPath,
-        item.toFailureArtifactResult(message, failedAt, kind),
-      )
-      SuiteJourneyArtifact(
-        path = recorder.resultPath,
-        name = item.journey.name,
-        status = ArtifactStatus.FAILED,
-      )
+      writeJourneyArtifact(runArtifacts, indexOf(item), item, item.toFailureArtifactResult(message, failedAt, kind))
     }
-    val journeyRefs = completedRefs + listOfNotNull(failedRef)
     writeSummary(
       runArtifacts,
-      SuiteArtifactSummary(
-        formatVersion = 1,
-        timestamp = Instant.now(clock).toString(),
-        inputPath = inputPath,
-        status = ArtifactStatus.FAILED,
-        total = journeyRefs.size,
-        passed = journeyRefs.count { it.status == ArtifactStatus.PASSED },
-        failed = journeyRefs.count { it.status == ArtifactStatus.FAILED },
-        journeys = journeyRefs,
-        error = ArtifactError(kind, message),
-        platform = journeys.firstOrNull()?.journey?.platform,
-        provider = metadata?.provider,
-        navigatorModel = metadata?.navigatorModel,
-        inspectorModel = metadata?.inspectorModel,
-        navigatorEffort = metadata?.navigatorEffort,
-        inspectorEffort = metadata?.inspectorEffort,
-        openaiAuth = metadata?.openaiAuth,
-        modelBackend = metadata?.modelBackend,
-      ),
+      summary(inputPath, ArtifactError(kind, message), metadata, completedRefs + listOfNotNull(failedRef), journeys.firstOrNull()?.journey?.platform),
     )
   }
 
@@ -602,43 +528,57 @@ class RunCommand(
     runArtifacts: RunArtifactDirectory,
     metadata: RunArtifactMetadata?,
   ) {
-    val summaryMetadata = suiteResult.metadata ?: metadata
     val journeyRefs = suiteResult.results.mapIndexed { index, item ->
-      val recorder = runArtifacts.journey(index + 1, item.resolvedJourney.journey.name)
-      writeJourneyResult(runArtifacts, recorder.resultPath, item.toArtifactResult())
-      SuiteJourneyArtifact(
-        path = recorder.resultPath,
-        name = item.resolvedJourney.journey.name,
-        status = if (item.result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
-      )
+      writeJourneyArtifact(runArtifacts, index + 1, item.resolvedJourney, item.toArtifactResult())
     }
+    val error = if (suiteResult.passed) null else ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Journey suite failed")
     writeSummary(
       runArtifacts,
-      SuiteArtifactSummary(
-        formatVersion = 1,
-        timestamp = Instant.now(clock).toString(),
-        inputPath = path.path,
-        status = if (suiteResult.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
-        total = suiteResult.results.size,
-        passed = suiteResult.passedCount,
-        failed = suiteResult.failedCount,
-        journeys = journeyRefs,
-        error = if (suiteResult.passed) {
-          null
-        } else {
-          ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, "Journey suite failed")
-        },
-        platform = suiteResult.results.firstOrNull()?.resolvedJourney?.journey?.platform,
-        provider = summaryMetadata?.provider,
-        navigatorModel = summaryMetadata?.navigatorModel,
-        inspectorModel = summaryMetadata?.inspectorModel,
-        navigatorEffort = summaryMetadata?.navigatorEffort,
-        inspectorEffort = summaryMetadata?.inspectorEffort,
-        openaiAuth = summaryMetadata?.openaiAuth,
-        modelBackend = summaryMetadata?.modelBackend,
-      ),
+      summary(path.path, error, suiteResult.metadata ?: metadata, journeyRefs, suiteResult.results.firstOrNull()?.resolvedJourney?.journey?.platform),
     )
   }
+
+  private suspend fun writeJourneyArtifact(
+    runArtifacts: RunArtifactDirectory,
+    index: Int,
+    resolved: ResolvedJourney,
+    result: JourneyArtifactResult,
+  ): SuiteJourneyArtifact {
+    val recorder = runArtifacts.journey(index, resolved.journey.name)
+    writeJourneyResult(runArtifacts, recorder.resultPath, result)
+    return SuiteJourneyArtifact(
+      path = recorder.resultPath,
+      name = resolved.journey.name,
+      status = if (result.passed) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
+    )
+  }
+
+  /** A suite summary that passed iff [error] is null, with counts derived from [journeys]. */
+  private fun summary(
+    inputPath: String,
+    error: ArtifactError?,
+    metadata: RunArtifactMetadata?,
+    journeys: List<SuiteJourneyArtifact> = emptyList(),
+    platform: Platform? = null,
+  ) = SuiteArtifactSummary(
+    formatVersion = 1,
+    timestamp = Instant.now(clock).toString(),
+    inputPath = inputPath,
+    status = if (error == null) ArtifactStatus.PASSED else ArtifactStatus.FAILED,
+    total = journeys.size,
+    passed = journeys.count { it.status == ArtifactStatus.PASSED },
+    failed = journeys.count { it.status == ArtifactStatus.FAILED },
+    journeys = journeys,
+    error = error,
+    platform = platform,
+    provider = metadata?.provider,
+    navigatorModel = metadata?.navigatorModel,
+    inspectorModel = metadata?.inspectorModel,
+    navigatorEffort = metadata?.navigatorEffort,
+    inspectorEffort = metadata?.inspectorEffort,
+    openaiAuth = metadata?.openaiAuth,
+    modelBackend = metadata?.modelBackend,
+  )
 
   private fun ResolvedJourneyResult.toArtifactResult(): JourneyArtifactResult = JourneyArtifactResult(
     journey = JourneyArtifactIdentity(
@@ -728,28 +668,10 @@ class RunCommand(
     val platform = journeys.first().journey.platform
     val contextDir = resolved.contextPath
     val requireContext = resolveRequiredContext(parent.requireContext, config)
-    val projectContext = try {
-      withContext(Dispatchers.IO) {
-        ContextLoader.loadProject(directory = contextDir, required = requireContext)
-      }
-    } catch (e: ContextValidationException) {
-      throw CliktError(e.message ?: "Project context validation failed")
-    }
+    val projectContext = loadProjectContext(contextDir, requireContext) { throw CliktError(it) }
 
     val preflight = preflightChecker(
-      CliPreflightRequest(
-        cliProvider = parent.provider,
-        cliOpenaiAuth = parent.openaiAuth,
-        cliNavigatorModel = parent.navigatorModel,
-        cliInspectorModel = parent.inspectorModel,
-        cliNavigatorEffort = parent.navigatorEffort,
-        cliInspectorEffort = parent.inspectorEffort,
-        apiKey = parent.apiKey,
-        journeyPath = path.path,
-        contextPath = null,
-        platform = platform,
-        deviceId = resolved.deviceId,
-      ),
+      parent.preflightRequest(path, platform, resolved.deviceId),
       config,
       true,
       true,
@@ -768,17 +690,10 @@ class RunCommand(
       echo("Provider: ${provider.name}")
       echo("Navigator model: ${navigatorModel.id}")
       echo("Inspector model: ${inspectorModel.id}")
-      projectContext.describeForCli(contextDir, requireContext).forEach { echo(it) }
+      projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
       val session = sessionFactory(platform, resolved.deviceId, resolved.disableAnimations)
-      val navigatorFactory = {
-        NavigatorAgent(
-          bundledContext = if (parent.noBundledContext) "" else ContextLoader.loadBundledActions(),
-          executeRequest = { systemPrompt, userMessage ->
-            backend.execute(ModelRequest("navigator", systemPrompt, userMessage, emptyList(), navigatorModel, navigatorSettings(preflight)))
-          },
-        )
-      }
+      val navigatorFactory = { navigatorAgent(parent, backend, preflight) }
       val inspectorFactory = {
         InspectorAgent(
           evaluateTreeContent = { systemPrompt, userMessage, references ->
@@ -863,24 +778,6 @@ internal suspend fun runResolvedJourneysWithArtifacts(
     )
   }
   return SuiteRunResult(results = results)
-}
-
-private fun ContextBundle.describeForCli(contextDir: File?, required: Boolean): List<String> {
-  val mode = if (required) "required" else "optional"
-  return when (status) {
-    ContextStatus.LOADED -> listOf("Project context: loaded ${loadedFiles.size} file(s)") +
-      loadedFiles.map { "  - ${it.displayPath()}" }
-
-    ContextStatus.NOT_CONFIGURED -> listOf("Project context: $mode, not configured")
-
-    ContextStatus.MISSING_DIRECTORY -> listOf(
-      "Project context: $mode, missing directory: ${contextDir!!.absolutePath}",
-    )
-
-    ContextStatus.EMPTY_DIRECTORY -> listOf(
-      "Project context: $mode, no markdown files found in: ${contextDir!!.absolutePath}",
-    )
-  }
 }
 
 private fun File.displayPath(): String {

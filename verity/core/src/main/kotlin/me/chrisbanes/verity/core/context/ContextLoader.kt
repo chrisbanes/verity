@@ -15,6 +15,17 @@ enum class ContextStatus {
   EMPTY_DIRECTORY,
 }
 
+/** Human-readable status lines for [this] bundle; [fileLine] renders each loaded file. */
+fun ContextBundle.describe(contextDir: File?, required: Boolean, fileLine: (File) -> String): List<String> {
+  val mode = if (required) "required" else "optional"
+  return when (status) {
+    ContextStatus.LOADED -> listOf("Project context: loaded ${loadedFiles.size} file(s)") + loadedFiles.map(fileLine)
+    ContextStatus.NOT_CONFIGURED -> listOf("Project context: $mode, not configured")
+    ContextStatus.MISSING_DIRECTORY -> listOf("Project context: $mode, missing directory: ${contextDir!!.absolutePath}")
+    ContextStatus.EMPTY_DIRECTORY -> listOf("Project context: $mode, no markdown files found in: ${contextDir!!.absolutePath}")
+  }
+}
+
 class ContextValidationException(message: String) : IllegalArgumentException(message)
 
 object ContextLoader {

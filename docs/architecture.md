@@ -241,18 +241,12 @@ interface DeviceSession : AutoCloseable {
     suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode // cooperative; default unsupported
     suspend fun captureScreenshot(output: Path)
     suspend fun captureScreenshot(output: Path, timeout: Duration)
-    suspend fun shell(command: String): String
     suspend fun waitForAnimationToEnd()
 
     // Default methods (derived from captureHierarchyTree)
     suspend fun captureHierarchy(filter: HierarchyFilter = CONTENT): String
     suspend fun containsText(text: String, ignoreCase: Boolean = true): Boolean
     suspend fun checkFocused(text: String): Boolean
-
-    // Animation control (no-op defaults, implemented by Android)
-    suspend fun getAnimationState(): AnimationState? = null
-    suspend fun disableAnimations()
-    suspend fun restoreAnimationState(state: AnimationState)
 }
 ```
 

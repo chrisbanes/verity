@@ -152,29 +152,25 @@ class AndroidDeviceSession(
     }
   }
 
-  override suspend fun shell(command: String): String = withContext(Dispatchers.IO) {
-    executeShell(command)
-  }
-
   override suspend fun waitForAnimationToEnd(): Unit = withContext(Dispatchers.IO) {
     maestro.waitForAnimationToEnd(null)
   }
 
-  override suspend fun getAnimationState(): DeviceSession.AnimationState = withContext(Dispatchers.IO) {
-    DeviceSession.AnimationState(
+  suspend fun getAnimationState(): AnimationState = withContext(Dispatchers.IO) {
+    AnimationState(
       windowScale = executeShell("settings get global window_animation_scale").trim(),
       transitionScale = executeShell("settings get global transition_animation_scale").trim(),
       animatorScale = executeShell("settings get global animator_duration_scale").trim(),
     )
   }
 
-  override suspend fun disableAnimations(): Unit = withContext(Dispatchers.IO) {
+  suspend fun disableAnimations(): Unit = withContext(Dispatchers.IO) {
     executeShell("settings put global window_animation_scale 0")
     executeShell("settings put global transition_animation_scale 0")
     executeShell("settings put global animator_duration_scale 0")
   }
 
-  override suspend fun restoreAnimationState(state: DeviceSession.AnimationState): Unit = withContext(Dispatchers.IO) {
+  suspend fun restoreAnimationState(state: AnimationState): Unit = withContext(Dispatchers.IO) {
     executeShell("settings put global window_animation_scale ${state.windowScale}")
     executeShell("settings put global transition_animation_scale ${state.transitionScale}")
     executeShell("settings put global animator_duration_scale ${state.animatorScale}")
@@ -182,5 +178,34 @@ class AndroidDeviceSession(
 
   override fun close() {
     maestro.close()
+  }
+}
+
+/** Android global animation scales, validated so they are safe to interpolate into shell commands. */
+data class AnimationState(
+  val windowScale: String,
+  val transitionScale: String,
+  val animatorScale: String,
+) {
+  init {
+    validateScale(windowScale, "window animation")
+    validateScale(transitionScale, "transition animation")
+    validateScale(animatorScale, "animator duration")
+  }
+
+  private companion object {
+    val SCALE_PATTERN = Regex("""\d+(\.\d+)?""")
+
+    /** Android animation scale bounds: 0.0 (off) to 10.0 (10x speed) */
+    private const val MIN_SCALE = 0.0
+    private const val MAX_SCALE = 10.0
+
+    fun validateScale(value: String, name: String) {
+      require(value.matches(SCALE_PATTERN)) { "Invalid $name scale: $value" }
+      val numeric = value.toDouble()
+      require(numeric in MIN_SCALE..MAX_SCALE) {
+        "$name scale $value out of bounds. Expected: $MIN_SCALE to $MAX_SCALE"
+      }
+    }
   }
 }

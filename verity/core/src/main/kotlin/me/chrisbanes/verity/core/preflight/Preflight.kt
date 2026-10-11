@@ -24,9 +24,6 @@ data class PreflightReport(
   val errors: List<PreflightIssue>
     get() = issues.filter { it.severity == PreflightSeverity.ERROR }
 
-  val warnings: List<PreflightIssue>
-    get() = issues.filter { it.severity == PreflightSeverity.WARNING }
-
   val hasErrors: Boolean
     get() = errors.isNotEmpty()
 

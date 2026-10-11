@@ -1,5 +1,3 @@
-import java.security.MessageDigest
-import java.util.HexFormat
 import java.util.zip.ZipFile
 
 plugins {
@@ -191,28 +189,16 @@ fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
   doFirst {
     val selected = variants.get().split(',')
     check(selected.isNotEmpty() && selected.distinct().size == selected.size && selected.all { it in archives }) { "Unknown or duplicate packaged variant: $selected" }
-    fun digest(file: File): String {
-      val digest = MessageDigest.getInstance("SHA-256")
-      file.inputStream().buffered().use { input ->
-        val buffer = ByteArray(8192)
-        while (true) {
-          val count = input.read(buffer)
-          if (count < 0) break
-          digest.update(buffer, 0, count)
-        }
-      }
-      return HexFormat.of().formatHex(digest.digest())
-    }
     for (variant in selected) {
       val archive = archives.getValue(variant).get()
       check(archive.isFile) { "Missing produced $variant archive" }
       systemProperty("verity.packaged.jar.$variant", archive.absolutePath)
-      systemProperty("verity.packaged.sha.$variant", digest(archive))
+      systemProperty("verity.packaged.sha.$variant", HostPackaging.hash(archive))
     }
     val probe = probeArchive.get().asFile
     systemProperty("verity.packaged.variants", selected.joinToString(","))
     systemProperty("verity.packaged.probe", probe.absolutePath)
-    systemProperty("verity.packaged.probe.sha", digest(probe))
+    systemProperty("verity.packaged.probe.sha", HostPackaging.hash(probe))
     systemProperty("verity.packaged.reports", reportDirectory.get().asFile.absolutePath)
   }
 }

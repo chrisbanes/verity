@@ -5,7 +5,10 @@ import me.chrisbanes.verity.core.model.Platform
 interface InteractionMapper {
   fun map(instruction: String): Interaction?
 
-  fun allMappable(instructions: List<String>): Boolean = instructions.all { map(it) != null }
+  /** One interaction per instruction, or null when any instruction needs the slow path. */
+  fun mapAll(instructions: List<String>): List<Interaction>? = instructions.map { map(it) ?: return null }
+
+  fun allMappable(instructions: List<String>): Boolean = mapAll(instructions) != null
 
   companion object {
     fun forPlatform(platform: Platform): InteractionMapper = when (platform) {
