@@ -428,7 +428,7 @@ Thread-safe registry of persistent device connections:
 
 ```
 sessions: Map<UUID, SessionEntry>
-SessionEntry = { deviceId, DeviceSession, Mutex, lastUsedAt }
+SessionEntry = { DeviceSession, Mutex }
 ```
 
 Per-session mutex for safe concurrent tool calls. Animation state is managed by the `AnimationRestoringSession` decorator in `DeviceSessionFactory`, not by the session manager.
