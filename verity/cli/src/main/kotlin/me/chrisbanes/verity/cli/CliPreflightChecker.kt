@@ -60,7 +60,7 @@ class CliPreflightChecker internal constructor(
   private val environment: (String) -> String? = System::getenv,
   private val pathPreflightChecker: PathPreflightChecker = PathPreflightChecker(),
   private val devicePreflightChecker: DevicePreflightChecker = PlatformDevicePreflightChecker(),
-  private val codexFactory: suspend (ModelTraceSink?) -> CodexModelBackend = { CodexModelBackend.prepare() },
+  private val codexFactory: suspend (ModelTraceSink?) -> CodexModelBackend = { CodexModelBackend.prepare(trace = it) },
   private val openTrace: (Path) -> ModelTrace = { ModelTrace.open(it) },
   private val backendIdentity: (VerityProvider, LLModel) -> String? = ::currentReasoningBackendId,
 ) {

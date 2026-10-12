@@ -32,10 +32,11 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-/** One exact owned process and bounded NDJSON reader. Stderr is drained and discarded. */
+/** One exact owned process and bounded NDJSON reader. Stderr is discarded unless [trace] records it. */
 internal class CodexAppServerClient internal constructor(
   val process: Process,
   private val scope: CoroutineScope,
+  private val trace: ModelTraceSink? = null,
 ) {
   private val frames = Channel<JsonObject>(64)
   private val failed = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -61,6 +62,7 @@ internal class CodexAppServerClient internal constructor(
     try {
       while (true) {
         val line = readFrame(process.inputStream) ?: break
+        trace?.write("codex.received", line)
         val envelope = Json.parseToJsonElement(line) as? JsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
         if (envelope.containsKey("method") && envelope.containsKey("id")) {
           // Refuse every request the owned reader observes, including requests preceding
@@ -107,8 +109,12 @@ internal class CodexAppServerClient internal constructor(
   }
   private val stderrReader = scope.launch(Dispatchers.IO) {
     try {
-      val buffer = ByteArray(4096)
-      while (process.errorStream.read(buffer) != -1) { /* Never retain stderr. */ }
+      if (trace != null) {
+        traceLines(process.errorStream, trace)
+      } else {
+        val buffer = ByteArray(4096)
+        while (process.errorStream.read(buffer) != -1) { /* Never retain stderr. */ }
+      }
     } catch (e: CancellationException) {
       throw e
     } catch (_: Exception) { /* Owned stream was closed. */ }
@@ -179,9 +185,11 @@ internal class CodexAppServerClient internal constructor(
   )
 
   suspend fun send(frame: JsonObject) = writeMutex.withLock {
-    val bytes = (frame.toString() + "\n").toByteArray(StandardCharsets.UTF_8)
+    val text = frame.toString()
+    val bytes = (text + "\n").toByteArray(StandardCharsets.UTF_8)
     if (bytes.size > MAX_FRAME_BYTES) throw CodexFailure(CodexFailureKind.PROTOCOL)
     withContext(Dispatchers.IO) {
+      trace?.write("codex.sent", text)
       process.outputStream.write(bytes)
       process.outputStream.flush()
     }
@@ -225,6 +233,33 @@ internal class CodexAppServerClient internal constructor(
       }
     }
 
+    /** Records each stderr line, retaining at most one bounded line in memory. */
+    private fun traceLines(input: InputStream, trace: ModelTraceSink) {
+      // Leave room for the timestamp, source and marker inside the trace's own line cap.
+      val limit = ModelTrace.MAX_LINE_BYTES - 128
+      val line = ByteArrayOutputStream()
+      var dropped = 0L
+      fun emit() {
+        trace.write("codex.stderr", line.toString(StandardCharsets.UTF_8) + if (dropped > 0) "…[truncated $dropped bytes]" else "")
+        line.reset()
+        dropped = 0
+      }
+      val buffer = ByteArray(4096)
+      while (true) {
+        val count = input.read(buffer)
+        if (count == -1) break
+        for (index in 0 until count) {
+          val value = buffer[index]
+          when {
+            value == '\n'.code.toByte() -> emit()
+            line.size() < limit -> line.write(value.toInt())
+            else -> dropped++
+          }
+        }
+      }
+      if (line.size() > 0 || dropped > 0) emit()
+    }
+
     internal fun readFrame(input: InputStream): String? {
       val bytes = ByteArrayOutputStream()
       while (true) {
@@ -243,7 +278,7 @@ internal class CodexAppServerClient internal constructor(
 }
 
 /** Owns only newly launched exact handles and newly created directories. */
-internal class CodexOwnedResources {
+internal class CodexOwnedResources(private val trace: ModelTraceSink? = null) {
   private val job = SupervisorJob()
   val scope = CoroutineScope(job + Dispatchers.IO)
   private val processes = mutableListOf<Process>()
@@ -257,7 +292,7 @@ internal class CodexOwnedResources {
     factory(command, directory, environment).also { processes.add(it) }
   }
 
-  fun client(process: Process): CodexAppServerClient = CodexAppServerClient(process, scope).also { clients.add(it) }
+  fun client(process: Process): CodexAppServerClient = CodexAppServerClient(process, scope, trace).also { clients.add(it) }
 
   private val closeMutex = Mutex()
   private var deadline: CodexCleanupDeadline? = null

@@ -122,6 +122,7 @@ internal object FakeCodexAppServer {
       override(session, key.trim().split('.'), tomlValue(raw))
     }
     val final = "mcp_servers" in session
+    System.err.println("fake-app-server stderr ready")
     val inherited = listOf("punctuation.a\"b\\c", "space and [brackets]") + if (scenario == "drift" && final) listOf("new-name") else emptyList()
     // User layer: inherited entries, with the transport real MCP servers need.
     val user = JsonObject(
@@ -942,12 +943,13 @@ internal class FakeCodexLauncher(val scenario: String = "success", private val f
     override fun toHandle() = child.toHandle()
   }
 
-  suspend fun prepare(startupMillis: Long = 30_000): CodexModelBackend = CodexModelBackend.prepare(
+  suspend fun prepare(startupMillis: Long = 30_000, trace: ModelTraceSink? = null): CodexModelBackend = CodexModelBackend.prepare(
     executable = { Path.of("injected-jvm-fake") },
     launch = ::launch,
     host = "Mac OS X",
     environment = REMOVED_ENVIRONMENT.associateWith { "fake-unsafe-value" } + mapOf("CODEX_HOME" to "/unused-codex-owned-home", "CODEX_SQLITE_HOME" to "/unused-codex-owned-database"),
     startupMillis = startupMillis,
+    trace = trace,
   )
 
   suspend fun capturedFrames(): List<JsonObject> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {

@@ -558,8 +558,9 @@ internal class CodexModelBackend private constructor(
       host: String = System.getProperty("os.name"),
       environment: Map<String, String> = System.getenv(),
       startupMillis: Long = 30_000,
+      trace: ModelTraceSink? = null,
     ): CodexModelBackend {
-      val resources = CodexOwnedResources()
+      val resources = CodexOwnedResources(trace)
       try {
         return withTimeout(startupMillis) {
           if (host != "Mac OS X") throw CodexFailure(CodexFailureKind.HOST)
