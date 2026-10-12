@@ -462,7 +462,6 @@ internal class CodexModelBackend private constructor(
       unsubscribeAttempted = true
       val response = client.request("thread/unsubscribe", buildJsonObject { put("threadId", ownedThreadId) }, ::cleanupEvent)
       if (response["status"] != JsonPrimitive("unsubscribed")) throw CodexFailure(CodexFailureKind.CLEANUP)
-      client.releaseThread(ownedThreadId)
       client.requireHealthy()
       client.clearDiscardedCorrelation()
     }

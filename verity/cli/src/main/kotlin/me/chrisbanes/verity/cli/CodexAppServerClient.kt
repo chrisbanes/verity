@@ -50,10 +50,8 @@ internal class CodexAppServerClient internal constructor(
   }
   private val releasedThreads = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-  /** The shared app-server unloads [threadId] some time after unsubscribe; the reader drops those frames even while idle. */
-  fun releaseThread(threadId: String) {
-    releasedThreads.add(threadId)
-  }
+  /** In-flight `thread/unsubscribe` request ids and their threads. */
+  private val pendingUnsubscribes = java.util.concurrent.ConcurrentHashMap<JsonPrimitive, String>()
   fun ownsTurn(threadId: String, turnId: String): Boolean = discardedOwnership == (threadId to turnId)
   private val writeMutex = Mutex()
   private var nextId = 0L
@@ -79,6 +77,11 @@ internal class CodexAppServerClient internal constructor(
             },
           )
           throw CodexFailure(CodexFailureKind.PROTOCOL)
+        }
+        // The shared app-server unloads a thread some time after unsubscribe. Release it before the response
+        // is queued, so unloads that follow are dropped even before (or without) the consumer reading it.
+        (envelope["id"] as? JsonPrimitive)?.let(pendingUnsubscribes::remove)?.let { thread ->
+          if (!envelope.containsKey("error") && (envelope["result"] as? JsonObject)?.get("status") == JsonPrimitive("unsubscribed")) releasedThreads.add(thread)
         }
         if (unloadedThread(envelope)?.let(releasedThreads::contains) == true) continue
         val method = envelope["method"]?.jsonPrimitive?.contentOrNull
@@ -117,6 +120,7 @@ internal class CodexAppServerClient internal constructor(
   suspend fun beginRequest(method: String, params: JsonObject = JsonObject(emptyMap())): Long {
     if (method != "turn/interrupt" && method != "thread/unsubscribe") requireHealthy()
     val id = ++nextId
+    if (method == "thread/unsubscribe") (params["threadId"] as? JsonPrimitive)?.takeIf { it.isString }?.let { pendingUnsubscribes[JsonPrimitive(id)] = it.content }
     send(
       buildJsonObject {
         put("id", id)
