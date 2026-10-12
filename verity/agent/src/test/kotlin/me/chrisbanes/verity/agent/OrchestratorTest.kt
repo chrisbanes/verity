@@ -717,6 +717,23 @@ class OrchestratorTest {
     assertThat(prompts.map { it.substringAfter("Current screen:\n") }).containsExactly(home, home)
   }
 
+  @Test
+  fun `scroll-to-find that never gets a direction still honours the attempt cap then taps`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"))))
+    var navigatorCalls = 0
+    val orchestrator = scrollOrchestrator(session) {
+      navigatorCalls++
+      modelReply("NONE")
+    }
+
+    val result = orchestrator.run(tapSettingsJourney())
+
+    assertThat(result.passed).isTrue()
+    assertThat(navigatorCalls).isEqualTo(5)
+    assertThat(session.hierarchyCaptures).isEqualTo(1) // nothing scrolled, so nothing to recapture
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn: \"Settings\""))
+  }
+
   private fun tapSettingsJourney() = Journey(
     name = "scroll-to-find",
     app = APP_ID,
