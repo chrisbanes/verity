@@ -481,7 +481,7 @@ class VerityMcpServer(
           putJsonObject("long_press") {
             put("type", "boolean")
             put("default", false)
-            put("description", "Hold the key using Android input keyevent --longpress; unsupported on iOS")
+            put("description", "Hold the key using Android input keyevent --longpress; rejected when the session does not support long presses")
           }
           focusWaitSchema()
         },
@@ -510,8 +510,11 @@ class VerityMcpServer(
       val longPress = args.strictBool("long_press") ?: false
       val sessionId = UUID.fromString(args.requireString("session_id"))
       sessionManager.withSession(sessionId) { session ->
-        if (session.platform == Platform.IOS && (keycode != null || longPress)) {
-          throw UnsupportedOperationException("Raw Android keycodes and long key presses are not supported on iOS")
+        if (keycode != null && !session.supportsRawKeycodes) {
+          throw UnsupportedOperationException("Raw Android keycodes are not supported on ${session.platform.wireName}")
+        }
+        if (longPress && !session.supportsLongPress) {
+          throw UnsupportedOperationException("Long key presses are not supported on ${session.platform.wireName}")
         }
         val output = "Pressed ${if (keycode != null) "keycode: $keycode" else "key: $key"}${if (longPress) " (long press)" else ""}"
         suspend fun press() {
