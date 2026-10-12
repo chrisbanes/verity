@@ -5,14 +5,23 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.preflight.PreflightCodes
+import me.chrisbanes.verity.core.preflight.PreflightIssue
 import me.chrisbanes.verity.core.preflight.PreflightReport
+import me.chrisbanes.verity.core.preflight.PreflightSeverity
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 
 class CodexPreflightTest {
@@ -51,7 +60,7 @@ class CodexPreflightTest {
     }
   }
 
-  @Test fun `signed out modality model and exact effort errors precede device and clean up`() = runTest {
+  @Test fun `signed out modality model and exact effort errors discard device result and clean up`() = runTest {
     withContext(Dispatchers.Default) {
       for ((scenario, effort, model, code) in listOf(
         listOf("model-signed-out", null, null, "codex.auth"),
@@ -67,19 +76,14 @@ class CodexPreflightTest {
       )) {
         val fake = FakeCodexLauncher(scenario!!)
         val path = Files.createTempFile("verity-preflight-", ".yaml")
-        var devices = 0
         try {
           val result = CliPreflightChecker(
             environment = { error("API key read") },
             codexFactory = { fake.prepare() },
-            devicePreflightChecker = DevicePreflightChecker { _, _ ->
-              devices++
-              PreflightReport()
-            },
+            devicePreflightChecker = DevicePreflightChecker { _, _ -> deviceFailed },
           )
             .check(request(path.toString(), effort).copy(cliNavigatorModel = model), VerityConfig())
           assertThat(result.report.errors.map { it.code }).isEqualTo(listOf(code))
-          assertThat(devices).isEqualTo(0)
           assertThat(result.backend).isEqualTo(null)
           assertThat(result.report.renderPlainText().contains("sk-secret")).isEqualTo(false)
         } finally {
@@ -126,10 +130,11 @@ class CodexPreflightTest {
             environment = { error("API key read") },
             codexFactory = { fake.prepare() },
             devicePreflightChecker = DevicePreflightChecker { _, _ ->
-              if (!deviceFailure) PreflightReport() else PreflightReport(listOf(me.chrisbanes.verity.core.preflight.PreflightIssue("device.failed", me.chrisbanes.verity.core.preflight.PreflightSeverity.ERROR, "Device unavailable.", "Connect device.")))
+              if (!deviceFailure) PreflightReport() else deviceFailed
             },
           ).check(request(path.toString(), null), VerityConfig())
           assertThat(result.report.passed).isEqualTo(!deviceFailure)
+          assertThat(result.report.errors.map { it.code }).isEqualTo(if (deviceFailure) listOf("device.failed") else emptyList())
           assertThat(fake.capturedFrames().count { it["method"] == JsonPrimitive("model/list") }).isEqualTo(2)
           if (deviceFailure) assertThat(result.backend).isEqualTo(null)
         } finally {
@@ -179,5 +184,119 @@ class CodexPreflightTest {
     }
   }
 
-  private fun request(path: String, effort: String?) = CliPreflightRequest(cliProvider = "openai", cliOpenaiAuth = "chatgpt", cliNavigatorModel = null, cliInspectorModel = null, cliNavigatorEffort = effort, apiKey = "ignored", journeyPath = path, contextPath = null, platform = Platform.ANDROID_TV, deviceId = null)
+  @Test fun `device check overlaps Codex startup and is cancelled when Codex fails`() = runTest(timeout = 10.seconds) {
+    val device = SuspendedDevice()
+    val result = checkWith(device.checker) {
+      device.started.await()
+      throw CodexFailure(CodexFailureKind.AUTH)
+    }
+    assertThat(result.report.errors.map { it.code }).isEqualTo(listOf("codex.auth"))
+    assertThat(device.cancelled).isTrue()
+    assertThat(device.finished).isTrue()
+    assertThat(result.backend).isEqualTo(null)
+  }
+
+  @Test fun `Codex startup timeout cancels the device check`() = runTest(timeout = 10.seconds) {
+    val device = SuspendedDevice()
+    val result = checkWith(device.checker) { awaitCancellation() }
+    assertThat(result.report.errors.map { it.code }).isEqualTo(listOf("codex.startup_timeout"))
+    assertThat(device.started.isCompleted).isTrue()
+    assertThat(device.cancelled).isTrue()
+    assertThat(device.finished).isTrue()
+    assertThat(testScheduler.currentTime).isEqualTo(30_000L)
+  }
+
+  @Test fun `caller cancellation leaves no device work running`() = runTest(timeout = 10.seconds) {
+    val device = SuspendedDevice()
+    val codexEntered = CompletableDeferred<Unit>()
+    val job = launch {
+      checkWith(device.checker) {
+        codexEntered.complete(Unit)
+        awaitCancellation()
+      }
+    }
+    device.started.await()
+    codexEntered.await()
+    job.cancelAndJoin()
+    assertThat(job.isCancelled).isTrue()
+    assertThat(device.cancelled).isTrue()
+    assertThat(device.finished).isTrue()
+  }
+
+  @Test fun `Codex failure discards a completed failing device result`() = runTest(timeout = 10.seconds) {
+    val deviceDone = CompletableDeferred<Unit>()
+    val result = checkWith(DevicePreflightChecker { _, _ -> deviceFailed.also { deviceDone.complete(Unit) } }) {
+      deviceDone.await()
+      throw CodexFailure(CodexFailureKind.MODEL)
+    }
+    assertThat(result.report.errors.map { it.code }).isEqualTo(listOf("codex.model"))
+  }
+
+  @Test fun `device exception is contained when Codex fails`() = runTest(timeout = 10.seconds) {
+    val deviceDone = CompletableDeferred<Unit>()
+    val result = checkWith(
+      DevicePreflightChecker { _, _ ->
+        try {
+          throw IllegalStateException("device boom")
+        } finally {
+          deviceDone.complete(Unit)
+        }
+      },
+    ) {
+      deviceDone.await()
+      throw CodexFailure(CodexFailureKind.AUTH)
+    }
+    assertThat(result.report.errors.map { it.code }).isEqualTo(listOf("codex.auth"))
+  }
+
+  @Test fun `path failure starts neither device nor Codex`() = runTest(timeout = 10.seconds) {
+    var devices = 0
+    var acquisitions = 0
+    val result = CliPreflightChecker(
+      environment = { error("API key read") },
+      codexFactory = {
+        acquisitions++
+        error("Codex must not launch")
+      },
+      devicePreflightChecker = DevicePreflightChecker { _, _ ->
+        devices++
+        PreflightReport()
+      },
+    ).check(request(null, null), VerityConfig())
+    assertThat(result.report.errors.map { it.code }).isEqualTo(listOf(PreflightCodes.PATH_MISSING))
+    assertThat(devices).isEqualTo(0)
+    assertThat(acquisitions).isEqualTo(0)
+  }
+
+  /** Device check that suspends until cancelled, recording its lifecycle. */
+  private class SuspendedDevice {
+    val started = CompletableDeferred<Unit>()
+    var cancelled = false
+    var finished = false
+    val checker = DevicePreflightChecker { _, _ ->
+      started.complete(Unit)
+      try {
+        awaitCancellation()
+      } catch (e: CancellationException) {
+        cancelled = true
+        throw e
+      } finally {
+        finished = true
+      }
+    }
+  }
+
+  private suspend fun checkWith(device: DevicePreflightChecker, codex: suspend () -> CodexModelBackend): CliPreflightResult {
+    val path = Files.createTempFile("verity-preflight-", ".yaml")
+    try {
+      return CliPreflightChecker(environment = { error("API key read") }, codexFactory = codex, devicePreflightChecker = device)
+        .check(request(path.toString(), null), VerityConfig())
+    } finally {
+      withContext(NonCancellable) { Files.deleteIfExists(path) }
+    }
+  }
+
+  private val deviceFailed = PreflightReport(listOf(PreflightIssue("device.failed", PreflightSeverity.ERROR, "Device unavailable.", "Connect device.")))
+
+  private fun request(path: String?, effort: String?) = CliPreflightRequest(cliProvider = "openai", cliOpenaiAuth = "chatgpt", cliNavigatorModel = null, cliInspectorModel = null, cliNavigatorEffort = effort, apiKey = "ignored", journeyPath = path, contextPath = null, platform = Platform.ANDROID_TV, deviceId = null)
 }

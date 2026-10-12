@@ -7,8 +7,10 @@ import java.nio.file.Path
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.core.model.Platform
@@ -177,29 +179,35 @@ class CliPreflightChecker internal constructor(
     var transferred = false
     var primary: Throwable? = null
     try {
-      if (report.passed) {
-        try {
-          withTimeout(30_000) {
-            val prepared = codexFactory().also { backend = it }
-            prepared.validateRoles(
-              buildList {
-                add(navigator to navigatorEffort)
-                inspector?.let { add(it to inspectorEffort) }
-              },
-            )
+      supervisorScope {
+        // The read-only device check overlaps Codex startup; its result counts only if Codex passes.
+        val device = if (report.passed && includeDevice) async { devicePreflightChecker.check(request.platform, request.deviceId) } else null
+        if (report.passed) {
+          try {
+            withTimeout(30_000) {
+              val prepared = codexFactory().also { backend = it }
+              prepared.validateRoles(
+                buildList {
+                  add(navigator to navigatorEffort)
+                  inspector?.let { add(it to inspectorEffort) }
+                },
+              )
+            }
+          } catch (error: TimeoutCancellationException) {
+            if (!currentCoroutineContext().isActive) throw error
+            report += codexFailureReport(CodexFailureKind.STARTUP_TIMEOUT)
+          } catch (error: CancellationException) {
+            throw error
+          } catch (error: CodexFailure) {
+            report += codexFailureReport(error.kind)
+          } catch (_: Exception) {
+            report += codexFailureReport(CodexFailureKind.PROTOCOL)
           }
-        } catch (error: TimeoutCancellationException) {
-          if (!currentCoroutineContext().isActive) throw error
-          report += codexFailureReport(CodexFailureKind.STARTUP_TIMEOUT)
-        } catch (error: CancellationException) {
-          throw error
-        } catch (error: CodexFailure) {
-          report += codexFailureReport(error.kind)
-        } catch (_: Exception) {
-          report += codexFailureReport(CodexFailureKind.PROTOCOL)
+        }
+        if (device != null) {
+          if (report.passed) report += device.await() else device.cancel()
         }
       }
-      if (report.passed && includeDevice) report += devicePreflightChecker.check(request.platform, request.deviceId)
       if (!report.passed && backend != null) {
         try {
           closeModelBackend(backend)
