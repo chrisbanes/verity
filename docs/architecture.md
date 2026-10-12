@@ -231,6 +231,8 @@ Loop preview renders all mapped body interactions or one complete generated body
 ```kotlin
 interface DeviceSession : AutoCloseable {
     val platform: Platform
+    val supportsRawKeycodes: Boolean                           // default false; Android true
+    val supportsLongPress: Boolean                             // default false; Android true
 
     suspend fun executeActions(flow: ActionFlow): FlowResult
     suspend fun executeFlow(yaml: String): FlowResult
@@ -250,7 +252,7 @@ interface DeviceSession : AutoCloseable {
 }
 ```
 
-Named short presses retain the legacy Maestro route. Android implements the new overloads with validated integer `input keyevent` commands, adding `--longpress` for holds; named holds use the current closed Maestro-to-Android key mapping. Raw codes must be non-negative JVM integers. iOS retains named short presses and explicitly rejects raw codes and holds. Animation-restoring session wrappers forward the overloads through the existing delegation.
+Named short presses retain the legacy Maestro route. Android implements the new overloads with validated integer `input keyevent` commands, adding `--longpress` for holds; named holds use the current closed Maestro-to-Android key mapping. Raw codes must be non-negative JVM integers. The two capability properties advertise which overloads a session supports, and the MCP layer reads them to reject unsupported calls early. iOS keeps both `false`: it retains named short presses and rejects raw codes and holds. Animation-restoring session wrappers forward the overloads through the existing delegation.
 
 ### Structured execution
 
@@ -462,7 +464,7 @@ Saved files survive `close_session`, and callers eventually delete them after us
 | `list_journeys` | — | formatted list | Optional: path |
 | `load_journey` | path | parsed steps | |
 | `run_flow` | session_id, yaml | Legacy SUCCESS/FAILED + output or focus-wait JSON | Optional: await_focus_change, focus_timeout_ms |
-| `press_key` | session_id, exactly one of key/keycode | Legacy confirmation or focus-wait JSON | Optional: long_press (Android only), await_focus_change, focus_timeout_ms |
+| `press_key` | session_id, exactly one of key/keycode | Legacy confirmation or focus-wait JSON | Optional: long_press (needs `supportsLongPress`), await_focus_change, focus_timeout_ms |
 | `capture_screenshot` | session_id | base64 JPEG or normalised absolute PNG path | Optional string: save_to_file; no overwrite; caller owns saved file |
 | `capture_hierarchy` | session_id | hierarchy text + snapshot_id | Optional: filter (focus/content/all) |
 | `capture_focused_tree` | session_id | bounded focused context + full snapshot_id | Optional: filter (focus/content/all); defaults to content |
@@ -473,7 +475,7 @@ Saved files survive `close_session`, and callers eventually delete them after us
 | `get_context` | optional path | loaded-file metadata + bundled defaults + markdown context text | Required context can error |
 
 
-`press_key` accepts an exact JSON string `key` or a non-negative integer JSON `keycode` within JVM `Int` range. Optional `long_press` must be a JSON Boolean and defaults to false. Selector, type, range and focus-option validation happen before session work. Unsupported iOS raw/hold calls fail before hierarchy capture, input or animation waiting. Supported default calls retain their text response and animation wait; focus waiting uses the same baseline/action/wait sequence under one session mutex for every supported selector and hold choice. These arguments extend the shared stdio/HTTP registration without changing journey or loop key resolution; see the [TV controls context](../verity/core/src/main/resources/verity/context/tv-controls.md).
+`press_key` accepts an exact JSON string `key` or a non-negative integer JSON `keycode` within JVM `Int` range. Optional `long_press` must be a JSON Boolean and defaults to false. Selector, type, range and focus-option validation happen before session work. Sessions lacking `supportsRawKeycodes` or `supportsLongPress` reject the matching raw/hold call before hierarchy capture, input or animation waiting; iOS currently has neither. Supported default calls retain their text response and animation wait; focus waiting uses the same baseline/action/wait sequence under one session mutex for every supported selector and hold choice. These arguments extend the shared stdio/HTTP registration without changing journey or loop key resolution; see the [TV controls context](../verity/core/src/main/resources/verity/context/tv-controls.md).
 
 ### Focus waits on actions
 
@@ -600,7 +602,7 @@ MCP Protocol (stdio or HTTP)
     ▼
 VerityMcpServer
     ├── open_session → DeviceSessionFactory.connect()
-    ├── press_key → validate key XOR keycode / long_press → session.pressKey()
+    ├── press_key → validate key XOR keycode / long_press → check supportsRawKeycodes / supportsLongPress → session.pressKey()
     ├── run_flow → session.executeFlow()
     ├── capture_screenshot
     │   ├── inline → capture PNG → compress → base64 JPEG → delete temporary files

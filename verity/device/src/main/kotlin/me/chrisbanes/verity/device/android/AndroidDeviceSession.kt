@@ -35,6 +35,10 @@ class AndroidDeviceSession(
   constructor(maestro: Maestro, platform: Platform, executeShell: (String) -> String) :
     this(maestro, platform, null, executeShell)
 
+  override val supportsRawKeycodes: Boolean get() = true
+
+  override val supportsLongPress: Boolean get() = true
+
   override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml, onCommandStart)
 
   override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)

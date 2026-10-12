@@ -3,6 +3,8 @@ package me.chrisbanes.verity.device
 import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
+import assertk.assertions.isTrue
 import assertk.assertions.messageContains
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
@@ -18,6 +20,11 @@ class DeviceSessionTest {
     assertFailure { session.pressKey("return", true) }.messageContains("Long key presses")
     assertFailure { session.pressKey(174, false) }.messageContains("Raw Android keycodes")
     assertThat(session.pressedKeys).isEqualTo(listOf("return"))
+    assertThat(session.supportsRawKeycodes).isFalse()
+    assertThat(session.supportsLongPress).isFalse()
+    val android = FakeDeviceSession(platform = Platform.ANDROID_TV)
+    assertThat(android.supportsRawKeycodes).isTrue()
+    assertThat(android.supportsLongPress).isTrue()
   }
 
   @Test

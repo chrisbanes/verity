@@ -14,6 +14,9 @@ class FakeDeviceSession(
   override val platform: Platform = Platform.ANDROID_TV,
   private val hierarchyNode: HierarchyNode = HierarchyNode(attributes = emptyMap()),
 ) : DeviceSession {
+  override val supportsRawKeycodes: Boolean get() = platform != Platform.IOS
+  override val supportsLongPress: Boolean get() = platform != Platform.IOS
+
   var closed = false
   val executedFlows = mutableListOf<String>()
   val pressedKeys = mutableListOf<String>()

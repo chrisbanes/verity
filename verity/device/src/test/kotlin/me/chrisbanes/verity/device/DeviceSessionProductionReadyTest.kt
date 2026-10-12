@@ -4,8 +4,10 @@ import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
+import assertk.assertions.isTrue
 import assertk.assertions.messageContains
 import java.util.concurrent.CountDownLatch
 import kotlin.coroutines.cancellation.CancellationException
@@ -101,6 +103,18 @@ class DeviceSessionProductionReadyTest {
       assertThat(observed === cancellation || observed.cause === cancellation).isEqualTo(true)
       assertThat(calls).isEqualTo(1)
     }
+  }
+
+  @Test
+  fun `real sessions advertise key press capabilities`() {
+    for (platform in listOf(Platform.ANDROID_TV, Platform.ANDROID_MOBILE)) {
+      val android = AndroidDeviceSession(Maestro(RecordingDriver()), platform) { "" }
+      assertThat(android.supportsRawKeycodes).isTrue()
+      assertThat(android.supportsLongPress).isTrue()
+    }
+    val ios = IosDeviceSession(Maestro(RecordingDriver()), FakeIosDevice())
+    assertThat(ios.supportsRawKeycodes).isFalse()
+    assertThat(ios.supportsLongPress).isFalse()
   }
 
   @Test

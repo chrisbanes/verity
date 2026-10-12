@@ -10,6 +10,7 @@ import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequest
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolRequestParams
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.io.File
 import kotlin.test.Test
@@ -17,6 +18,7 @@ import kotlin.time.Duration
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -235,7 +237,8 @@ class VerityMcpServerTest {
             ),
           )
           assertThat(result.isError).isEqualTo(true)
-          assertThat((result.content.single() as TextContent).text).contains("not supported on iOS")
+          assertThat((result.content.single() as TextContent).text)
+            .contains(if (raw) "Raw Android keycodes are not supported on ios" else "Long key presses are not supported on ios")
           assertThat(events).isEqualTo(emptyList())
           assertThat(fake.pressedKeys).isEqualTo(emptyList())
           assertThat(fake.longPressedKeys).isEqualTo(emptyList())
@@ -245,6 +248,117 @@ class VerityMcpServerTest {
         }
       }
     }
+  }
+
+  private suspend fun pressKeyWithCapabilities(
+    fake: FakeDeviceSession,
+    rawSupported: Boolean,
+    holdSupported: Boolean,
+    events: MutableList<String>,
+    args: JsonObjectBuilder.() -> Unit,
+  ): CallToolResult {
+    val session = object : DeviceSession by fake {
+      override val supportsRawKeycodes = rawSupported
+      override val supportsLongPress = holdSupported
+      override suspend fun pressKey(keyName: String, longPress: Boolean) {
+        events += "key:$keyName:$longPress"
+      }
+      override suspend fun pressKey(keycode: Int, longPress: Boolean) {
+        events += "code:$keycode:$longPress"
+      }
+      override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+        events += "capture"
+        error("unsupported before capture")
+      }
+      override suspend fun waitForAnimationToEnd() {
+        events += "animation"
+      }
+    }
+    val manager = McpDeviceSessionManager { _, _, _ -> session }
+    val handle = manager.open(fake.platform)
+    try {
+      return VerityMcpServer(sessionManager = manager).create().tools.getValue("press_key").handler.invoke(
+        StubClientConnection(),
+        CallToolRequest(
+          CallToolRequestParams(
+            "press_key",
+            buildJsonObject {
+              put("session_id", handle.sessionId.toString())
+              args()
+            },
+          ),
+        ),
+      )
+    } finally {
+      manager.close(handle.sessionId)
+    }
+  }
+
+  @Test
+  fun `capability flags rather than platform gate raw and hold requests`() = runTest {
+    for (raw in listOf(false, true)) {
+      for (awaitFocus in listOf(false, true)) {
+        val fake = FakeDeviceSession()
+        val events = mutableListOf<String>()
+        val result = pressKeyWithCapabilities(fake, rawSupported = false, holdSupported = false, events = events) {
+          if (raw) put("keycode", 174) else put("key", "Remote Dpad Up")
+          put("long_press", !raw)
+          put("await_focus_change", awaitFocus)
+        }
+        assertThat(result.isError).isEqualTo(true)
+        assertThat((result.content.single() as TextContent).text)
+          .contains(if (raw) "Raw Android keycodes are not supported on android-tv" else "Long key presses are not supported on android-tv")
+        assertThat(events).isEqualTo(emptyList())
+        assertThat(fake.pressedKeys).isEqualTo(emptyList())
+      }
+    }
+  }
+
+  @Test
+  fun `raw and hold capabilities gate independently`() = runTest {
+    for (rawSupported in listOf(false, true)) {
+      for (holdSupported in listOf(false, true)) {
+        val events = mutableListOf<String>()
+        val raw = pressKeyWithCapabilities(FakeDeviceSession(), rawSupported, holdSupported, events) { put("keycode", 174) }
+        val hold = pressKeyWithCapabilities(FakeDeviceSession(), rawSupported, holdSupported, events) {
+          put("key", "Remote Dpad Up")
+          put("long_press", true)
+        }
+        assertThat(raw.isError == true).isEqualTo(!rawSupported)
+        assertThat(hold.isError == true).isEqualTo(!holdSupported)
+        if (!rawSupported) assertThat((raw.content.single() as TextContent).text).contains("Raw Android keycodes")
+        if (!holdSupported) assertThat((hold.content.single() as TextContent).text).contains("Long key presses")
+        assertThat(events).isEqualTo(
+          listOfNotNull("code:174:false".takeIf { rawSupported }, "animation".takeIf { rawSupported }, "key:Remote Dpad Up:true".takeIf { holdSupported }, "animation".takeIf { holdSupported }),
+        )
+      }
+    }
+  }
+
+  @Test
+  fun `named short press still succeeds when raw and hold are unsupported`() = runTest {
+    val fake = FakeDeviceSession()
+    val events = mutableListOf<String>()
+    val result = pressKeyWithCapabilities(fake, rawSupported = false, holdSupported = false, events = events) {
+      put("key", "Remote Dpad Up")
+    }
+    assertThat(result.isError).isIn(null, false)
+    assertThat(fake.pressedKeys).isEqualTo(listOf("Remote Dpad Up"))
+    assertThat(events).isEqualTo(listOf("animation"))
+  }
+
+  @Test
+  fun `supported capabilities are accepted on an iOS-platform session`() = runTest {
+    val fake = FakeDeviceSession(platform = Platform.IOS)
+    val events = mutableListOf<String>()
+    val raw = pressKeyWithCapabilities(fake, rawSupported = true, holdSupported = true, events = events) { put("keycode", 174) }
+    val hold = pressKeyWithCapabilities(fake, rawSupported = true, holdSupported = true, events = events) {
+      put("key", "return")
+      put("long_press", true)
+    }
+    assertThat(raw.isError).isIn(null, false)
+    assertThat(hold.isError).isIn(null, false)
+    assertThat(events).isEqualTo(listOf("code:174:false", "animation", "key:return:true", "animation"))
   }
 
   @Test

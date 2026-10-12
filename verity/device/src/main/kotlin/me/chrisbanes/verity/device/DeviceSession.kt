@@ -20,6 +20,12 @@ interface DeviceSession : AutoCloseable {
   /** Validate and execute the complete structured action list without YAML parsing. */
   suspend fun executeActions(flow: ActionFlow): FlowResult
 
+  /** Whether [pressKey] with a raw keycode is supported. */
+  val supportsRawKeycodes: Boolean get() = false
+
+  /** Whether [pressKey] with a held press is supported. */
+  val supportsLongPress: Boolean get() = false
+
   /** Press a single key by its platform key name. */
   suspend fun pressKey(keyName: String)
 
