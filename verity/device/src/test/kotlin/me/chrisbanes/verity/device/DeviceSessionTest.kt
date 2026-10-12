@@ -6,9 +6,13 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import assertk.assertions.messageContains
+import java.lang.reflect.Proxy
 import kotlin.test.Test
 import kotlinx.coroutines.test.runTest
+import maestro.Driver
+import maestro.Maestro
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.android.AnimationState
 
 class DeviceSessionTest {
@@ -67,5 +71,33 @@ class DeviceSessionTest {
     assertFailure {
       AnimationState("", "1.0", "1.0")
     }.messageContains("Invalid window animation scale")
+  }
+
+  @Test
+  fun `animation state accepts scales the device has never set`() {
+    val state = AnimationState("1.0", "null", "null")
+    assertThat(state.animatorScale).isEqualTo(AnimationState.UNSET)
+  }
+
+  @Test
+  fun `restoring animation state deletes scales that were never set`() = runTest {
+    val commands = mutableListOf<String>()
+    val unusedDriver = Proxy.newProxyInstance(Driver::class.java.classLoader, arrayOf(Driver::class.java)) { _, _, _ ->
+      error("Driver should not be used")
+    } as Driver
+    val session = AndroidDeviceSession(Maestro(unusedDriver), Platform.ANDROID_TV) {
+      commands += it
+      ""
+    }
+
+    session.restoreAnimationState(AnimationState("1.0", "0.5", "null"))
+
+    assertThat(commands).isEqualTo(
+      listOf(
+        "settings put global window_animation_scale 1.0",
+        "settings put global transition_animation_scale 0.5",
+        "settings delete global animator_duration_scale",
+      ),
+    )
   }
 }

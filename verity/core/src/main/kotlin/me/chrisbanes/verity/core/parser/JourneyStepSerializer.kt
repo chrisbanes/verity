@@ -77,9 +77,9 @@ object JourneyStepParser {
 
     // 5. Assertion inference (NL keywords)
     AssertionStepInferrer.infer(trimmed)?.let { inferred ->
-      return inferred.copy(
-        mode = assertionStrategy.resolveMode(inferred.description),
-      )
+      // The inferrer's mode already includes the "visually" keyword, which a re-inference would lose.
+      if (assertionStrategy == AssertionStrategy.INFER) return inferred
+      return inferred.copy(mode = assertionStrategy.resolveMode(inferred.description))
     }
 
     // 6. Default: Action
