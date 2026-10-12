@@ -519,7 +519,7 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 
 ```
 --device <id>            Device ID or IP:port (auto-discover if omitted)
---platform <platform>    Override journey/config platform
+--platform <platform>    Override journey/config platform: android-tv | android | ios
 --provider <name>        LLM provider (anthropic, openai, google, etc.)
 --navigator-model <id>   Model for flow generation (cheap tier)
 --inspector-model <id>   Model for assertion evaluation (capable tier)
@@ -534,6 +534,8 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 --no-animations          Disable device animations during run
 --no-bundled-context     Skip bundled context resources
 ```
+
+`--platform` takes the platform wire names (the same as `device.platform` and journey `platform`), not enum constant names.
 
 The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--port` (default: 8080) for HTTP transport.
 

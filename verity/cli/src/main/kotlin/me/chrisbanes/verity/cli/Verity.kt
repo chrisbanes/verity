@@ -8,15 +8,18 @@ import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.optionalValue
-import com.github.ajalt.clikt.parameters.types.enum
 import me.chrisbanes.verity.core.model.Platform
+
+private val platformNames = Platform.entries.joinToString { it.wireName }
 
 class Verity : CliktCommand(name = "verity") {
   override fun help(context: Context): String = "LLM-powered E2E testing for mobile and TV"
 
   val device: String? by option("--device", help = "Device ID or IP:port (auto-discover if omitted)")
-  val platform: Platform? by option("--platform", help = "Override target platform (defaults to journey platform)")
-    .enum<Platform>()
+  val platform: Platform? by option(
+    "--platform",
+    help = "Override target platform: $platformNames (defaults to journey platform)",
+  ).convert { Platform.fromWireName(it) ?: fail("'$it' is not a platform. Expected one of: $platformNames") }
   val provider: String? by option("--provider", help = "LLM provider (e.g., anthropic, openai, google, ollama)")
   val openaiAuth: String? by option("--openai-auth", help = "OpenAI authentication: api-key or chatgpt")
   val navigatorModel: String? by option("--navigator-model", help = "Override navigator model ID")
