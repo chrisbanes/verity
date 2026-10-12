@@ -37,6 +37,7 @@ enum class ModelFailureKind(val diagnostic: String) {
   TRUNCATED("response was truncated"),
   EMPTY("response was empty"),
   INVALID_RESPONSE("response was invalid"),
+  BACKEND_PROTOCOL("backend protocol failed"),
   INVALID_VERDICT("response had an invalid verdict"),
 }
 
@@ -66,7 +67,13 @@ internal suspend fun requestModelText(
       throw failure
     } catch (failure: ModelBackendFailure) {
       if (failure.kind == ModelBackendFailureKind.CLEANUP) throw failure
-      throw ModelFailureException(stage, if (failure.kind == ModelBackendFailureKind.PROTOCOL) ModelFailureKind.INVALID_RESPONSE else ModelFailureKind.REQUEST)
+      throw ModelFailureException(
+        stage,
+        when (failure.kind) {
+          ModelBackendFailureKind.PROTOCOL -> ModelFailureKind.BACKEND_PROTOCOL
+          else -> ModelFailureKind.REQUEST
+        },
+      )
     } catch (_: Exception) {
       throw ModelFailureException(stage, ModelFailureKind.REQUEST)
     } ?: throw ModelFailureException(stage, ModelFailureKind.TIMEOUT)

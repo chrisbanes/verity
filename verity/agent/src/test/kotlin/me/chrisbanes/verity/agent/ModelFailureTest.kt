@@ -16,7 +16,9 @@ class ModelFailureTest {
         val observed = mutableListOf<ModelFailureException>()
         val failure = assertFailsWith<ModelFailureException> { requestModelText(stage, { observed += it }) { throw ModelBackendFailure(kind) } }
         assertThat(failure.stage).isEqualTo(stage)
-        assertThat(failure.failure).isEqualTo(if (kind == ModelBackendFailureKind.PROTOCOL) ModelFailureKind.INVALID_RESPONSE else ModelFailureKind.REQUEST)
+        val protocol = kind == ModelBackendFailureKind.PROTOCOL
+        assertThat(failure.failure).isEqualTo(if (protocol) ModelFailureKind.BACKEND_PROTOCOL else ModelFailureKind.REQUEST)
+        assertThat(failure.message).isEqualTo("${stage.diagnostic} ${if (protocol) "backend protocol failed" else "request failed"}")
         assertThat(failure.cause).isEqualTo(null)
         assertThat(observed.single()).isEqualTo(failure)
       }
