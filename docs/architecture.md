@@ -256,7 +256,7 @@ Named short presses retain the legacy Maestro route. Android implements the new 
 
 ### Structured execution
 
-`ActionFlow` owns the app ID and complete ordered `Interaction` list. Core validates its schema and renders YAML for previews and saved artifacts. The device layer validates SDK keys and compiles the entire list to Maestro commands before any driver operation. Each list starts with app configuration; `LaunchApp` retains the caller's optional `clearState` value. No YAML file or parser participates in internal execution.
+`ActionFlow` owns the app ID and complete ordered `Interaction` list. Core validates its schema and renders YAML for previews and saved artifacts. The device layer validates SDK keys and compiles the entire list to Maestro commands before any driver operation. `Interaction.KeyCode(keycode, longPress)` is never compiled: `validateActionFlow(flow)` validates a flow with those actions set aside, `validateActionFlow(flow, session)` also rejects them with `UNSUPPORTED_INTERACTION` when the session lacks `supportsRawKeycodes` (or `supportsLongPress` for a hold), and compiling one fails so a mixed flow cannot partly run inside `executeActions`. An unknown `keyPress` name fails with `UNSUPPORTED_KEY` and a detail naming the key (only when it matches `[A-Za-z0-9 _.-]{1,64}`) and pointing to `keyCode`. Each list starts with app configuration; `LaunchApp` retains the caller's optional `clearState` value. No YAML file or parser participates in internal execution.
 
 Android and iOS execute those commands through the existing Orchestra and driver connections. Runtime command failure returns the existing `FlowResult`; local preparation failures propagate separately, and caller cancellation remains cancellation. Supplied YAML continues through `executeFlow(String)` for MCP callers, using the canonical reader and temporary-file lifecycle. See [structured actions](specs/structured-actions.md).
 
@@ -335,6 +335,7 @@ Device `FocusChangeObserver.capture/awaitChange` supplies a separate baseline bu
 |----------|----------------|
 | Android TV | "press d-pad down" → key press "Remote Dpad Down" |
 | Android Mobile | "press back" → key press "back" |
+| Android TV and Mobile | "press keycode 174" / "long press keycode 174" → raw `KeyCode(174)` (with `longPress`) |
 | iOS | "press home" → key press "home" |
 
 When all actions in a segment map to interactions, the orchestrator bypasses flow generation. Named-target interactions may still ask the navigator for a scroll direction when the target is not visible; a fast-path classification does not guarantee zero LLM calls during a real run.
@@ -360,7 +361,7 @@ Reasoning effort is an optional, independent string setting for each role. An ex
 
 ### NavigatorAgent
 
-Converts natural language actions to an `ActionFlow` through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS).
+Converts natural language actions to an `ActionFlow` through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS). Only the Android TV and mobile prompts teach the `keyCode` action, for a step that names a keycode or a key outside Maestro's set.
 
 The system prompt requires a strict JSON object containing only an ordered `actions` array. The requested app ID supplies the flow context. Internal bundled guidance describes the supported action schema; app-specific context remains additive. Navigation uses `waitForAnimation`, and content readiness uses `waitUntilVisible`.
 
@@ -380,7 +381,7 @@ Both accept empty-by-default `InspectionContext` reference text and earlier imag
 
 Navigator flow generation and scroll suggestions, plus inspector tree/visual evaluation, share a request-owned 30-second timeout. Failed requests, that owned timeout, known case-insensitive truncation finish reasons (`length`, `max_tokens`, `incomplete`), blank replies and invalid response contracts raise `ModelFailureException`. Completion metadata is checked before decoding, even when truncated text looks valid. Valid negative inspector verdicts remain ordinary failed journey results.
 
-Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, backend exception text, HTTP bodies/headers and raw causes are excluded; authored model diagnostics also redact API keys, bearer tokens and JWTs. Local validation errors remain separate from backend request failures. Caller cancellation and shorter enclosing deadlines propagate rather than becoming completed model failures. An overall wait deadline remains owned by its enclosing wait, while a request that fails before it follows this model-failure policy. The separate smart-planner fallback specified by [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its deterministic recovery policy. MCP callers own their model policy under [ADR-0001](adr/0001-mcp-device-boundary.md).
+Diagnostics contain fixed allowlisted stage/failure-class text. The one bounded exception is an invalid navigator flow's `InvalidActionFlowException.detail`, appended to the `ModelFailureException` message: it is repository-authored text whose only model-derived content is a sanitized unknown key name. Raw replies, backend exception text, HTTP bodies/headers and raw causes are excluded; authored model diagnostics also redact API keys, bearer tokens and JWTs. Local validation errors remain separate from backend request failures. Caller cancellation and shorter enclosing deadlines propagate rather than becoming completed model failures. An overall wait deadline remains owned by its enclosing wait, while a request that fails before it follows this model-failure policy. The separate smart-planner fallback specified by [issue #59](https://github.com/chrisbanes/verity/issues/59) retains its deterministic recovery policy. MCP callers own their model policy under [ADR-0001](adr/0001-mcp-device-boundary.md).
 
 ### ConditionEvaluator
 
@@ -395,8 +396,8 @@ Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, bac
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
 
 **Action execution (two paths):**
-- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses keep the direct device path; other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets. Scroll-to-find captures one hierarchy tree per attempt, using it for the visibility check and the next navigator prompt.
-- Slow path: `NavigatorAgent` returns a validated `ActionFlow`; that same object is rendered for an optional YAML artifact, then passed to `executeActions()`.
+- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses and raw `KeyCode` presses keep the direct device path (`pressKey`); other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets. Scroll-to-find captures one hierarchy tree per attempt, using it for the visibility check and the next navigator prompt.
+- Slow path: `NavigatorAgent` returns a validated `ActionFlow`; it is checked against the session's raw-keycode capabilities, rendered for an optional YAML artifact, then executed by `executeOrdered`. Without `KeyCode` actions that same object goes to `executeActions()`; otherwise each maximal run of other actions is a Maestro sub-flow, with each keycode pressed directly (and settled) between them, and the first failed sub-flow stops the walk.
 
 **Assertion evaluation (four modes):**
 
@@ -574,8 +575,9 @@ Orchestrator.run() loops over segments:
     ├── Wait present? → ConditionWaiter → bounded serial current-state checks
     │
     ├── Actions present?
-    │   ├── All map to interactions? → InteractionExecutor
-    │   └── Otherwise → NavigatorAgent → ActionFlow → executeActions()
+    │   ├── All map to interactions? → InteractionExecutor (KeyPress/KeyCode → pressKey)
+    │   └── Otherwise → NavigatorAgent → ActionFlow → capability check → executeOrdered()
+    │       (Maestro sub-flows via executeActions(), KeyCode via pressKey between them)
     │
     ├── Assertion present?
     │   ├── VISIBLE → containsText()
