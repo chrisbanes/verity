@@ -3,9 +3,9 @@ package me.chrisbanes.verity.cli
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.LinkOption
-import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
@@ -48,18 +48,31 @@ class ModelTrace private constructor(
 
     /** Refuses symlinks and non-regular files; a new file is created `0600`. */
     fun open(path: Path, clock: Clock = Clock.systemUTC()): ModelTrace {
-      val existing = try {
-        Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-      } catch (_: NoSuchFileException) {
-        null
+      try {
+        // Exclusive creation can only produce a regular file owned by this process.
+        val created = FileChannel.open(
+          path,
+          setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS),
+          PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
+        )
+        return ModelTrace(created, clock)
+      } catch (_: FileAlreadyExistsException) {
+        // Fall through to append to the existing entry.
       }
-      if (existing != null && !existing.isRegularFile) throw IOException("Model trace is not a regular file")
-      val channel = FileChannel.open(
-        path,
-        setOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS),
-        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")),
-      )
+      val before = regularFileKey(path)
+      val channel = FileChannel.open(path, setOf(StandardOpenOption.WRITE, StandardOpenOption.APPEND, LinkOption.NOFOLLOW_LINKS))
+      // ponytail: Java cannot fstat a channel, so a FIFO swapped in before the open can still block it; this rejects any other replacement.
+      if (regularFileKey(path) != before) {
+        channel.close()
+        throw IOException("Model trace was replaced while opening")
+      }
       return ModelTrace(channel, clock)
+    }
+
+    private fun regularFileKey(path: Path): Any? {
+      val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+      if (!attributes.isRegularFile) throw IOException("Model trace is not a regular file")
+      return attributes.fileKey()
     }
   }
 }

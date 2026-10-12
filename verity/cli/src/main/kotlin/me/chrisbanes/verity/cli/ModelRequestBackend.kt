@@ -8,6 +8,7 @@ import ai.koog.prompt.params.LLMParams
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.TimeSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -65,6 +66,8 @@ internal class TracingModelRequestBackend(
     val started = TimeSource.Monotonic.markNow()
     val response = try {
       delegate.execute(request)
+    } catch (e: CancellationException) {
+      throw e
     } catch (failure: Exception) {
       val kind = (failure as? ModelBackendFailure)?.let { " kind=${it.kind}" }.orEmpty()
       val message = redactModelDiagnostic("${failure::class.simpleName}: ${failure.message}")

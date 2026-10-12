@@ -226,6 +226,21 @@ class ModelRequestBackendTest {
     assertThat(sink.lines.last()).matches(Regex("request #2 failure duration=\\d+ms kind=PROTOCOL ModelBackendFailure: Codex protocol failure"))
   }
 
+  @Test
+  fun `traced cancellation is rethrown without a failure entry`() = runTest {
+    val sink = RecordingSink()
+    val cancellation = kotlinx.coroutines.CancellationException("caller cancelled")
+    val delegate = object : ModelRequestBackend {
+      override suspend fun execute(request: ModelRequest): Message.Assistant = throw cancellation
+      override suspend fun close() = Unit
+    }
+
+    val thrown = assertFailsWith<kotlinx.coroutines.CancellationException> { TracingModelRequestBackend(delegate, sink).execute(apiRequest()) }
+
+    assertThat(thrown).isSameInstanceAs(cancellation)
+    assertThat(sink.lines.none { it.contains(" failure ") }).isEqualTo(true)
+  }
+
   private class CapturingPromptExecutor : PromptExecutorAPI {
     var capturedPrompt: Prompt? = null
     var capturedModel: LLModel? = null
