@@ -2,8 +2,11 @@ package me.chrisbanes.verity.cli
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -12,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -22,7 +26,10 @@ import me.chrisbanes.verity.core.preflight.PreflightCodes
 import me.chrisbanes.verity.core.preflight.PreflightIssue
 import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.core.preflight.PreflightSeverity
+import me.chrisbanes.verity.device.preflight.AndroidPreflightChecker
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
+import me.chrisbanes.verity.device.preflight.LocalProcessRunner
+import me.chrisbanes.verity.device.preflight.PlatformDevicePreflightChecker
 
 class CodexPreflightTest {
   private class CallerCancellation(val marker: Any) : kotlinx.coroutines.CancellationException("caller-owned")
@@ -266,6 +273,49 @@ class CodexPreflightTest {
     assertThat(result.report.errors.map { it.code }).isEqualTo(listOf(PreflightCodes.PATH_MISSING))
     assertThat(devices).isEqualTo(0)
     assertThat(acquisitions).isEqualTo(0)
+  }
+
+  @Test fun `Codex failure stops a running device command`() = runTest(timeout = 10.seconds) {
+    val pidFile = withContext(Dispatchers.IO) { Files.createTempFile("verity-pid-", ".txt") }
+    var pid: Long? = null
+    try {
+      val device = PlatformDevicePreflightChecker(
+        androidChecker = AndroidPreflightChecker(
+          processRunner = { LocalProcessRunner.run(listOf("sh", "-c", "echo \$\$ > \"\$1\"; exec sleep 60", "sh", pidFile.toString())) },
+        ),
+      )
+      // Off the test scheduler, so Codex's 30 s withTimeout cannot fire on virtual time while the pid wait runs on IO.
+      val result = withContext(Dispatchers.Default) {
+        checkWith(device) {
+          pid = awaitPid(pidFile)
+          throw CodexFailure(CodexFailureKind.AUTH)
+        }
+      }
+      assertThat(result.report.errors.map { it.code }).isEqualTo(listOf("codex.auth"))
+      assertThat(result.backend).isEqualTo(null)
+      assertThat(ProcessHandle.of(pid!!).map { it.isAlive }.orElse(false)).isFalse()
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) {
+        pid?.let(::killIfSleep)
+        Files.deleteIfExists(pidFile)
+      }
+    }
+  }
+
+  private suspend fun awaitPid(pidFile: Path): Long = withContext(Dispatchers.IO) {
+    var content = pidFile.readText()
+    while (!content.endsWith("\n")) {
+      delay(10)
+      content = pidFile.readText()
+    }
+    content.trim().toLong()
+  }
+
+  /** Kills [pid] only if it is still the `sleep` this test started. */
+  private fun killIfSleep(pid: Long) {
+    ProcessHandle.of(pid)
+      .filter { handle -> handle.info().command().map { it.endsWith("sleep") }.orElse(false) }
+      .ifPresent { it.destroyForcibly() }
   }
 
   /** Device check that suspends until cancelled, recording its lifecycle. */
