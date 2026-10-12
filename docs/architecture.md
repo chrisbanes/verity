@@ -646,7 +646,7 @@ Both connections opt out of `configWarning`, `remoteControl/status/changed`, `ac
 - `thread/settings/updated` and `warning` for the owned thread;
 - `rawResponse/completed` for the owned thread and turn;
 - the owned thread's `thread/started`, which real Codex can send after the `thread/start` response;
-- `thread/closed` and `thread/status/changed` with status `notLoaded` for any other thread, identified by a string `threadId`. The app-server is shared across requests and unloads idle threads from earlier ones at any point, including before the `thread/start` response. These frames carry no content. Other frames for a foreign thread, and the owned thread's own unload, still fail. codex-cli 0.162.1 was observed doing this; that version is not qualified.
+- `thread/closed` and `thread/status/changed` with status `notLoaded` for any other thread, identified by a string `threadId`. The app-server is shared across requests and unloads idle threads from earlier ones at any point, including before the `thread/start` response. These frames carry no content. The client reader drops them for threads the backend has already unsubscribed, so they cannot fill its bounded frame queue between requests. Other frames for a foreign thread, and the owned thread's own unload, still fail. codex-cli 0.162.1 was observed doing this; that version is not qualified.
 
 `mcpServer/startupStatus/updated` still fails because it reports MCP lifecycle.
 

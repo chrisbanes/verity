@@ -712,6 +712,19 @@ class CodexModelBackendTest {
   }
 
   @Test
+  fun `released thread unloads arriving between requests do not overflow the transport`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture("model-idle-unloads") { _, backend ->
+        assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
+        // Give the reader time to receive every idle unload before the next request starts draining.
+        delay(500)
+        backend.client.requireHealthy()
+        assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
+      }
+    }
+  }
+
+  @Test
   fun `owned thread unloads and other foreign frames still fail the request`() = runTest {
     withContext(Dispatchers.Default) {
       val rejected = listOf("prestart", "turn").flatMap { phase -> listOf("closed", "notLoaded").map { "model-unload-$phase-owned-$it" } } +

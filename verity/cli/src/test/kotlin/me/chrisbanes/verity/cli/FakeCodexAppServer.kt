@@ -466,6 +466,20 @@ internal object FakeCodexAppServer {
           put("result", result)
         },
       )
+      if (method == "thread/unsubscribe" && scenario == "model-idle-unloads") {
+        // More unload pairs for the released thread than the client's frame queue holds, while no request reads.
+        val released = frame.getValue("params").jsonObject.getValue("threadId")
+        repeat(48) {
+          event(
+            "thread/status/changed",
+            buildJsonObject {
+              put("threadId", released)
+              put("status", buildJsonObject { put("type", "notLoaded") })
+            },
+          )
+          event("thread/closed", buildJsonObject { put("threadId", released) })
+        }
+      }
       if (method == "thread/unsubscribe" && scenario == "model-idle-callback") {
         val release = Path.of(System.getProperty("verity.fake.release"))
         while (Files.readString(release) != "release") Thread.sleep(5)
