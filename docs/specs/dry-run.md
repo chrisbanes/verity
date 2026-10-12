@@ -43,7 +43,7 @@ The parser-failure summary may carry the raw navigator and inspector effort requ
 | `3` | Configuration/provider/model/context setup, local flow validation or required Markdown writing failed |
 | `5` | Slow-path navigator action or complete-loop generation had a model failure |
 
-Navigator generation shares the execution request policy: a request-owned 30-second timeout, failed request, known case-insensitive truncation reasons (`length`, `max_tokens`, `incomplete`), empty text and invalid action JSON all produce a model failure. Metadata is checked before parsing. Raw model replies, backend exception text, HTTP bodies/headers and raw causes never enter the error report; fixed diagnostics and redacted authored text retain journey/segment context.
+Navigator generation shares the execution request policy: a request-owned 30-second timeout, failed request, known case-insensitive truncation reasons (`length`, `max_tokens`, `incomplete`), empty text and invalid action JSON all produce a model failure; a backend protocol break produces the distinct fixed class `<stage> backend protocol failed`. Metadata is checked before parsing. Raw model replies, backend exception text, HTTP bodies/headers and raw causes never enter the error report; fixed diagnostics and redacted authored text retain journey/segment context.
 
 Provider/navigator creation occurs outside the generation failure boundary. Invalid provider/model configuration, required context, temporary-file I/O, missing referenced resources, cleanup and ambiguous SDK validation faults remain setup failures with exit `3`. Required Markdown writing also exits `3`. These preview failures do not create normal journey-result JSON or a suite summary.
 

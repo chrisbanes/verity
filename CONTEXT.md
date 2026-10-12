@@ -89,3 +89,10 @@ _Avoid_: Suite summary
 **Suite summary**:
 The aggregate outcome of a run, with journey counts, result references, and any run-level failure.
 _Avoid_: Journey result
+
+**Model failure**:
+A navigator or inspector request that produced no usable answer. A valid negative verdict is not one.
+
+**Backend protocol failure**:
+A model failure where the model backend broke its own protocol rather than the model replying badly.
+_Avoid_: Invalid response
