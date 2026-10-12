@@ -8,7 +8,14 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 internal object McpFocusedTreeRenderer {
   private data class Entry(val node: HierarchyNode, val parent: Int, val depth: Int, val children: MutableList<Int> = mutableListOf(), var end: Int = 0)
 
-  fun render(root: HierarchyNode, snapshotId: String, filter: HierarchyFilter, maxNodes: Int = 100, maxCharacters: Int = 12_000): String {
+  fun render(
+    root: HierarchyNode,
+    snapshotId: String,
+    filter: HierarchyFilter,
+    maxNodes: Int = 100,
+    maxCharacters: Int = 12_000,
+    renderNode: (HierarchyNode, HierarchyFilter) -> String = { node, nodeFilter -> HierarchyRenderer.render(node, nodeFilter) },
+  ): String {
     // IDs belong to structural positions, even when equal nodes or the same object recur.
     val entries = mutableListOf<Entry>()
     val stack = ArrayDeque<Triple<HierarchyNode, Int, Int>>()
@@ -57,14 +64,16 @@ internal object McpFocusedTreeRenderer {
     val regions = candidates.sorted().filter { entries[it].parent !in candidates }
     val filtered = anchors.count { id ->
       val node = entries[id].node.copy(states = emptySet(), children = emptyList())
-      HierarchyRenderer.render(node, HierarchyFilter.ALL).isNotEmpty() && HierarchyRenderer.render(node, filter).isEmpty()
+      renderNode(node, HierarchyFilter.ALL).isNotEmpty() && renderNode(node, filter).isEmpty()
     }
     // The focused marker stays outside payload that can be shortened.
-    val fullRows = entries.map { entry ->
-      HierarchyRenderer.render(entry.node.copy(states = entry.node.states - "focused", children = emptyList()), filter)
-        .trimEnd('\n').replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t").ifEmpty { if (FocusDetector.isFocused(entry.node)) "[]" else "[context]" }
+    // Only candidates can be selected, so only they need rows.
+    val fullRows = candidates.associateWith { id ->
+      val node = entries[id].node
+      renderNode(node.copy(states = node.states - "focused", children = emptyList()), filter)
+        .trimEnd('\n').replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t").ifEmpty { if (FocusDetector.isFocused(node)) "[]" else "[context]" }
     }
-    val rows = fullRows.map { if (it.length > "[] [text truncated]".length) "[] [text truncated]" else it }.toMutableList()
+    val rows = fullRows.mapValues { (_, row) -> if (row.length > "[] [text truncated]".length) "[] [text truncated]" else row }.toMutableMap()
     val selected = mutableSetOf<Int>()
     val failures = mutableMapOf<Int, String>()
     fun serialize(): String {
@@ -81,7 +90,7 @@ internal object McpFocusedTreeRenderer {
         appendLine("focused: total=${anchors.size} included=${anchors.count { it in selected }} omitted_node_limit=${anchors.count { it !in selected && reason(it) == "node_limit" }} omitted_character_limit=${anchors.count { it !in selected && reason(it) == "character_limit" }}")
         appendLine("nodes: included=${selected.size} omitted_context=${candidates.size - selected.size} outside_context=${entries.size - candidates.size} omitted_regions=${regions.count { it !in selected }}")
         appendLine("focused_labels_filtered: $filtered")
-        appendLine("truncated: node_limit=${candidates.any { it !in selected && reason(it) == "node_limit" }} character_limit=${candidates.any { it !in selected && reason(it) == "character_limit" }} text=${selected.any { rows[it] != fullRows[it] }}")
+        appendLine("truncated: node_limit=${candidates.any { it !in selected && reason(it) == "node_limit" }} character_limit=${candidates.any { it !in selected && reason(it) == "character_limit" }} text=${selected.any { rows.getValue(it) != fullRows.getValue(it) }}")
         val events = ArrayDeque<Pair<Int, String?>>()
         for (region in regions.asReversed()) if (region in selected) events.addLast(region to null)
         val depths = IntArray(entries.size)
@@ -98,7 +107,7 @@ internal object McpFocusedTreeRenderer {
             depths[id] = depths[entry.parent] + 1
           }
           val focused = if (FocusDetector.isFocused(entry.node)) " (focused)" else ""
-          appendLine("${"  ".repeat(depths[id])}#$id ${rows[id]}$focused")
+          appendLine("${"  ".repeat(depths[id])}#$id ${rows.getValue(id)}$focused")
           val children = mutableListOf<Pair<Int, String?>>()
           var omitted = 0
           var omittedReason = "outside_context"
@@ -152,14 +161,14 @@ internal object McpFocusedTreeRenderer {
     }
     // Allocate payload by priority, then serialize the forest in source order.
     for (id in selected.sortedWith(compareBy<Int> { ranks[it] }.thenBy { it })) {
-      if (rows[id] == fullRows[id]) continue
-      val minimum = rows[id]
-      rows[id] = fullRows[id]
+      if (rows.getValue(id) == fullRows.getValue(id)) continue
+      val minimum = rows.getValue(id)
+      rows[id] = fullRows.getValue(id)
       if (serialize().length <= maxCharacters) continue
       rows[id] = minimum
       val available = maxCharacters - serialize().length + minimum.length
       val suffix = "] [text truncated]"
-      val payload = fullRows[id].drop(1)
+      val payload = fullRows.getValue(id).drop(1)
       var units = minOf(payload.length, maxOf(0, available - suffix.length - 1))
       if (units > 0 && units < payload.length && payload[units - 1].isHighSurrogate() && payload[units].isLowSurrogate()) units--
       rows[id] = "[${payload.take(units)}$suffix"
