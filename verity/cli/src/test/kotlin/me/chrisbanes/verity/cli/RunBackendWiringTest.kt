@@ -87,7 +87,7 @@ class RunBackendWiringTest {
       try {
         val file = journey(dir, "complete onboarding wizard")
         val command = RunCommand(
-          preflightChecker = { _, _, _, _ -> preflight(Backend()).run { copy(report = PreflightReport(deviceId = reported)) } },
+          preflightChecker = { _, _, _, _ -> preflight(Backend()).copy(report = PreflightReport(deviceId = reported)) },
           sessionFactory = { _, id, _ ->
             captured = id
             FakeDeviceSession()

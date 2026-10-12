@@ -16,14 +16,7 @@ class IosPreflightCheckerTest {
   @Test
   fun `passes with one booted simulator`() = runTest {
     val checker = IosPreflightChecker(
-      processRunner = FakeIosProcessRunner(
-        ProcessResult(
-          0,
-          """
-          {"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-18-5":[{"udid":"sim-1","state":"Booted"}]}}
-          """.trimIndent(),
-        ),
-      ),
+      processRunner = FakeIosProcessRunner(ProcessResult(0, BOOTED_SIM_1)),
     )
 
     val report = checker.check(deviceId = null)
