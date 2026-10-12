@@ -7,7 +7,11 @@ import assertk.assertions.isLessThan
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.Files
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.CancellationException
@@ -242,5 +246,60 @@ class CodexLifecycleTest {
       assertFailsWith<Exception> { CodexAppServerClient.readFrame(ByteArrayInputStream(bytes)) }
     }
     assertThat(CodexAppServerClient.readFrame(ByteArrayInputStream(byteArrayOf()))).isEqualTo(null)
+  }
+
+  @Test
+  fun `the reader releases an unsubscribed thread before its response is consumed`() = runTest {
+    withContext(Dispatchers.Default) {
+      // Status, unloads following the response, and the frame the consumer sees after the response.
+      listOf(Triple("unsubscribed", 96, "warning"), Triple("notSubscribed", 1, "thread/closed")).forEach { (status, unloads, next) ->
+        val process = QueuedStdoutProcess()
+        val resources = CodexOwnedResources()
+        try {
+          val client = resources.client(process)
+          val id = client.beginRequest("thread/unsubscribe", buildJsonObject { put("threadId", "released") })
+          val unload = buildJsonObject {
+            put("method", "thread/closed")
+            put("params", buildJsonObject { put("threadId", "released") })
+          }
+          // Everything is readable before the consumer takes the response; more unloads than the frame queue holds.
+          process.emit(
+            listOf(
+              buildJsonObject {
+                put("id", id)
+                put("result", buildJsonObject { put("status", status) })
+              },
+            ) +
+              List(unloads) { unload } +
+              buildJsonObject {
+                put("method", "warning")
+                put("params", JsonObject(emptyMap()))
+              },
+          )
+          assertThat(client.receive()["id"], "status=$status").isEqualTo(JsonPrimitive(id))
+          assertThat(client.receive()["method"], "status=$status").isEqualTo(JsonPrimitive(next))
+          client.requireHealthy()
+        } finally {
+          resources.close()
+        }
+      }
+    }
+  }
+
+  /** Stdout is fed by the test and stays open until closed, so the reader neither races ahead nor sees EOF. */
+  private class QueuedStdoutProcess : Process() {
+    private val bytes = LinkedBlockingQueue<Int>()
+    private val stdout = object : InputStream() {
+      override fun read(): Int = bytes.take()
+      override fun close() = bytes.put(-1)
+    }
+    fun emit(frames: List<JsonObject>) = frames.joinToString("") { "$it\n" }.toByteArray().forEach { bytes.put(it.toInt() and 0xff) }
+    override fun getInputStream(): InputStream = stdout
+    override fun getOutputStream(): OutputStream = OutputStream.nullOutputStream()
+    override fun getErrorStream(): InputStream = InputStream.nullInputStream()
+    override fun waitFor(): Int = 0
+    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = true
+    override fun exitValue(): Int = 0
+    override fun destroy() = Unit
   }
 }
