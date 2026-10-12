@@ -1,17 +1,8 @@
 package me.chrisbanes.verity.device.ios
 
 import java.nio.file.Path
-import java.util.concurrent.TimeUnit
 import kotlin.time.Duration
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.device.captureBoundedScreenshot
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -35,19 +26,8 @@ internal class BoundedIosScreenshotCapture(
           .build()
         checkCapture()
         val remaining = remainingNanos()
-        // The caller budget is the only limit; OkHttp defaults would cut a slow cold capture off at 10s.
-        val call = httpClient.newBuilder().callTimeout(remaining, TimeUnit.NANOSECONDS)
-          .connectTimeout(0, TimeUnit.NANOSECONDS).readTimeout(0, TimeUnit.NANOSECONDS).writeTimeout(0, TimeUnit.NANOSECONDS)
-          .build().newCall(request)
-        val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
-          try {
-            awaitCancellation()
-          } finally {
-            call.cancel()
-          }
-        }
         try {
-          runInterruptible(Dispatchers.IO) {
+          httpClient.executeBounded(request, remaining) { call ->
             try {
               onEvent("request-entry")
               checkCapture()
@@ -75,7 +55,6 @@ internal class BoundedIosScreenshotCapture(
             }
           }
         } finally {
-          withContext(NonCancellable) { cancellation.cancelAndJoin() }
           onEvent("request-joined")
         }
       }
