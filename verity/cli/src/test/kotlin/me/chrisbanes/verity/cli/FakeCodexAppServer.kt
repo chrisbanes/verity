@@ -400,7 +400,7 @@ internal object FakeCodexAppServer {
                 },
               )
             }
-          } else {
+          } else if (scenario != "model-hang") {
             event(
               "turn/started",
               buildJsonObject {
@@ -597,6 +597,16 @@ internal object FakeCodexAppServer {
   }
 
   private fun emitModelOutput(scenario: String, threadId: String, turnId: String, captured: JsonObject) {
+    // The hang announces its turn only after the ACK, so backend turn ownership proves the ACK was consumed.
+    if (scenario == "model-hang") {
+      event(
+        "turn/started",
+        buildJsonObject {
+          put("threadId", threadId)
+          put("turn", turn(turnId))
+        },
+      )
+    }
     if (scenario == "model-hang" || scenario == "model-no-stdin") return
     if (scenario == "model-loss") kotlin.system.exitProcess(0)
     val foreign = "foreign-thread"
