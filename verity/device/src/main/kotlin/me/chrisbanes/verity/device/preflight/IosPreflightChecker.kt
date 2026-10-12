@@ -53,7 +53,7 @@ class IosPreflightChecker(
     return if (deviceId != null) {
       val selected = devices.firstOrNull { it.udid == deviceId }
       if (selected?.state == "Booted") {
-        PreflightReport()
+        PreflightReport(deviceId = deviceId)
       } else {
         PreflightReport(
           listOf(
@@ -80,7 +80,7 @@ class IosPreflightChecker(
           ),
         )
 
-        1 -> PreflightReport()
+        1 -> PreflightReport(deviceId = booted.single().udid)
 
         else -> PreflightReport(
           listOf(

@@ -20,6 +20,8 @@ data class PreflightIssue(
 @Serializable
 data class PreflightReport(
   val issues: List<PreflightIssue> = emptyList(),
+  /** Device the passing preflight resolved, so session creation can skip a second discovery. */
+  val deviceId: String? = null,
 ) {
   val errors: List<PreflightIssue>
     get() = issues.filter { it.severity == PreflightSeverity.ERROR }
@@ -30,7 +32,7 @@ data class PreflightReport(
   val passed: Boolean
     get() = !hasErrors
 
-  operator fun plus(other: PreflightReport): PreflightReport = PreflightReport(issues = issues + other.issues)
+  operator fun plus(other: PreflightReport): PreflightReport = PreflightReport(issues + other.issues, deviceId ?: other.deviceId)
 
   fun renderPlainText(): String {
     if (issues.isEmpty()) return "Preflight passed."
