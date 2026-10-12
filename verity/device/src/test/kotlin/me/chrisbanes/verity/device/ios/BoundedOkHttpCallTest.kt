@@ -8,12 +8,14 @@ import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -57,7 +59,7 @@ class BoundedOkHttpCallTest {
       server.createContext("/") { exchange ->
         try {
           entered.countDown()
-          release.await(5, TimeUnit.SECONDS)
+          release.await(30, TimeUnit.SECONDS)
           exchange.sendResponseHeaders(200, -1)
         } catch (_: java.io.IOException) {
           // The test-owned call has been cancelled.
@@ -70,10 +72,10 @@ class BoundedOkHttpCallTest {
         val client = OkHttpClient()
         val request = Request.Builder().url("http://127.0.0.1:${server.address.port}/").build()
         val events = java.util.Collections.synchronizedList(ArrayList<String>())
-        // The block's IOException is the root cause of the cancelled job; supervisorScope keeps it out of runTest.
+        // The block rethrows the IOException, which would otherwise become the cancelled job's failure and reach runTest.
         supervisorScope {
           val deferred = async {
-            client.executeBounded(request, 5_000_000_000, onCleanup = { events += "cleanup" }) { call ->
+            client.executeBounded(request, 60_000_000_000, onCleanup = { events += "cleanup" }) { call ->
               events += "enter"
               try {
                 call.execute().use { }
@@ -85,7 +87,8 @@ class BoundedOkHttpCallTest {
           }
           assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue()
           deferred.cancel(CancellationException("stop"))
-          deferred.join()
+          // The server is still holding the request, so only the bridge's call.cancel() can end the blocked read.
+          withTimeout(5.seconds) { deferred.join() }
           assertThat(deferred.isCancelled).isTrue()
           assertThat(events.toList()).isEqualTo(listOf("enter", "io", "cleanup"))
         }
