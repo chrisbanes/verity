@@ -1,7 +1,11 @@
 package me.chrisbanes.verity.device
 
+import assertk.assertFailure
 import assertk.assertThat
+import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +18,9 @@ import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
+import me.chrisbanes.verity.core.model.ActionFlowInvalidReason
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
+import me.chrisbanes.verity.core.model.Platform
 
 class MaestroActionCompilerTest {
   @Test
@@ -152,5 +159,57 @@ class MaestroActionCompilerTest {
       }
       assertThat(MaestroActionCompiler.compile(selected).map { it.asCommand() }).isEqualTo(expected)
     }
+  }
+
+  @Test
+  fun `device-free validation accepts raw keycodes that compilation rejects`() {
+    val flow = ActionFlow("app", listOf(Interaction.KeyCode(174), Interaction.TapOnText("OK")))
+    validateActionFlow(flow)
+    for (invalid in listOf(Interaction.KeyCode(-1), Interaction.TapOnText("["))) {
+      assertFailure { validateActionFlow(ActionFlow("app", listOf(Interaction.KeyCode(174), invalid))) }
+        .isInstanceOf<InvalidActionFlowException>()
+    }
+    assertFailure { MaestroActionCompiler.compile(flow) }
+      .isInstanceOf<InvalidActionFlowException>()
+      .transform { it.reason }
+      .isEqualTo(ActionFlowInvalidReason.UNSUPPORTED_INTERACTION)
+  }
+
+  @Test
+  fun `capability validation rejects unsupported raw keycodes and long presses`() {
+    val plain = ActionFlow("app", listOf(Interaction.KeyCode(174)))
+    val held = ActionFlow("app", listOf(Interaction.KeyCode(174, longPress = true)))
+    val maestroOnly = ActionFlow("app", listOf(Interaction.TapOnText("OK")))
+
+    validateActionFlow(maestroOnly, supportsRawKeycodes = false, supportsLongPress = false)
+    assertUnsupported { validateActionFlow(plain, supportsRawKeycodes = false, supportsLongPress = false) }
+    validateActionFlow(plain, supportsRawKeycodes = true, supportsLongPress = false)
+    assertUnsupported { validateActionFlow(held, supportsRawKeycodes = true, supportsLongPress = false) }
+    validateActionFlow(held, supportsRawKeycodes = true, supportsLongPress = true)
+
+    assertUnsupported { validateActionFlow(plain, FakeDeviceSession(Platform.IOS)) }
+    validateActionFlow(held, FakeDeviceSession(Platform.ANDROID_TV))
+  }
+
+  @Test
+  fun `unknown key name is named only when it is safe to echo`() {
+    fun messageFor(keyName: String) = assertFailure { validateActionFlow(ActionFlow("app", listOf(Interaction.KeyPress(keyName)))) }
+      .isInstanceOf<InvalidActionFlowException>()
+      .also { it.transform { error -> error.reason }.isEqualTo(ActionFlowInvalidReason.UNSUPPORTED_KEY) }
+      .transform { it.message.orEmpty() }
+
+    messageFor("Bookmark").also {
+      it.contains("'Bookmark'")
+      it.contains("keyCode")
+    }
+    messageFor("Book\nmark").doesNotContain("Book")
+    messageFor("K".repeat(65)).doesNotContain("KKK")
+  }
+
+  private fun assertUnsupported(block: () -> Unit) {
+    assertFailure(block)
+      .isInstanceOf<InvalidActionFlowException>()
+      .transform { it.reason }
+      .isEqualTo(ActionFlowInvalidReason.UNSUPPORTED_INTERACTION)
   }
 }

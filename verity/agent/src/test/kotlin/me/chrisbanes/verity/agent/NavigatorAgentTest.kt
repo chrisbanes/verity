@@ -178,7 +178,28 @@ class NavigatorAgentTest {
       val failure = runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.IOS) }.exceptionOrNull() as ModelFailureException
       assertThat(failure.failure).isEqualTo(ModelFailureKind.INVALID_RESPONSE)
       assertThat(failure.cause).isNull()
+      if ("not-a-key" in reply) {
+        assertThat(failure.message.orEmpty()).contains("'not-a-key'")
+        assertThat(failure.message.orEmpty()).contains("keyCode")
+      } else {
+        assertThat(failure.message).isEqualTo("Navigator flow response was invalid")
+      }
     }
+  }
+
+  @Test fun `raw keycode action is taught on Android only and decodes`() = runTest {
+    for (platform in Platform.entries) {
+      val prompt = NavigatorAgent.buildSystemPrompt(platform, "bundled", "")
+      if (platform == Platform.IOS) {
+        assertThat(prompt).doesNotContain("keyCode(keycode")
+      } else {
+        assertThat(prompt).contains("keyCode(keycode")
+        assertThat(prompt).contains("longPress")
+      }
+    }
+    val navigator = NavigatorAgent("context") { _, _ -> modelReply("""{"actions":[{"type":"keyCode","keycode":174,"longPress":true}]}""") }
+    assertThat(navigator.generate(listOf("Press the Bookmark key"), "app", Platform.ANDROID_TV))
+      .isEqualTo(ActionFlow("app", listOf(Interaction.KeyCode(174, longPress = true))))
   }
 
   @Test fun `both navigator requests preserve explicit caller and enclosing timeout cancellation identity`() = runTest {

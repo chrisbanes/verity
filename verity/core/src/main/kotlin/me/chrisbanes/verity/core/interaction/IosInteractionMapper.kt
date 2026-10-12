@@ -9,5 +9,6 @@ object IosInteractionMapper : InteractionMapper {
     "press volume down" to "volume down",
   )
 
-  override fun map(instruction: String): Interaction? = TouchInteractionParser.parse(instruction, KEY_MAP)
+  // Raw keycode steps are Android-only: leave them unmapped rather than parse "long press keycode N" as a text long press.
+  override fun map(instruction: String): Interaction? = if (RawKeycodeInstruction.parse(instruction) != null) null else TouchInteractionParser.parse(instruction, KEY_MAP)
 }

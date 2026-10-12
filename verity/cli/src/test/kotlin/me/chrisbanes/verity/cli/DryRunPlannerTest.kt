@@ -493,6 +493,25 @@ class DryRunPlannerTest {
     }
   }
 
+  @Test fun `raw keycode previews render for Android and fail for iOS without device work`() = runTest {
+    val keyNavigator = DryRunNavigator { _, appId, _, _ -> ActionFlow(appId, listOf(Interaction.KeyCode(174, longPress = true))) }
+    val tv = Journey("Keycode", "com.example.app", Platform.ANDROID_TV, listOf(JourneyStep.Action("Press the Bookmark key")))
+    val yaml = DryRunPlanner(navigatorFactory = { keyNavigator }).plan(resolvedJourney(tv)).segments.single().actions?.yaml.orEmpty()
+    assertThat(yaml).contains("- keyCode:")
+    assertThat(yaml).contains("keycode: 174")
+    assertThat(yaml).contains("longPress: true")
+
+    val mapped = DryRunPlanner(navigatorFactory = { error("must not initialize provider") })
+      .plan(resolvedJourney(tv.copy(steps = listOf(JourneyStep.Action("Press keycode 174")))))
+    assertThat(mapped.segments.single().actions?.interactions.orEmpty()).containsExactly("KeyCode(keycode=174, longPress=false)")
+
+    val ios = tv.copy(platform = Platform.IOS)
+    val failure = runCatching { DryRunPlanner(navigatorFactory = { keyNavigator }).plan(resolvedJourney(ios)) }.exceptionOrNull() as CliktError
+    assertThat(failure.statusCode).isEqualTo(3)
+    assertThat(failure.message.orEmpty()).contains("Dry-run YAML generation failed")
+    assertThat(failure.message.orEmpty()).contains("UNSUPPORTED_INTERACTION")
+  }
+
   private val previewSentinel = "sk-private Bearer private-credential eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"
 
   private fun resolvedJourney(journey: Journey): ResolvedJourney = ResolvedJourney(

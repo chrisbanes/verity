@@ -4,7 +4,8 @@ Internal navigation returns a JSON object with an ordered `actions` array. The r
 
 Each action has a `type` and only its supported fields:
 
-- `keyPress`: `keyName`, a supported Maestro key such as `BACK`, `HOME`, or `Remote Dpad Down`.
+- `keyPress`: `keyName`, a supported Maestro key such as `BACK`, `HOME`, or `Remote Dpad Down`. Only Maestro key names are accepted.
+- `keyCode` (Android only; never use it on iOS): non-negative integer `keycode` and optional boolean `longPress`. It sends a raw Android keycode. Use it when a step names a keycode or the key is not in Maestro's set; for example, `KEYCODE_BOOKMARK` is `174`: `{"type":"keyCode","keycode":174}`.
 - `tapOnText`, `longPressOnText`: `text`, a regular expression.
 - `tapOnId`: `resourceId`, a regular expression.
 - `inputText`: `text`, preserved literally, including whitespace.

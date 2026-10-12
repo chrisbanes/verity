@@ -21,6 +21,8 @@ data class ActionFlow(val appId: String, val actions: List<Interaction>) {
       when (action) {
         is Interaction.KeyPress -> if (action.keyName.isBlank()) invalid()
 
+        is Interaction.KeyCode -> if (action.keycode < 0) invalid()
+
         is Interaction.TapOnText -> validateSelector(action.text)
 
         is Interaction.TapOnId -> validateSelector(action.resourceId)
@@ -64,6 +66,12 @@ data class ActionFlow(val appId: String, val actions: List<Interaction>) {
             ) {
               invalid()
             }
+            if (name == "keycode" && (value !is JsonPrimitive || value.isString || value.intOrNull == null)) {
+              invalid()
+            }
+            if (name == "longPress" && (value !is JsonPrimitive || value.isString || value.booleanOrNull == null)) {
+              invalid()
+            }
             if (name == "clearState" && value != JsonNull &&
               (value !is JsonPrimitive || value.isString || value.booleanOrNull == null)
             ) {
@@ -96,8 +104,14 @@ data class ActionFlow(val appId: String, val actions: List<Interaction>) {
   private data class Response(val actions: List<Interaction>)
 }
 
-/** Fixed diagnostics intentionally exclude response contents and raw causes. */
-class InvalidActionFlowException(val reason: ActionFlowInvalidReason) : Exception("Invalid action flow: ${reason.name}")
+/**
+ * Fixed diagnostics intentionally exclude response contents and raw causes. [detail] is either a
+ * constant authored in this repository or a sanitized key name.
+ */
+class InvalidActionFlowException(
+  val reason: ActionFlowInvalidReason,
+  val detail: String? = null,
+) : Exception("Invalid action flow: ${reason.name}" + detail?.let { " ($it)" }.orEmpty())
 
 enum class ActionFlowInvalidReason {
   MALFORMED_RESPONSE,

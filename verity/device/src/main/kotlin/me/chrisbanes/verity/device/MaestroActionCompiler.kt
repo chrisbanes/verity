@@ -21,9 +21,38 @@ import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.ActionFlowInvalidReason
 import me.chrisbanes.verity.core.model.InvalidActionFlowException
 
-/** Validates SDK-supported actions without a device, filesystem, or parser. */
+/**
+ * Validates SDK-supported actions without a device, filesystem, or parser. Raw keycode actions are
+ * validated but not compiled, because they are sent directly through [DeviceSession.pressKey].
+ */
 fun validateActionFlow(flow: ActionFlow) {
-  prepareMaestroActions(flow)
+  flow.validate()
+  prepareMaestroActions(flow.copy(actions = flow.actions.filterNot { it is Interaction.KeyCode }))
+}
+
+/** Validates [flow] and rejects raw keycode actions the target cannot execute, before any device work. */
+fun validateActionFlow(flow: ActionFlow, supportsRawKeycodes: Boolean, supportsLongPress: Boolean) {
+  validateActionFlow(flow)
+  for (action in flow.actions) {
+    if (action !is Interaction.KeyCode) continue
+    if (!supportsRawKeycodes) unsupported("raw Android keycodes are not supported on this platform")
+    if (action.longPress && !supportsLongPress) unsupported("long key presses are not supported on this platform")
+  }
+}
+
+fun validateActionFlow(flow: ActionFlow, session: DeviceSession) = validateActionFlow(flow, session.supportsRawKeycodes, session.supportsLongPress)
+
+private fun unsupported(detail: String): Nothing = throw InvalidActionFlowException(ActionFlowInvalidReason.UNSUPPORTED_INTERACTION, detail)
+
+private val SAFE_KEY_NAME = Regex("[A-Za-z0-9 _.-]{1,64}")
+
+// Key names come from model output, so only a conservative character set is echoed back.
+private fun unknownKey(keyName: String): Nothing {
+  val name = if (SAFE_KEY_NAME.matches(keyName)) " '$keyName'" else ""
+  throw InvalidActionFlowException(
+    ActionFlowInvalidReason.UNSUPPORTED_KEY,
+    "unknown key name$name; use a keyCode action with a raw Android keycode",
+  )
 }
 
 internal object MaestroActionCompiler {
@@ -36,9 +65,10 @@ internal object MaestroActionCompiler {
             is Interaction.LaunchApp -> LaunchAppCommand(appId = flow.appId, clearState = action.clearState)
 
             is Interaction.KeyPress -> PressKeyCommand(
-              code = KeyCode.getByName(action.keyName)
-                ?: throw InvalidActionFlowException(ActionFlowInvalidReason.UNSUPPORTED_KEY),
+              code = KeyCode.getByName(action.keyName) ?: unknownKey(action.keyName),
             )
+
+            is Interaction.KeyCode -> unsupported("keyCode actions are sent directly, not as Maestro commands")
 
             is Interaction.TapOnText -> TapOnElementCommand(selector = ElementSelector(textRegex = action.text), retryIfNoChange = false, waitUntilVisible = false, longPress = false)
 

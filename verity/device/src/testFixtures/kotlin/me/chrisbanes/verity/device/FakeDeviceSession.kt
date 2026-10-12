@@ -23,9 +23,13 @@ class FakeDeviceSession(
   val longPressedKeys = mutableListOf<String>()
   val pressedKeycodes = mutableListOf<Pair<Int, Boolean>>()
 
+  /** Ordered record of device calls: `flow`, `name:<key>`, `key:<code>:<long>` and `settle`. */
+  val events = mutableListOf<String>()
+
   val executedActionFlows = mutableListOf<ActionFlow>()
   override suspend fun executeActions(flow: ActionFlow): FlowResult {
     executedActionFlows += flow
+    events += "flow"
     return FlowResult(success = true)
   }
 
@@ -35,6 +39,7 @@ class FakeDeviceSession(
   }
 
   override suspend fun pressKey(keyName: String) {
+    events += "name:$keyName"
     pressedKeys += keyName
   }
 
@@ -54,6 +59,7 @@ class FakeDeviceSession(
     } else {
       require(keycode >= 0) { "Android keycode must be non-negative" }
       pressedKeycodes += keycode to longPress
+      events += "key:$keycode:$longPress"
     }
   }
 
@@ -61,7 +67,9 @@ class FakeDeviceSession(
 
   override suspend fun captureScreenshot(output: Path) = Unit
 
-  override suspend fun waitForAnimationToEnd() = Unit
+  override suspend fun waitForAnimationToEnd() {
+    events += "settle"
+  }
 
   override fun close() {
     closed = true

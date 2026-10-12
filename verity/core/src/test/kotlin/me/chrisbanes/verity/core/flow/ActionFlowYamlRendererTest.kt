@@ -1,11 +1,14 @@
 package me.chrisbanes.verity.core.flow
 
+import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import kotlin.test.Test
 import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 
 class ActionFlowYamlRendererTest {
   @Test
@@ -62,6 +65,18 @@ class ActionFlowYamlRendererTest {
           timeout: 2000
       """.trimIndent(),
     )
+  }
+
+  @Test
+  fun `raw keycode renders as a preview-only entry`() {
+    assertThat(ActionFlowYamlRenderer.render(ActionFlow("app", listOf(Interaction.KeyCode(174, longPress = true))))).isEqualTo(
+      "appId: \"app\"\n---\n- keyCode:\n    keycode: 174\n    longPress: true",
+    )
+    assertThat(ActionFlowYamlRenderer.render(ActionFlow("app", listOf(Interaction.KeyCode(174))))).isEqualTo(
+      "appId: \"app\"\n---\n- keyCode:\n    keycode: 174\n    longPress: false",
+    )
+    assertFailure { ActionFlowYamlRenderer.render(ActionFlow("app", listOf(Interaction.KeyCode(-1)))) }
+      .isInstanceOf<InvalidActionFlowException>()
   }
 
   @Test

@@ -1,7 +1,10 @@
 package me.chrisbanes.verity.agent
 
+import assertk.assertFailure
 import assertk.assertThat
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import assertk.assertions.isSameInstanceAs
 import java.nio.file.Path
 import kotlin.coroutines.cancellation.CancellationException
@@ -13,8 +16,10 @@ import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FakeDeviceSession
 
 class InteractionExecutorTest {
 
@@ -25,6 +30,25 @@ class InteractionExecutorTest {
     val session = RecordingDeviceSession()
     createExecutor(session).execute(Interaction.KeyPress("back"))
     assertThat(session.pressedKeys).isEqualTo(listOf("back"))
+  }
+
+  @Test
+  fun `raw keycode is pressed directly and settles`() = runTest {
+    val session = FakeDeviceSession(Platform.ANDROID_TV)
+    val executor = InteractionExecutor(session, APP_ID)
+    executor.execute(Interaction.KeyCode(174, longPress = true))
+    executor.execute(Interaction.KeyCode(174))
+    assertThat(session.pressedKeycodes).isEqualTo(listOf(174 to true, 174 to false))
+    assertThat(session.executedActionFlows).isEmpty()
+    assertThat(session.events).isEqualTo(listOf("key:174:true", "settle", "key:174:false", "settle"))
+  }
+
+  @Test
+  fun `raw keycode on iOS fails before any device call`() = runTest {
+    val session = FakeDeviceSession(Platform.IOS)
+    assertFailure { InteractionExecutor(session, APP_ID).execute(Interaction.KeyCode(174)) }
+      .isInstanceOf<InvalidActionFlowException>()
+    assertThat(session.events).isEmpty()
   }
 
   @Test
