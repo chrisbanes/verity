@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
@@ -35,8 +36,7 @@ class ConditionEvaluatorTest {
       assertFailsWith<IllegalArgumentException> { evaluator.evaluate(condition) }
       assertFailsWith<IllegalArgumentException> { waiter.await(condition, 1.seconds) }
     }
-    assertThat(session.literalChecks).isEqualTo(emptyList())
-    assertThat(session.filters).isEqualTo(emptyList())
+    assertThat(session.treeCaptures).isEqualTo(0)
     assertThat(session.screenshots).isEqualTo(emptyList())
     assertThat(session.executedActionFlows).isEqualTo(emptyList())
   }
@@ -55,27 +55,39 @@ class ConditionEvaluatorTest {
         },
         evaluateVisualContent = { _, _, _, _ -> error("unexpected visual") },
       )
-      val evaluator = ConditionEvaluator(session, inspector)
+      val savedHierarchies = mutableListOf<String>()
+      val recorder = object : JourneyArtifactRecorder {
+        override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String? {
+          savedHierarchies += hierarchy
+          return "hierarchy.txt"
+        }
+      }
+      val evaluator = ConditionEvaluator(session, inspector, recorder)
       val literal = evaluator.evaluate("Settings")
       assertThat(literal.tier).isEqualTo(ConditionTier.LITERAL)
       assertThat(literal.verdict.passed).isEqualTo(true)
+      assertThat(session.treeCaptures).isEqualTo(1)
       val falseFocus = evaluator.evaluate("Settings is focused")
       assertThat(falseFocus.tier).isEqualTo(ConditionTier.FOCUS)
       assertThat(falseFocus.verdict.passed).isEqualTo(false)
       assertThat(treeChecks).isEqualTo(0)
+      assertThat(session.treeCaptures).isEqualTo(2)
       session.focused = true
       val trueFocus = evaluator.evaluate("focus is on 'Settings'")
       assertThat(trueFocus.tier).isEqualTo(ConditionTier.FOCUS)
       assertThat(trueFocus.verdict.passed).isEqualTo(true)
       assertThat(treeChecks).isEqualTo(0)
+      assertThat(session.treeCaptures).isEqualTo(3)
+      session.focused = false
       val tree = evaluator.evaluate("page has a settings menu")
       assertThat(tree.tier).isEqualTo(ConditionTier.TREE)
       assertThat(tree.verdict.reasoning).isEqualTo("semantic match")
       assertThat(treeChecks).isEqualTo(1)
+      assertThat(session.treeCaptures).isEqualTo(4)
       assertThat(message).contains("Settings")
       assertThat(message).contains("page has a settings menu")
-      assertThat(session.filters).isEqualTo(listOf(HierarchyFilter.CONTENT))
-      assertThat(session.literalChecks).isEqualTo(listOf("Settings", "Settings is focused", "focus is on 'Settings'", "page has a settings menu"))
+      val expectedHierarchy = HierarchyRenderer.render(HierarchyNode(attributes = mapOf("text" to "Settings")), HierarchyFilter.CONTENT)
+      assertThat(savedHierarchies).isEqualTo(listOf(expectedHierarchy))
     }
   }
 
@@ -105,8 +117,7 @@ class ConditionEvaluatorTest {
       assertThat(result.verdict.reasoning).isEqualTo("visual mismatch")
       assertThat(conditionMessage).contains("assertion: Settings")
       assertThat(conditionMessage.contains("ViSuAlLy")).isEqualTo(false)
-      assertThat(session.literalChecks).isEqualTo(emptyList())
-      assertThat(session.filters).isEqualTo(emptyList())
+      assertThat(session.treeCaptures).isEqualTo(0)
       assertThat(session.screenshots).isEqualTo(listOf(evaluatedPath))
       assertThat(withContext(Dispatchers.IO) { Files.exists(evaluatedPath!!) }).isEqualTo(false)
     }
@@ -185,8 +196,7 @@ class ConditionEvaluatorTest {
   private class StateSession : DeviceSession {
     override val platform = Platform.ANDROID_TV
     var focused = false
-    val literalChecks = mutableListOf<String>()
-    val filters = mutableListOf<HierarchyFilter>()
+    var treeCaptures = 0
     val screenshots = mutableListOf<Path>()
     var capture: suspend (Path) -> Unit = { path -> withContext<Unit>(Dispatchers.IO) { Files.write(path, byteArrayOf(1)) } }
     val executedActionFlows = mutableListOf<ActionFlow>()
@@ -197,14 +207,9 @@ class ConditionEvaluatorTest {
 
     override suspend fun executeFlow(yaml: String) = FlowResult(true)
     override suspend fun pressKey(keyName: String) = Unit
-    override suspend fun captureHierarchyTree() = HierarchyNode(attributes = mapOf("text" to "Settings"), states = if (focused) setOf("focused") else emptySet())
-    override suspend fun captureHierarchy(filter: HierarchyFilter): String {
-      filters += filter
-      return super.captureHierarchy(filter)
-    }
-    override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean {
-      literalChecks += text
-      return super.containsText(text, ignoreCase)
+    override suspend fun captureHierarchyTree(): HierarchyNode {
+      treeCaptures++
+      return HierarchyNode(attributes = mapOf("text" to "Settings"), states = if (focused) setOf("focused") else emptySet())
     }
     override suspend fun captureScreenshot(output: Path) {
       screenshots.add(output)

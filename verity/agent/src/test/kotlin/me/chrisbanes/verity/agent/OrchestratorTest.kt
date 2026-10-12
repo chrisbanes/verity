@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.agent
 
+import ai.koog.prompt.message.Message
 import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
@@ -16,7 +17,9 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
+import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
@@ -117,7 +120,7 @@ class OrchestratorTest {
   @Test
   fun `run uses navigator fallback for non key mapped loop actions`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))),
     )
     var generatedActions: List<String>? = null
     val orchestrator = Orchestrator(
@@ -148,12 +151,13 @@ class OrchestratorTest {
     )
     assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate the structured JSON action list for these instructions:\n1. navigate to settings page")
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
+    assertThat(session.hierarchyCaptures).isEqualTo(2) // before the body and after the one iteration
   }
 
   @Test
   fun `loop slow path fallback records generated flow reference`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))),
     )
     val recorder = RecordingArtifactRecorder()
     val generatedYaml = flow("- scroll")
@@ -190,7 +194,7 @@ class OrchestratorTest {
   @Test
   fun `run loop reports zero iterations when target already visible`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(true)),
+      screens = ArrayDeque(listOf(screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -212,12 +216,13 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 0 iterations")
     assertThat(session.renderedActionFlows).isEqualTo(listOf(LAUNCH_FLOW))
+    assertThat(session.hierarchyCaptures).isEqualTo(1)
   }
 
   @Test
   fun `visible assertion checks device state once`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Other"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -241,6 +246,7 @@ class OrchestratorTest {
     assertThat(segment.reasoning).isEqualTo("Text 'Home' is not visible")
     assertThat(segment.error?.kind).isEqualTo(ArtifactErrorKind.JOURNEY_FAILURE)
     assertThat(segment.error?.message).isEqualTo("Text 'Home' is not visible")
+    assertThat(session.hierarchyCaptures).isEqualTo(1)
   }
 
   @Test
@@ -328,7 +334,7 @@ class OrchestratorTest {
   @Test
   fun `fast path taps directly when target is visible`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(true)), // target is visible
+      screens = ArrayDeque(listOf(screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -352,12 +358,13 @@ class OrchestratorTest {
 
     val result = orchestrator.run(journey)
     assertThat(result.passed).isTrue()
+    assertThat(session.hierarchyCaptures).isEqualTo(1)
   }
 
   @Test
   fun `fast path segment records execution mode and source actions`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(true)),
+      screens = ArrayDeque(listOf(screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -632,9 +639,9 @@ class OrchestratorTest {
 
   @Test
   fun `fast path scrolls to find off-screen target then taps`() = runTest {
-    // First containsText: not visible. After scroll: visible.
+    // First screen lacks the target; the post-scroll screen has it.
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -660,7 +667,85 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     // Should have executed launchApp + scroll flow + tap flow
     assertThat(session.renderedActionFlows.size).isEqualTo(3)
+    assertThat(session.hierarchyCaptures).isEqualTo(2) // initial + one post-scroll
   }
+
+  @Test
+  fun `scroll-to-find captures once per attempt and prompts with the carried tree`() = runTest {
+    val screens = (0..5).map { screen("Other $it") }
+    val session = FakeDeviceSession(screens = ArrayDeque(screens))
+    val prompts = mutableListOf<String>()
+    val orchestrator = scrollOrchestrator(session) {
+      prompts += it
+      modelReply("DOWN")
+    }
+
+    val result = orchestrator.run(tapSettingsJourney())
+
+    assertThat(result.passed).isTrue()
+    // The tap is still attempted after the five-attempt cap.
+    assertThat(session.renderedActionFlows).containsExactly(
+      LAUNCH_FLOW,
+      *Array(5) { flow("- swipe:\n    direction: DOWN") },
+      flow("- tapOn: \"Settings\""),
+    )
+    assertThat(session.hierarchyCaptures).isEqualTo(6) // 1 initial + 5 post-scroll
+    assertThat(prompts.map { it.substringAfter("Current screen:\n") })
+      .isEqualTo(screens.take(5).map { HierarchyRenderer.render(it, HierarchyFilter.CONTENT) })
+  }
+
+  @Test
+  fun `scroll-to-find without a suggested direction does not scroll or recapture`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))))
+    val replies = ArrayDeque(listOf("NONE", "DOWN"))
+    val prompts = mutableListOf<String>()
+    val orchestrator = scrollOrchestrator(session) {
+      prompts += it
+      modelReply(replies.removeFirst())
+    }
+
+    val result = orchestrator.run(tapSettingsJourney())
+
+    assertThat(result.passed).isTrue()
+    assertThat(session.renderedActionFlows).containsExactly(
+      LAUNCH_FLOW,
+      flow("- swipe:\n    direction: DOWN"),
+      flow("- tapOn: \"Settings\""),
+    )
+    assertThat(session.hierarchyCaptures).isEqualTo(2) // initial + the one performed scroll
+    val home = HierarchyRenderer.render(screen("Home"), HierarchyFilter.CONTENT)
+    assertThat(prompts.map { it.substringAfter("Current screen:\n") }).containsExactly(home, home)
+  }
+
+  @Test
+  fun `scroll-to-find that never gets a direction still honours the attempt cap then taps`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"))))
+    var navigatorCalls = 0
+    val orchestrator = scrollOrchestrator(session) {
+      navigatorCalls++
+      modelReply("NONE")
+    }
+
+    val result = orchestrator.run(tapSettingsJourney())
+
+    assertThat(result.passed).isTrue()
+    assertThat(navigatorCalls).isEqualTo(5)
+    assertThat(session.hierarchyCaptures).isEqualTo(1) // nothing scrolled, so nothing to recapture
+    assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, flow("- tapOn: \"Settings\""))
+  }
+
+  private fun tapSettingsJourney() = Journey(
+    name = "scroll-to-find",
+    app = APP_ID,
+    platform = Platform.ANDROID_MOBILE,
+    steps = listOf(JourneyStep.Action(instruction = "tap Settings")),
+  )
+
+  private fun scrollOrchestrator(session: DeviceSession, navigatorReply: (userMessage: String) -> Message.Assistant) = Orchestrator(
+    session = session,
+    navigatorFactory = { NavigatorAgent("unused") { _, userMessage -> navigatorReply(userMessage) } },
+    inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
+  )
 
   @Test
   fun `fast path executes non-targeted interaction without tree check`() = runTest {
@@ -693,7 +778,7 @@ class OrchestratorTest {
   @Test
   fun `fast path tap generates correct tapOn Maestro flow`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(true)),
+      screens = ArrayDeque(listOf(screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -751,8 +836,8 @@ class OrchestratorTest {
   @Test
   fun `mixed mobile gestures all go through fast path without navigator`() = runTest {
     val session = FakeDeviceSession(
-      // Two taps need containsText checks: "tap Settings" and "tap OK"
-      containsTextResults = ArrayDeque(listOf(true, true)),
+      // Each tap checks its own screen: "tap Settings" and "tap OK"
+      screens = ArrayDeque(listOf(screen("Settings"), screen("OK"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -793,7 +878,7 @@ class OrchestratorTest {
   @Test
   fun `scroll-to-find triggers when target not visible and generates scroll then tap flows`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -827,7 +912,7 @@ class OrchestratorTest {
   @Test
   fun `long press goes through fast path and generates longPressOn flow`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(true)),
+      screens = ArrayDeque(listOf(screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -1260,7 +1345,7 @@ class OrchestratorTest {
   }
 
   private class FakeDeviceSession(
-    private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
+    private val screens: ArrayDeque<HierarchyNode> = ArrayDeque(),
     private val onExecuteActions: (String) -> Unit = {},
     private val onCaptureScreenshot: (Path) -> Unit = {},
   ) : DeviceSession {
@@ -1268,6 +1353,7 @@ class OrchestratorTest {
     val renderedActionFlows = mutableListOf<String>()
     val capturedScreenshotPaths = mutableListOf<Path>()
 
+    var hierarchyCaptures = 0
     val executedActionFlows = mutableListOf<ActionFlow>()
     override suspend fun executeActions(flow: ActionFlow): FlowResult {
       executedActionFlows += flow
@@ -1278,14 +1364,16 @@ class OrchestratorTest {
     }
     override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) = Unit
-    override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
+    override suspend fun captureHierarchyTree(): HierarchyNode {
+      hierarchyCaptures++
+      return screens.removeFirstOrNull() ?: HierarchyNode(attributes = mapOf("text" to "Home"))
+    }
     override suspend fun captureScreenshot(output: Path) {
       onCaptureScreenshot(output)
       capturedScreenshotPaths.add(output)
       Files.write(output, byteArrayOf(1, 2, 3))
     }
     override suspend fun waitForAnimationToEnd() = Unit
-    override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean = containsTextResults.removeFirstOrNull() ?: false
 
     override fun close() = Unit
   }
@@ -1343,6 +1431,7 @@ class OrchestratorTest {
   private companion object {
     const val APP_ID = "com.example.app"
     const val LAUNCH_FLOW = "appId: \"$APP_ID\"\n---\n- launchApp"
+    fun screen(text: String) = HierarchyNode(attributes = mapOf("text" to text))
     fun flow(command: String) = "appId: \"$APP_ID\"\n---\n$command"
 
     fun deleteRecursively(path: Path) {

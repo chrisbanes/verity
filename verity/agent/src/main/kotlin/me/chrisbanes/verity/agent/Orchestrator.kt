@@ -3,6 +3,9 @@ package me.chrisbanes.verity.agent
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
+import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
+import me.chrisbanes.verity.core.hierarchy.containsText
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
@@ -244,20 +247,21 @@ class Orchestrator(
     }
 
     // Check if target is already on screen
-    if (session.containsText(targetText)) {
+    var tree = session.captureHierarchyTree()
+    if (tree.containsText(targetText)) {
       record(interaction)
       return
     }
 
-    // Scroll-to-find loop (max 5 attempts)
+    // Scroll-to-find loop (max 5 attempts); the post-scroll capture answers both the visibility check and the next prompt.
     repeat(5) {
-      val hierarchy = session.captureHierarchy()
-      val direction = navigator.suggestScrollDirection(targetText, hierarchy)
+      val direction = navigator.suggestScrollDirection(targetText, HierarchyRenderer.render(tree, HierarchyFilter.CONTENT))
         ?: return@repeat // A valid NONE is an ordinary navigation outcome.
 
       record(Interaction.Scroll(direction), TrailOrigin.SCROLL_TO_FIND)
 
-      if (session.containsText(targetText)) {
+      tree = session.captureHierarchyTree()
+      if (tree.containsText(targetText)) {
         record(interaction)
         return
       }

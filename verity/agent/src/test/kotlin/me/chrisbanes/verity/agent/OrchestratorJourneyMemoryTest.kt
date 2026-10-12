@@ -33,7 +33,7 @@ class OrchestratorJourneyMemoryTest {
   /** Focus follows the number of executions so far, and `events` shows what surrounded each execution. */
   private class Session(
     override val platform: Platform,
-    private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
+    private val screens: ArrayDeque<HierarchyNode> = ArrayDeque(),
   ) : DeviceSession {
     val events = mutableListOf<String>()
     var flowSucceeds = true
@@ -61,8 +61,7 @@ class OrchestratorJourneyMemoryTest {
       return focusedTree()
     }
 
-    override suspend fun captureHierarchyTree(): HierarchyNode = focusedTree()
-    override suspend fun containsText(text: String, ignoreCase: Boolean): Boolean = containsTextResults.removeFirstOrNull() ?: false
+    override suspend fun captureHierarchyTree(): HierarchyNode = screens.removeFirstOrNull() ?: focusedTree()
     override suspend fun captureScreenshot(output: Path) {
       Files.write(output, byteArrayOf((++screenshots).toByte()))
     }
@@ -72,6 +71,8 @@ class OrchestratorJourneyMemoryTest {
     override suspend fun waitForAnimationToEnd() = Unit
     override fun close() = Unit
   }
+
+  private fun screen(text: String) = HierarchyNode(attributes = mapOf("text" to text))
 
   private class Call(val kind: String, val message: String, val referenceBytes: List<Byte>, val referencePaths: List<Path>, val currentPath: Path? = null)
 
@@ -203,7 +204,7 @@ class OrchestratorJourneyMemoryTest {
 
   @Test
   fun `scroll to find is recorded before the target interaction`() = runTest {
-    val session = Session(Platform.ANDROID_MOBILE, ArrayDeque(listOf(false, true)))
+    val session = Session(Platform.ANDROID_MOBILE, ArrayDeque(listOf(screen("Home"), screen("Settings"))))
     val result = orchestrator(session, navigatorReply = "DOWN").run(
       journey(Platform.ANDROID_MOBILE, JourneyStep.Action("tap Settings")),
     )
@@ -302,7 +303,7 @@ class OrchestratorJourneyMemoryTest {
   @Test
   fun `memory never carries over to the next journey on a reused orchestrator`() = runTest {
     val inspector = Inspector()
-    val orchestrator = orchestrator(Session(Platform.ANDROID_MOBILE, ArrayDeque(listOf(true))), inspector)
+    val orchestrator = orchestrator(Session(Platform.ANDROID_MOBILE, ArrayDeque(listOf(screen("Settings")))), inspector)
     val a = orchestrator.run(
       journey(Platform.ANDROID_MOBILE, JourneyStep.Action("tap Settings"), JourneyStep.Assert("Look", AssertMode.VISUAL), JourneyStep.Assert("Tree", AssertMode.TREE)),
     )

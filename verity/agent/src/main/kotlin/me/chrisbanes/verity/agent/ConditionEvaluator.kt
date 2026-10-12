@@ -9,6 +9,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.core.hierarchy.FocusDetector
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.hierarchy.containsText
 import me.chrisbanes.verity.core.model.InspectionVerdict
@@ -31,30 +32,35 @@ class ConditionEvaluator(
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext()): ConditionEvaluation {
     require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot)
-    visualDescription(condition)?.let { description ->
-      val evaluation = inspection.visual(description, context)
-      return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
-    }
-    if (session.containsText(condition)) return literalEvaluation(condition)
-    FocusConditionParser.parse(condition)?.let { target -> return focusEvaluation(target, session.checkFocused(target)) }
-    val evaluation = inspection.tree(condition, context)
-    return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
+    return evaluateOn(condition, context, inspection, session::captureHierarchyTree) {}
   }
+
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
     require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot, onInspectedScreenshot)
+    return evaluateOn(condition, context, inspection, { session.captureHierarchyTree(deadline.remaining()) }, deadline::checkpoint)
+  }
+
+  /** One hierarchy capture answers the literal, focus and tree tiers. */
+  private suspend fun evaluateOn(
+    condition: String,
+    context: InspectionContext,
+    inspection: ScreenInspection,
+    captureTree: suspend () -> HierarchyNode,
+    checkpoint: () -> Unit,
+  ): ConditionEvaluation {
     visualDescription(condition)?.let { description ->
       val evaluation = inspection.visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
-    val tree = session.captureHierarchyTree(deadline.remaining())
-    deadline.checkpoint()
-    if (tree.containsText(condition, checkpoint = deadline::checkpoint)) return literalEvaluation(condition)
+    val tree = captureTree()
+    checkpoint()
+    if (tree.containsText(condition, checkpoint = checkpoint)) return literalEvaluation(condition)
     FocusConditionParser.parse(condition)?.let { target ->
-      return focusEvaluation(target, FocusDetector.containsFocused(tree, target, deadline::checkpoint))
+      return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint))
     }
-    val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.CONTENT, deadline::checkpoint)
+    val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.CONTENT, checkpoint)
     val evaluation = inspection.inspectTree(hierarchy, condition, context)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
   }

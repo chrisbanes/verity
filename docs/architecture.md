@@ -384,14 +384,14 @@ Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, bac
 
 ### ConditionWaiter
 
-`await(condition, timeout, context)` starts one monotonic budget, defaults to 20 seconds, and runs serial checks one second after each completed negative evaluation. Its bounded evaluator takes one remaining-budget hierarchy for literal/focus/tree work or a remaining-budget screenshot for visual inspection; tree traversal, rendering, persistence, model work and joined cleanup share that deadline. A true result is admitted only before expiry. Completed-check metadata/evidence is retained, with distinct production evidence paths per wait poll. Predeadline model failures survive slow cleanup; caller and foreign cancellation propagate, and overall expiry remains a wait timeout. Existing no-deadline assertion/loop evaluation is retained. See [wait conditions](specs/wait-conditions.md).
+`await(condition, timeout, context)` starts one monotonic budget, defaults to 20 seconds, and runs serial checks one second after each completed negative evaluation. Its bounded evaluator takes one remaining-budget hierarchy for literal/focus/tree work or a remaining-budget screenshot for visual inspection; tree traversal, rendering, persistence, model work and joined cleanup share that deadline. A true result is admitted only before expiry. Completed-check metadata/evidence is retained, with distinct production evidence paths per wait poll. Predeadline model failures survive slow cleanup; caller and foreign cancellation propagate, and overall expiry remains a wait timeout. Untimed `ConditionEvaluator.evaluate` shares that single-capture body, so literal, focus and tree checks also take one hierarchy capture without a deadline. See [wait conditions](specs/wait-conditions.md).
 
 ### Orchestrator
 
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
 
 **Action execution (two paths):**
-- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses keep the direct device path; other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets.
+- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses keep the direct device path; other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets. Scroll-to-find captures one hierarchy tree per attempt, using it for the visibility check and the next navigator prompt.
 - Slow path: `NavigatorAgent` returns a validated `ActionFlow`; that same object is rendered for an optional YAML artifact, then passed to `executeActions()`.
 
 **Assertion evaluation (four modes):**
