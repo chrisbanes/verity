@@ -391,7 +391,7 @@ Diagnostics contain fixed allowlisted stage/failure-class text. Raw replies, bac
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
 
 **Action execution (two paths):**
-- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses keep the direct device path; other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets.
+- Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses keep the direct device path; other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets. Scroll-to-find captures one hierarchy tree per attempt, using it for the visibility check and the next navigator prompt.
 - Slow path: `NavigatorAgent` returns a validated `ActionFlow`; that same object is rendered for an optional YAML artifact, then passed to `executeActions()`.
 
 **Assertion evaluation (four modes):**
