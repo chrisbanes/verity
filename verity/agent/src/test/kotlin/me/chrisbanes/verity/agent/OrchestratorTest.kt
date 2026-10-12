@@ -117,7 +117,7 @@ class OrchestratorTest {
   @Test
   fun `run uses navigator fallback for non key mapped loop actions`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))),
     )
     var generatedActions: List<String>? = null
     val orchestrator = Orchestrator(
@@ -148,12 +148,13 @@ class OrchestratorTest {
     )
     assertThat(generatedActions?.single()).isEqualTo("App ID: com.example.app\n\nGenerate the structured JSON action list for these instructions:\n1. navigate to settings page")
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 1 iterations")
+    assertThat(session.hierarchyCaptures).isEqualTo(2) // before the body and after the one iteration
   }
 
   @Test
   fun `loop slow path fallback records generated flow reference`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(false, true)),
+      screens = ArrayDeque(listOf(screen("Home"), screen("Settings"))),
     )
     val recorder = RecordingArtifactRecorder()
     val generatedYaml = flow("- scroll")
@@ -190,7 +191,7 @@ class OrchestratorTest {
   @Test
   fun `run loop reports zero iterations when target already visible`() = runTest {
     val session = FakeDeviceSession(
-      containsTextResults = ArrayDeque(listOf(true)),
+      screens = ArrayDeque(listOf(screen("Settings"))),
     )
     val orchestrator = Orchestrator(
       session = session,
@@ -212,6 +213,7 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     assertThat(result.segments.single().reasoning).isEqualTo("Text 'Settings' found after 0 iterations")
     assertThat(session.renderedActionFlows).isEqualTo(listOf(LAUNCH_FLOW))
+    assertThat(session.hierarchyCaptures).isEqualTo(1)
   }
 
   @Test
@@ -1261,6 +1263,7 @@ class OrchestratorTest {
 
   private class FakeDeviceSession(
     private val containsTextResults: ArrayDeque<Boolean> = ArrayDeque(),
+    private val screens: ArrayDeque<HierarchyNode> = ArrayDeque(),
     private val onExecuteActions: (String) -> Unit = {},
     private val onCaptureScreenshot: (Path) -> Unit = {},
   ) : DeviceSession {
@@ -1268,6 +1271,7 @@ class OrchestratorTest {
     val renderedActionFlows = mutableListOf<String>()
     val capturedScreenshotPaths = mutableListOf<Path>()
 
+    var hierarchyCaptures = 0
     val executedActionFlows = mutableListOf<ActionFlow>()
     override suspend fun executeActions(flow: ActionFlow): FlowResult {
       executedActionFlows += flow
@@ -1278,7 +1282,10 @@ class OrchestratorTest {
     }
     override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) = Unit
-    override suspend fun captureHierarchyTree(): HierarchyNode = HierarchyNode(attributes = mapOf("text" to "Home"))
+    override suspend fun captureHierarchyTree(): HierarchyNode {
+      hierarchyCaptures++
+      return screens.removeFirstOrNull() ?: HierarchyNode(attributes = mapOf("text" to "Home"))
+    }
     override suspend fun captureScreenshot(output: Path) {
       onCaptureScreenshot(output)
       capturedScreenshotPaths.add(output)
@@ -1343,6 +1350,7 @@ class OrchestratorTest {
   private companion object {
     const val APP_ID = "com.example.app"
     const val LAUNCH_FLOW = "appId: \"$APP_ID\"\n---\n- launchApp"
+    fun screen(text: String) = HierarchyNode(attributes = mapOf("text" to text))
     fun flow(command: String) = "appId: \"$APP_ID\"\n---\n$command"
 
     fun deleteRecursively(path: Path) {
