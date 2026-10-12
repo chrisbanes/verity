@@ -10,4 +10,6 @@ dependencies {
   implementation(libs.koog.agents)
 
   testFixturesImplementation(libs.koog.agents)
+
+  testImplementation(testFixtures(project(":verity:device")))
 }

@@ -42,6 +42,46 @@ class ActionFlowTest {
   }
 
   @Test
+  fun `raw keycode decodes with optional long press and rejects malformed fields`() {
+    assertThat(ActionFlow.decodeResponse("app", """{"actions":[{"type":"keyCode","keycode":174}]}""").actions)
+      .isEqualTo(listOf(Interaction.KeyCode(174, longPress = false)))
+    assertThat(
+      ActionFlow.decodeResponse("app", """{"actions":[{"type":"keyCode","keycode":174,"longPress":true}]}""").actions,
+    ).isEqualTo(listOf(Interaction.KeyCode(174, longPress = true)))
+
+    for (action in listOf(
+      """{"type":"keyCode","keycode":-1}""",
+      """{"type":"keyCode"}""",
+      """{"type":"keyCode","keycode":"174"}""",
+      """{"type":"keyCode","keycode":174.5}""",
+      """{"type":"keyCode","keycode":null}""",
+      """{"type":"keyCode","keycode":174,"longPress":"true"}""",
+      """{"type":"keyCode","keycode":174,"longPress":null}""",
+      """{"type":"keyCode","keycode":174,"extra":1}""",
+    )) {
+      assertFailure { ActionFlow.decodeResponse("app", """{"actions":[$action]}""") }
+        .isInstanceOf<InvalidActionFlowException>()
+    }
+  }
+
+  @Test
+  fun `negative keycode is invalid and zero is valid`() {
+    assertFailure { ActionFlow("app", listOf(Interaction.KeyCode(-1))).validate() }
+      .isInstanceOf<InvalidActionFlowException>()
+      .transform { it.reason }
+      .isEqualTo(ActionFlowInvalidReason.INVALID_ACTIONS)
+    ActionFlow("app", listOf(Interaction.KeyCode(0))).validate()
+  }
+
+  @Test
+  fun `exception detail is appended to the fixed message`() {
+    assertThat(InvalidActionFlowException(ActionFlowInvalidReason.UNSUPPORTED_KEY, detail = "x").message)
+      .isEqualTo("Invalid action flow: UNSUPPORTED_KEY (x)")
+    assertThat(InvalidActionFlowException(ActionFlowInvalidReason.UNSUPPORTED_KEY).message)
+      .isEqualTo("Invalid action flow: UNSUPPORTED_KEY")
+  }
+
+  @Test
   fun `response owns actions only and requires a usable external app id`() {
     for (response in listOf(
       """{"appId":"override","actions":[]}""",

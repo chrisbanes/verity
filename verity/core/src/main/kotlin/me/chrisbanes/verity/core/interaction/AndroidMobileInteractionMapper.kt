@@ -10,5 +10,6 @@ object AndroidMobileInteractionMapper : InteractionMapper {
     "press volume down" to "volume down",
   )
 
-  override fun map(instruction: String): Interaction? = TouchInteractionParser.parse(instruction, KEY_MAP)
+  // Raw keycodes first: TouchInteractionParser would read "long press keycode N" as LongPressOnText.
+  override fun map(instruction: String): Interaction? = RawKeycodeInstruction.parse(instruction) ?: TouchInteractionParser.parse(instruction, KEY_MAP)
 }

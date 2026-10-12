@@ -18,6 +18,9 @@ object ActionFlowYamlRenderer {
 
             is Interaction.KeyPress -> "- pressKey: ${scalar(action.keyName)}"
 
+            // Verity preview-only form: Maestro has no raw keycode command.
+            is Interaction.KeyCode -> "- keyCode:\n    keycode: ${action.keycode}\n    longPress: ${action.longPress}"
+
             is Interaction.TapOnText -> "- tapOn: ${scalar(action.text)}"
 
             is Interaction.TapOnId -> "- tapOn:\n    id: ${scalar(action.resourceId)}"

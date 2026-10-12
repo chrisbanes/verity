@@ -217,7 +217,7 @@ class DeviceSessionProductionReadyTest {
 
   @Test
   fun `invalid final key or selector prevents callbacks and every adapter effect`() = runTest {
-    for (invalid in listOf(Interaction.KeyPress("PRIVATE_UNSUPPORTED_KEY"), Interaction.TapOnText("["))) {
+    for (invalid in listOf(Interaction.KeyPress("PRIVATE_UNSUPPORTED_KEY"), Interaction.TapOnText("["), Interaction.KeyCode(174))) {
       val flow = ActionFlow("com.example.app", listOf(Interaction.LaunchApp(false), invalid))
       var callbackRan = false
       assertFailsWith<InvalidActionFlowException> {

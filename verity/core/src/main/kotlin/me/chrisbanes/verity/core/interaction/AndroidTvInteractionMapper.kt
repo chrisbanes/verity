@@ -20,6 +20,7 @@ object AndroidTvInteractionMapper : InteractionMapper {
   )
 
   override fun map(instruction: String): Interaction? {
+    RawKeycodeInstruction.parse(instruction)?.let { return it }
     val keyName = KEY_MAP[instruction.trim().lowercase()] ?: return null
     return Interaction.KeyPress(keyName)
   }

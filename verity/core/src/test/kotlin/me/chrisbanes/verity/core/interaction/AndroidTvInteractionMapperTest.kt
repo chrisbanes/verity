@@ -65,4 +65,19 @@ class AndroidTvInteractionMapperTest {
   fun `returns null for unknown instruction`() {
     assertThat(mapper.map("navigate to settings")).isNull()
   }
+
+  @Test
+  fun `maps raw keycode instructions`() {
+    assertThat(mapper.map("press keycode 174")).isEqualTo(Interaction.KeyCode(174, longPress = false))
+    assertThat(mapper.map("  Long Press Keycode 174 ")).isEqualTo(Interaction.KeyCode(174, longPress = true))
+    for (instruction in listOf(
+      "press keycode -1",
+      "press keycode",
+      "press keycode 99999999999",
+      "press keycode 174 now",
+      "Press the Bookmark key (keycode 174) to open Quick Actions on the focused card",
+    )) {
+      assertThat(mapper.map(instruction), instruction).isNull()
+    }
+  }
 }

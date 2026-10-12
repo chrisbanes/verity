@@ -17,6 +17,11 @@ sealed interface Interaction {
   @SerialName("keyPress")
   data class KeyPress(val keyName: String) : Interaction
 
+  /** A raw Android keycode, sent directly to the device and never compiled to a Maestro command. */
+  @Serializable
+  @SerialName("keyCode")
+  data class KeyCode(val keycode: Int, val longPress: Boolean = false) : Interaction
+
   @Serializable
   @SerialName("tapOnText")
   data class TapOnText(val text: String) : Interaction

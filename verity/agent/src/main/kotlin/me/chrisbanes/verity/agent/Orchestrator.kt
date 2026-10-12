@@ -211,7 +211,7 @@ class Orchestrator(
     memory: JourneyMemory,
     source: TrailSource,
   ) {
-    validateActionFlow(ActionFlow(appId, interactions))
+    validateActionFlow(ActionFlow(appId, interactions), session)
     // Mapping is one interaction per instruction, so the two lists align.
     interactions.forEachIndexed { index, interaction ->
       executeWithScrollToFind(interaction, instructions[index], appId, navigator, memory, source)
@@ -282,6 +282,7 @@ class Orchestrator(
     source: TrailSource,
   ): SlowPathResult {
     val selected = navigator.generate(instructions, appId, platform, context)
+    validateActionFlow(selected, session)
     val reference = try {
       artifactRecorder.saveGeneratedFlow(segmentIndex, label, ActionFlowYamlRenderer.render(selected))
     } catch (e: CancellationException) {
@@ -289,8 +290,8 @@ class Orchestrator(
     } catch (_: Exception) {
       null
     }
-    // One device call, so one flow entry; focus is observed only around the whole flow.
-    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeActions(selected) }
+    // One flow entry even when raw keycodes split it; focus is observed only around the whole flow.
+    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeOrdered(selected) }
     return SlowPathResult(flowResult, reference)
   }
 

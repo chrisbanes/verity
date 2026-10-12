@@ -11,6 +11,7 @@ import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
+import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.Platform
@@ -119,7 +120,7 @@ class DryRunPlanner(
     val interactions = InteractionMapper.forPlatform(journey.platform).mapAll(instructions)
     return if (interactions != null) {
       try {
-        validateActionFlow(ActionFlow(journey.app, interactions))
+        validateActionFlow(ActionFlow(journey.app, interactions), journey.platform)
       } catch (error: CancellationException) {
         throw error
       } catch (_: Exception) {
@@ -157,7 +158,7 @@ class DryRunPlanner(
     }
     return try {
       val selected = activeNavigator.generate(instructions, journey.app, journey.platform, context)
-      validateActionFlow(selected)
+      validateActionFlow(selected, journey.platform)
       ActionFlowYamlRenderer.render(selected)
     } catch (error: CancellationException) {
       throw error
@@ -165,10 +166,15 @@ class DryRunPlanner(
       throw generationError(resolvedJourney, segment, error.message.orEmpty(), 5)
     } catch (error: ActionFlowPreparationException) {
       throw generationError(resolvedJourney, segment, error.message.orEmpty(), 3)
+    } catch (error: InvalidActionFlowException) {
+      throw generationError(resolvedJourney, segment, error.message.orEmpty(), 3)
     } catch (_: Exception) {
       throw generationError(resolvedJourney, segment, "Preview generation setup failed", 3)
     }
   }
+
+  // Dry run has no session; mirrors the sessions' supportsRawKeycodes/supportsLongPress (Android only).
+  private fun validateActionFlow(flow: ActionFlow, platform: Platform) = validateActionFlow(flow, supportsRawKeycodes = platform != Platform.IOS, supportsLongPress = platform != Platform.IOS)
 
   private fun generationError(resolvedJourney: ResolvedJourney, segment: JourneySegment, message: String, status: Int): CliktError = CliktError(
     redactModelDiagnostic("Dry-run YAML generation failed for ${resolvedJourney.file.path} segment ${segment.index}: $message"),
@@ -181,6 +187,7 @@ class DryRunPlanner(
 
   internal fun describeInteraction(interaction: Interaction): String = when (interaction) {
     is Interaction.KeyPress -> "KeyPress(${describeKeyName(interaction.keyName)})"
+    is Interaction.KeyCode -> "KeyCode(keycode=${interaction.keycode}, longPress=${interaction.longPress})"
     is Interaction.TapOnText -> "TapOnText(${interaction.text})"
     is Interaction.TapOnId -> "TapOnId(${interaction.resourceId})"
     is Interaction.Scroll -> "Scroll(${interaction.direction})"
