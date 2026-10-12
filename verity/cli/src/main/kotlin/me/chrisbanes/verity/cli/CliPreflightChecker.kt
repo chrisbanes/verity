@@ -46,7 +46,10 @@ data class CliPreflightResult(
   val openaiAuth: OpenAiAuth = OpenAiAuth.API_KEY,
   val navigatorEffort: String? = null,
   val inspectorEffort: String? = null,
-)
+) {
+  /** Device resolved by the passing device preflight, if any. */
+  val deviceId: String? get() = report.deviceId
+}
 
 class CliPreflightChecker internal constructor(
   private val environment: (String) -> String? = System::getenv,

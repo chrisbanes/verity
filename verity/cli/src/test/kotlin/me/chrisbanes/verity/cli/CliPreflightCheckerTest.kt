@@ -6,6 +6,7 @@ import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNotNull
+import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import java.nio.file.Files
 import kotlin.test.Test
@@ -137,11 +138,11 @@ class CliPreflightCheckerTest {
       devicePreflightChecker = DevicePreflightChecker { platform, device ->
         receivedPlatform = platform
         receivedDevice = device
-        PreflightReport()
+        PreflightReport(deviceId = "sim-resolved")
       },
     )
 
-    checker.check(
+    val result = checker.check(
       request = CliPreflightRequest(
         cliProvider = "anthropic",
         cliNavigatorModel = null,
@@ -157,6 +158,7 @@ class CliPreflightCheckerTest {
 
     assertThat(receivedPlatform).isEqualTo(Platform.IOS)
     assertThat(receivedDevice).isEqualTo("sim-1")
+    assertThat(result.deviceId).isEqualTo("sim-resolved")
   }
 
   @Test
@@ -188,6 +190,7 @@ class CliPreflightCheckerTest {
 
     assertThat(result.report.passed).isTrue()
     assertThat(devicePreflightCalls).isEqualTo(0)
+    assertThat(result.deviceId).isNull()
   }
 
   @Test

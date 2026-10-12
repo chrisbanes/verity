@@ -692,7 +692,7 @@ class RunCommand(
       echo("Inspector model: ${inspectorModel.id}")
       projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
-      val session = sessionFactory(platform, resolved.deviceId, resolved.disableAnimations)
+      val session = sessionFactory(platform, preflight.deviceId ?: resolved.deviceId, resolved.disableAnimations)
       val navigatorFactory = { navigatorAgent(parent, backend, preflight) }
       val inspectorFactory = {
         InspectorAgent(
