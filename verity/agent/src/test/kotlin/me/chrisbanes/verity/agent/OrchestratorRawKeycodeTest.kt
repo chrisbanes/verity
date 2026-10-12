@@ -101,11 +101,11 @@ class OrchestratorRawKeycodeTest {
     assertThat(ios.pressedKeycodes).isEmpty()
     assertThat(recorder.flows).isEmpty()
 
-    val mapped = FakeDeviceSession(Platform.IOS)
-    val mappedLoop = JourneyStep.Loop("Press back; Press keycode 174", "page is ready", 1)
+    val loop = FakeDeviceSession(Platform.IOS)
+    val body = JourneyStep.Loop("Press back; Press keycode 174", "page is ready", 1)
     // iOS maps neither step, so the navigator decides; a keycode reply is still rejected.
-    assertUnsupported { run(mapped, navigator("[$KEY]"), mappedLoop, Platform.IOS) }
-    assertThat(mapped.events.drop(1)).isEmpty()
+    assertUnsupported { run(loop, navigator("[$KEY]"), body, Platform.IOS) }
+    assertThat(loop.events.drop(1)).isEmpty()
   }
 
   @Test
