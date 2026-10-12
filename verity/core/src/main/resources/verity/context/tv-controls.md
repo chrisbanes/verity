@@ -37,8 +37,8 @@ Maestro, call MCP `press_key` with a non-negative integer `keycode` instead of
 Supply exactly one of `key` or `keycode`. Add `"long_press": true` to hold either
 a named key or a raw code; Android sends `input keyevent --longpress`. This flag
 uses Android's hold behavior and does not accept a custom duration. Sessions
-without raw-keycode or hold support, currently iOS, reject those calls before input. These are MCP arguments, not Maestro YAML
-fields or journey-step syntax. The default MCP call waits for animation after
+without raw-keycode or hold support, currently iOS, reject those calls before
+input. These are MCP arguments, not Maestro YAML fields or journey-step syntax. The default MCP call waits for animation after
 the press; optional focus waiting retains its separate tool behavior.
 
 ## Navigation Patterns

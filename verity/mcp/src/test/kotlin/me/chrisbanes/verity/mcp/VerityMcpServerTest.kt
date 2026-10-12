@@ -252,14 +252,14 @@ class VerityMcpServerTest {
 
   private suspend fun pressKeyWithCapabilities(
     fake: FakeDeviceSession,
-    rawKeycodes: Boolean,
-    longPress: Boolean,
+    rawSupported: Boolean,
+    holdSupported: Boolean,
     events: MutableList<String>,
     args: JsonObjectBuilder.() -> Unit,
   ): CallToolResult {
     val session = object : DeviceSession by fake {
-      override val supportsRawKeycodes = rawKeycodes
-      override val supportsLongPress = longPress
+      override val supportsRawKeycodes = rawSupported
+      override val supportsLongPress = holdSupported
       override suspend fun pressKey(keyName: String, longPress: Boolean) {
         events += "key:$keyName:$longPress"
       }
@@ -300,7 +300,7 @@ class VerityMcpServerTest {
       for (awaitFocus in listOf(false, true)) {
         val fake = FakeDeviceSession()
         val events = mutableListOf<String>()
-        val result = pressKeyWithCapabilities(fake, rawKeycodes = false, longPress = false, events = events) {
+        val result = pressKeyWithCapabilities(fake, rawSupported = false, holdSupported = false, events = events) {
           if (raw) put("keycode", 174) else put("key", "Remote Dpad Up")
           put("long_press", !raw)
           put("await_focus_change", awaitFocus)
@@ -315,10 +315,31 @@ class VerityMcpServerTest {
   }
 
   @Test
+  fun `raw and hold capabilities gate independently`() = runTest {
+    for (rawSupported in listOf(false, true)) {
+      for (holdSupported in listOf(false, true)) {
+        val events = mutableListOf<String>()
+        val raw = pressKeyWithCapabilities(FakeDeviceSession(), rawSupported, holdSupported, events) { put("keycode", 174) }
+        val hold = pressKeyWithCapabilities(FakeDeviceSession(), rawSupported, holdSupported, events) {
+          put("key", "Remote Dpad Up")
+          put("long_press", true)
+        }
+        assertThat(raw.isError == true).isEqualTo(!rawSupported)
+        assertThat(hold.isError == true).isEqualTo(!holdSupported)
+        if (!rawSupported) assertThat((raw.content.single() as TextContent).text).contains("Raw Android keycodes")
+        if (!holdSupported) assertThat((hold.content.single() as TextContent).text).contains("Long key presses")
+        assertThat(events).isEqualTo(
+          listOfNotNull("code:174:false".takeIf { rawSupported }, "animation".takeIf { rawSupported }, "key:Remote Dpad Up:true".takeIf { holdSupported }, "animation".takeIf { holdSupported }),
+        )
+      }
+    }
+  }
+
+  @Test
   fun `named short press still succeeds when raw and hold are unsupported`() = runTest {
     val fake = FakeDeviceSession()
     val events = mutableListOf<String>()
-    val result = pressKeyWithCapabilities(fake, rawKeycodes = false, longPress = false, events = events) {
+    val result = pressKeyWithCapabilities(fake, rawSupported = false, holdSupported = false, events = events) {
       put("key", "Remote Dpad Up")
     }
     assertThat(result.isError).isIn(null, false)
@@ -330,8 +351,8 @@ class VerityMcpServerTest {
   fun `supported capabilities are accepted on an iOS-platform session`() = runTest {
     val fake = FakeDeviceSession(platform = Platform.IOS)
     val events = mutableListOf<String>()
-    val raw = pressKeyWithCapabilities(fake, rawKeycodes = true, longPress = true, events = events) { put("keycode", 174) }
-    val hold = pressKeyWithCapabilities(fake, rawKeycodes = true, longPress = true, events = events) {
+    val raw = pressKeyWithCapabilities(fake, rawSupported = true, holdSupported = true, events = events) { put("keycode", 174) }
+    val hold = pressKeyWithCapabilities(fake, rawSupported = true, holdSupported = true, events = events) {
       put("key", "return")
       put("long_press", true)
     }
