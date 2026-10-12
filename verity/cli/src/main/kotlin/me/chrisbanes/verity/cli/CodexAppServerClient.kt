@@ -217,8 +217,10 @@ internal class CodexAppServerClient internal constructor(
       val id = (params["threadId"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: return null
       return when (frame["method"]) {
         JsonPrimitive("thread/closed") -> id
+
         // Only the status type matters: the frame is dropped, so the owned-thread activeFlags checks don't apply.
         JsonPrimitive("thread/status/changed") -> id.takeIf { (params["status"] as? JsonObject)?.get("type") == JsonPrimitive("notLoaded") }
+
         else -> null
       }
     }
