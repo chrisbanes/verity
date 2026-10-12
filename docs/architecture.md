@@ -536,6 +536,15 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 --no-bundled-context     Skip bundled context resources
 ```
 
+### Run Options
+
+```
+--dry-run                Render mapped or generated actions as YAML without device access
+--model-trace <file>     Append a sensitive trace of model requests, replies and backend frames
+```
+
+`--model-trace` is opened during local preflight, before Codex preparation and session creation. `TracingModelRequestBackend` records every request and its reply or redacted failure, whatever the backend. `CodexModelBackend.prepare(trace = …)` passes the same `ModelTraceSink` to `CodexAppServerClient`, which adds sent and received app-server frames and stderr. API providers add nothing below the request layer. The trace captures prompts, hierarchy dumps, image paths and model replies, so it is sensitive. It is never written into run artifacts. See the [preflight spec](specs/preflight-checks.md#model-trace) for the file contract.
+
 `--platform` takes the platform wire names (the same as `device.platform` and journey `platform`), not enum constant names.
 
 The `mcp` subcommand additionally accepts `--host` (default: 127.0.0.1) and `--port` (default: 8080) for HTTP transport.
