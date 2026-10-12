@@ -47,13 +47,16 @@ class ModelTraceTest {
   }
 
   @Test
-  fun `symlink directory and missing parent are refused`() {
+  fun `symlink directory missing parent and read-only file are refused`() {
     val target = Files.writeString(dir.resolve("target.log"), "kept\n")
     val link = Files.createSymbolicLink(dir.resolve("link.log"), target)
 
     assertFailsWith<IOException> { ModelTrace.open(link, clock) }
     assertFailsWith<IOException> { ModelTrace.open(Files.createDirectory(dir.resolve("directory")), clock) }
     assertFailsWith<IOException> { ModelTrace.open(dir.resolve("missing/trace.log"), clock) }
+    val readOnly = Files.writeString(dir.resolve("read-only.log"), "kept\n")
+    Files.setPosixFilePermissions(readOnly, PosixFilePermissions.fromString("r--------"))
+    assertFailsWith<IOException> { ModelTrace.open(readOnly, clock) }
     assertThat(Files.readString(target)).isEqualTo("kept\n")
   }
 

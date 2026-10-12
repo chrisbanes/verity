@@ -86,7 +86,7 @@ Evidence by version and host:
 - **0.159.0** is source-verified against rust-v0.159.0 ([evidence](https://github.com/chrisbanes/verity/issues/92#issuecomment-6085385043)), not runtime-qualified. The [historical checkpoint](https://github.com/chrisbanes/verity/issues/92#issuecomment-5955708208) ran a 0.159.0 binary with a probe client, not Verity's backend.
 - Linux, Windows, other hosts and other versions are not qualified; newer versions remain gated by runtime checks.
 
-Safe diagnostics never include raw frames or stderr. With [`--model-trace`](#model-trace), the trace file records every app-server frame sent and received, plus stderr lines, in order. That file is the only place they are retained.
+Safe diagnostics never include raw frames or stderr. With [`--model-trace`](#model-trace), the trace file records every app-server frame sent and received, in the order the client handles them, plus stderr lines as they arrive. That file is the only place they are retained.
 
 Offline fake-child tests cover client behavior and owned cleanup; they are not real inference or entitlement evidence.
 

@@ -68,7 +68,7 @@ internal class TracingModelRequestBackend(
     } catch (failure: Exception) {
       val kind = (failure as? ModelBackendFailure)?.let { " kind=${it.kind}" }.orEmpty()
       val message = redactModelDiagnostic("${failure::class.simpleName}: ${failure.message}")
-      withContext(NonCancellable) { trace { write("$id failure duration=${started.elapsedNow().inWholeMilliseconds}ms$kind $message") } }
+      trace { write("$id failure duration=${started.elapsedNow().inWholeMilliseconds}ms$kind $message") }
       throw failure
     }
     trace { write("$id response finish=${response.finishReason} duration=${started.elapsedNow().inWholeMilliseconds}ms ${response.textContent()}") }
@@ -77,7 +77,8 @@ internal class TracingModelRequestBackend(
 
   override suspend fun close() = delegate.close()
 
-  private suspend fun trace(block: ModelTraceSink.() -> Unit) = withContext(Dispatchers.IO) { sink.block() }
+  // Non-cancellable so a timeout racing a finished request cannot drop its reply or trace line.
+  private suspend fun trace(block: ModelTraceSink.() -> Unit) = withContext(NonCancellable + Dispatchers.IO) { sink.block() }
 
   private fun ModelTraceSink.write(text: String) = write("request", text)
 }
