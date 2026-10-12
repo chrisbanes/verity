@@ -31,6 +31,13 @@ class AssertionStrategyParserTest {
   }
 
   @Test
+  fun `infer strategy keeps the visual mode forced by visually`() {
+    val step = JourneyStepParser.parse("Verify visually that the Home row is selected", AssertionStrategy.INFER)
+
+    assertThat(step).isEqualTo(JourneyStep.Assert("the Home row is selected", AssertMode.VISUAL))
+  }
+
+  @Test
   fun `pinned assertion mode overrides configured strategy`() {
     val step = JourneyStepParser.parse("[?focused] Home", AssertionStrategy.VISUAL)
 
