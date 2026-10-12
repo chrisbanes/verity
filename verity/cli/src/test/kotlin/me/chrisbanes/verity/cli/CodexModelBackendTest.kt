@@ -186,7 +186,7 @@ class CodexModelBackendTest {
               throw failure
             }
           }
-          awaitMethod(fake, "turn/start")
+          awaitOwnedTurn(fake, backend)
           caller.cancel(cancellation)
           caller.join()
           assertThat(observed).isSameInstanceAs(cancellation)
@@ -209,6 +209,13 @@ class CodexModelBackendTest {
 
   private suspend fun awaitMethod(fake: FakeCodexLauncher, method: String) {
     withTimeout(3_000) { while (fake.capturedFrames().none { it["method"] == JsonPrimitive(method) }) delay(10) }
+  }
+
+  /** The fake records turn/start before its ACK; cancelling before the backend consumes it leaves cleanup an in-flight RPC. */
+  private suspend fun awaitOwnedTurn(fake: FakeCodexLauncher, backend: CodexModelBackend) {
+    awaitMethod(fake, "turn/start")
+    val threadId = (fake.capturedFrames().last { it["method"] == JsonPrimitive("turn/start") }.getValue("params").jsonObject["threadId"] as JsonPrimitive).content
+    withTimeout(3_000) { while (!backend.client.ownsTurn(threadId, threadId.replace("thread-", "turn-"))) delay(10) }
   }
 
   @Test
@@ -576,7 +583,7 @@ class CodexModelBackendTest {
                   throw e
                 }
               }
-              awaitMethod(fake, "turn/start")
+              awaitOwnedTurn(fake, backend)
               caller.cancel(cancellation)
               caller.join()
               assertThat(observed).isSameInstanceAs(cancellation)
@@ -643,7 +650,7 @@ class CodexModelBackendTest {
               throw e
             }
           }
-          awaitMethod(fake, "turn/start")
+          awaitOwnedTurn(fake, backend)
           val queued = launch { backend.execute(request("queued")) }
           delay(50)
           queued.cancel(CallerCancellation(Any()))
@@ -675,7 +682,7 @@ class CodexModelBackendTest {
               fixedFailure = e
             }
           }
-          awaitMethod(fake, "turn/start")
+          awaitOwnedTurn(fake, backend)
           backend.close()
           active.join()
           assertThat(fixedFailure?.kind).isEqualTo(CodexFailureKind.REQUEST)
