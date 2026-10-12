@@ -287,12 +287,12 @@ class CodexPreflightTest {
   }
 
   private suspend fun checkWith(device: DevicePreflightChecker, codex: suspend () -> CodexModelBackend): CliPreflightResult {
-    val path = Files.createTempFile("verity-preflight-", ".yaml")
+    val path = withContext(Dispatchers.IO) { Files.createTempFile("verity-preflight-", ".yaml") }
     try {
       return CliPreflightChecker(environment = { error("API key read") }, codexFactory = codex, devicePreflightChecker = device)
         .check(request(path.toString(), null), VerityConfig())
     } finally {
-      withContext(NonCancellable) { Files.deleteIfExists(path) }
+      withContext(Dispatchers.IO + NonCancellable) { Files.deleteIfExists(path) }
     }
   }
 
