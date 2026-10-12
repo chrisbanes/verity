@@ -1,11 +1,13 @@
 package me.chrisbanes.verity.mcp
 
 import assertk.assertThat
+import assertk.assertions.containsOnly
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import kotlin.test.Test
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 
 class McpFocusedTreeRendererTest {
   @Test
@@ -674,6 +676,25 @@ class McpFocusedTreeRendererTest {
       truncated: node_limit=true character_limit=false text=false
       """.trimIndent() + "\n",
     )
+  }
+
+  @Test
+  fun `renders only candidate rows for a large tree`() {
+    val outside = (0 until 1_000).map { node("X$it", node("Y$it")) }
+    val siblings = (0..10).map { node("S$it", node("C$it"), focused = it == 5) }
+    val tree = node("R", node("P", *siblings.toTypedArray()), *outside.toTypedArray())
+    val rendered = mutableSetOf<String>()
+    val output = McpFocusedTreeRenderer.render(
+      tree,
+      "snapshot",
+      HierarchyFilter.CONTENT,
+      renderNode = { node, filter ->
+        rendered.add(node.attributes.getValue("text"))
+        HierarchyRenderer.render(node, filter)
+      },
+    )
+    assertThat(rendered).containsOnly("R", "P", "S5", "C5", "S3", "S4", "S6", "S7", "C3", "C4", "C6", "C7")
+    assertThat(output).isEqualTo(McpFocusedTreeRenderer.render(tree, "snapshot", HierarchyFilter.CONTENT))
   }
 
   private fun node(text: String, vararg children: HierarchyNode, focused: Boolean = false) = HierarchyNode(
