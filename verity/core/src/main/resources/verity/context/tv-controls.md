@@ -38,8 +38,25 @@ Supply exactly one of `key` or `keycode`. Add `"long_press": true` to hold eithe
 a named key or a raw code; Android sends `input keyevent --longpress`. This flag
 uses Android's hold behavior and does not accept a custom duration. Sessions
 without raw-keycode or hold support, currently iOS, reject those calls before
-input. These are MCP arguments, not Maestro YAML fields or journey-step syntax. The default MCP call waits for animation after
-the press; optional focus waiting retains its separate tool behavior.
+input. These `press_key` arguments are MCP tool arguments, not Maestro YAML fields
+or journey-step syntax. The default MCP call waits for animation after the press;
+optional focus waiting retains its separate tool behavior.
+
+## Raw Keycodes in Journeys
+
+A journey step that names a raw keycode, or a key outside Maestro's set, becomes a
+structured `keyCode` action. For example, Android `KEYCODE_BOOKMARK` is `174`:
+
+```json
+{"type": "keyCode", "keycode": 174}
+```
+
+Add `"longPress": true` to hold the key.
+
+The steps `press keycode N` and `long press keycode N` map to this action without a
+model call. Verity sends it directly to the device rather than as a Maestro command,
+and waits for animation afterwards. Sessions without raw-keycode support (or hold
+support, for `longPress`), currently iOS, reject the flow before any device work.
 
 ## Navigation Patterns
 

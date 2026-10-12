@@ -37,8 +37,8 @@ class NavigatorAgent(
       ActionFlow.decodeResponse(appId, response).also { validateFlow(it) }
     } catch (error: CancellationException) {
       throw error
-    } catch (_: InvalidActionFlowException) {
-      throw ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.INVALID_RESPONSE)
+    } catch (error: InvalidActionFlowException) {
+      throw ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.INVALID_RESPONSE, error.detail)
     }
   }
 
@@ -74,12 +74,14 @@ class NavigatorAgent(
           Android TV uses D-pad navigation (Remote Dpad Up/Down/Left/Right/Center).
           Always add waitForAnimation after navigation actions.
           Use waitUntilVisible for content that needs time to load.
+          keyCode(keycode non-negative integer, longPress optional boolean) sends a raw Android keycode; use it when a step names a keycode or the key is not in Maestro's set; for example KEYCODE_BOOKMARK is 174: {"type":"keyCode","keycode":174}
         """.trimIndent()
 
         Platform.ANDROID_MOBILE -> """
           You are generating structured actions for an Android mobile app.
           Use tap, swipe, scroll, and input commands.
           Always add waitForAnimation after navigation actions.
+          keyCode(keycode non-negative integer, longPress optional boolean) sends a raw Android keycode; use it when a step names a keycode or the key is not in Maestro's set; for example KEYCODE_BOOKMARK is 174: {"type":"keyCode","keycode":174}
         """.trimIndent()
 
         Platform.IOS -> """

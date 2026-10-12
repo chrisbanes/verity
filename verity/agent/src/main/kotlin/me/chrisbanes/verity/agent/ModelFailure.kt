@@ -13,8 +13,16 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Only these diagnostics may leave a model request boundary. Never retain a raw cause. */
-class ModelFailureException(val stage: ModelRequestStage, val failure: ModelFailureKind) : Exception("${stage.diagnostic} ${failure.diagnostic}")
+/**
+ * Only these diagnostics may leave a model request boundary. Never retain a raw cause. The only
+ * permitted extra text is [detail] from [me.chrisbanes.verity.core.model.InvalidActionFlowException],
+ * whose only model-derived content is a sanitized key name.
+ */
+class ModelFailureException(
+  val stage: ModelRequestStage,
+  val failure: ModelFailureKind,
+  val detail: String? = null,
+) : Exception("${stage.diagnostic} ${failure.diagnostic}" + detail?.let { ": $it" }.orEmpty())
 
 enum class ModelRequestStage(val diagnostic: String) {
   NAVIGATOR_FLOW("Navigator flow"),
