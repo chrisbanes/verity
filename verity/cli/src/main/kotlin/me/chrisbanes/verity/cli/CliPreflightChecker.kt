@@ -34,6 +34,7 @@ data class CliPreflightRequest(
   val contextPath: String?,
   val platform: Platform,
   val deviceId: String?,
+  val modelTracePath: String? = null,
 )
 
 data class CliPreflightResult(
@@ -48,6 +49,8 @@ data class CliPreflightResult(
   val openaiAuth: OpenAiAuth = OpenAiAuth.API_KEY,
   val navigatorEffort: String? = null,
   val inspectorEffort: String? = null,
+  /** Open `--model-trace` sink, present only when the report passed; the caller closes it. */
+  val trace: ModelTrace? = null,
 ) {
   /** Device resolved by the passing device preflight, if any. */
   val deviceId: String? get() = report.deviceId
@@ -57,7 +60,8 @@ class CliPreflightChecker internal constructor(
   private val environment: (String) -> String? = System::getenv,
   private val pathPreflightChecker: PathPreflightChecker = PathPreflightChecker(),
   private val devicePreflightChecker: DevicePreflightChecker = PlatformDevicePreflightChecker(),
-  private val codexFactory: suspend () -> CodexModelBackend = { CodexModelBackend.prepare() },
+  private val codexFactory: suspend (ModelTraceSink?) -> CodexModelBackend = { CodexModelBackend.prepare(trace = it) },
+  private val openTrace: (Path) -> ModelTrace = { ModelTrace.open(it) },
   private val backendIdentity: (VerityProvider, LLModel) -> String? = ::currentReasoningBackendId,
 ) {
   suspend fun check(
@@ -75,6 +79,17 @@ class CliPreflightChecker internal constructor(
     val resolvedProvider = runCatching { resolveProvider(request.cliProvider, config) }
     if (authValue != null && resolvedProvider.getOrNull() != VerityProvider.OpenAI) return authFailure()
     if (auth == OpenAiAuth.CHATGPT) return checkChatGpt(request, config, includeDevicePreflight, includeInspectorModelPreflight)
+    return withTrace { trace -> checkApi(request, config, includeDevicePreflight, includeInspectorModelPreflight, resolvedProvider, trace) }
+  }
+
+  private suspend fun checkApi(
+    request: CliPreflightRequest,
+    config: VerityConfig,
+    includeDevicePreflight: Boolean,
+    includeInspectorModelPreflight: Boolean,
+    resolvedProvider: Result<VerityProvider>,
+    trace: TraceOpening,
+  ): CliPreflightResult {
     var report = PreflightReport()
     val provider = resolvedProvider.getOrElse { error ->
       report += errorReport(
@@ -143,7 +158,7 @@ class CliPreflightChecker internal constructor(
       )
     }
 
-    report += pathReport(request, missingRemediation = "Run `verity run <path.journey.yaml>`.")
+    report += pathReport(request, missingRemediation = "Run `verity run <path.journey.yaml>`.", trace)
     if (includeDevicePreflight && !effortInvalid) {
       report += devicePreflightChecker.check(request.platform, request.deviceId)
     }
@@ -169,12 +184,12 @@ class CliPreflightChecker internal constructor(
     inspectorParams = LLMParams(),
   )
 
-  private suspend fun checkChatGpt(request: CliPreflightRequest, config: VerityConfig, includeDevice: Boolean, includeInspector: Boolean): CliPreflightResult {
+  private suspend fun checkChatGpt(request: CliPreflightRequest, config: VerityConfig, includeDevice: Boolean, includeInspector: Boolean): CliPreflightResult = withTrace { trace ->
     val navigator = SelectedRoleModel.Codex(request.cliNavigatorModel ?: config.effectiveNavigatorModel ?: CHATGPT_DEFAULT_MODEL_ID)
     val inspector = if (includeInspector) SelectedRoleModel.Codex(request.cliInspectorModel ?: config.effectiveInspectorModel ?: CHATGPT_DEFAULT_MODEL_ID) else null
     val navigatorEffort = request.cliNavigatorEffort ?: config.effectiveNavigatorEffort
     val inspectorEffort = request.cliInspectorEffort ?: config.effectiveInspectorEffort
-    var report = pathReport(request, missingRemediation = "Pass a journey file or directory.")
+    var report = pathReport(request, missingRemediation = "Pass a journey file or directory.", trace)
     var backend: CodexModelBackend? = null
     var transferred = false
     var primary: Throwable? = null
@@ -185,7 +200,7 @@ class CliPreflightChecker internal constructor(
         if (report.passed) {
           try {
             withTimeout(30_000) {
-              val prepared = codexFactory().also { backend = it }
+              val prepared = codexFactory(trace.trace).also { backend = it }
               prepared.validateRoles(
                 buildList {
                   add(navigator to navigatorEffort)
@@ -217,7 +232,7 @@ class CliPreflightChecker internal constructor(
         backend = null
       }
       transferred = report.passed
-      return CliPreflightResult(report, VerityProvider.OpenAI, null, navigator, inspector, LLMParams(), LLMParams(), backend.takeIf { transferred }, OpenAiAuth.CHATGPT, navigatorEffort, inspectorEffort)
+      CliPreflightResult(report, VerityProvider.OpenAI, null, navigator, inspector, LLMParams(), LLMParams(), backend.takeIf { transferred }, OpenAiAuth.CHATGPT, navigatorEffort, inspectorEffort)
     } catch (error: Exception) {
       primary = error
       throw error
@@ -261,8 +276,26 @@ class CliPreflightChecker internal constructor(
     details: Map<String, String> = emptyMap(),
   ): PreflightReport = PreflightReport(listOf(PreflightIssue(code, PreflightSeverity.ERROR, message, remediation, details)))
 
-  /** Journey, context and temp-directory checks shared by both authentication modes. */
-  private suspend fun pathReport(request: CliPreflightRequest, missingRemediation: String): PreflightReport = withContext(Dispatchers.IO) {
+  /** Holds a trace opened by [pathReport] until the result transfers or closes it. */
+  private class TraceOpening {
+    var trace: ModelTrace? = null
+  }
+
+  /** The trace is transferred only with a passing report; otherwise, and on any exception, it is closed. */
+  private suspend fun withTrace(check: suspend (TraceOpening) -> CliPreflightResult): CliPreflightResult {
+    val opening = TraceOpening()
+    var transferred = false
+    try {
+      val result = check(opening)
+      transferred = result.report.passed
+      return if (transferred) result.copy(trace = opening.trace) else result
+    } finally {
+      if (!transferred) opening.trace?.close()
+    }
+  }
+
+  /** Journey, context, temp-directory and model trace checks shared by both authentication modes. */
+  private suspend fun pathReport(request: CliPreflightRequest, missingRemediation: String, trace: TraceOpening): PreflightReport = withContext(Dispatchers.IO) {
     var report = if (request.journeyPath == null) {
       errorReport(PreflightCodes.PATH_MISSING, "Journey path is required.", missingRemediation)
     } else {
@@ -270,7 +303,22 @@ class CliPreflightChecker internal constructor(
       if (Files.isDirectory(path)) pathPreflightChecker.requireReadableDirectory(path, "Journey directory") else pathPreflightChecker.requireReadableFile(path, "Journey file")
     }
     request.contextPath?.let { report += pathPreflightChecker.requireReadableDirectory(Path.of(it), "Context path") }
-    report + pathPreflightChecker.requireTempWritable()
+    report += pathPreflightChecker.requireTempWritable()
+    request.modelTracePath?.let { tracePath ->
+      try {
+        trace.trace = openTrace(Path.of(tracePath))
+      } catch (e: CancellationException) {
+        throw e
+      } catch (_: Exception) {
+        report += errorReport(
+          PreflightCodes.PATH_NOT_WRITABLE,
+          "Model trace file cannot be opened safely: $tracePath",
+          "Choose a regular, writable file that is not a symlink.",
+          mapOf("path" to tracePath),
+        )
+      }
+    }
+    report
   }
 
   private fun resolveEffortSafely(

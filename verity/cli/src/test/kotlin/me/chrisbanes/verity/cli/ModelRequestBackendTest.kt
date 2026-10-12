@@ -18,6 +18,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isLessThan
 import assertk.assertions.isSameInstanceAs
+import assertk.assertions.matches
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -32,6 +33,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import me.chrisbanes.verity.agent.ModelBackendFailure
+import me.chrisbanes.verity.agent.ModelBackendFailureKind
 
 class ModelRequestBackendTest {
   @Test
@@ -148,6 +151,96 @@ class ModelRequestBackendTest {
     }
   }
 
+  private class RecordingSink : ModelTraceSink {
+    val lines = mutableListOf<String>()
+    override fun write(source: String, text: String) {
+      synchronized(lines) { lines += "$source $text" }
+    }
+  }
+
+  private fun apiRequest(images: List<LabeledLocalImage> = emptyList()) = ModelRequest(
+    promptName = "visual-eval",
+    systemText = "system\ninstructions",
+    userText = "user question",
+    images = images,
+    model = SelectedRoleModel.Api(VerityProvider.OpenAI.findModel("gpt-4o")),
+    settings = ModelRequestSettings.Api(LLMParams()),
+  )
+
+  @Test
+  fun `traced API request records request fields images and reply in order`() = runTest {
+    val image = withContext(Dispatchers.IO) { Files.createTempFile("verity-trace-image", ".png").also { Files.write(it, byteArrayOf(1)) } }
+    try {
+      val executor = CapturingPromptExecutor()
+      executor.reply = Message.Assistant(content = "assistant reply", metaInfo = ResponseMetaInfo(Instant.parse("2026-10-02T00:00:00Z")), finishReason = "stop")
+      val sink = RecordingSink()
+      val backend = TracingModelRequestBackend(ApiModelRequestBackend(executor), sink)
+
+      val result = backend.execute(apiRequest(listOf(LabeledLocalImage("Current screenshot", image), LabeledLocalImage("Reference screenshot 1", image))))
+
+      assertThat(result).isSameInstanceAs(executor.reply)
+      assertThat(sink.lines.dropLast(1)).isEqualTo(
+        listOf(
+          "request #1 start prompt=visual-eval model=gpt-4o images=2",
+          "request #1 system system\ninstructions",
+          "request #1 user user question",
+          "request #1 image Current screenshot $image",
+          "request #1 image Reference screenshot 1 $image",
+        ),
+      )
+      assertThat(sink.lines.last()).matches(Regex("request #1 response finish=stop duration=\\d+ms assistant reply"))
+      backend.close()
+      assertThat(executor.closed).isEqualTo(true)
+    } finally {
+      withContext(NonCancellable + Dispatchers.IO) { Files.deleteIfExists(image) }
+    }
+  }
+
+  @Test
+  fun `traced API failure is redacted and rethrown unchanged`() = runTest {
+    val executor = CapturingPromptExecutor()
+    val failure = IllegalStateException("Authorization: Bearer abc sk-secret eyJa.eyJb.sig")
+    executor.failure = failure
+    val sink = RecordingSink()
+    val backend = TracingModelRequestBackend(ApiModelRequestBackend(executor), sink)
+
+    val thrown = assertFailsWith<IllegalStateException> { backend.execute(apiRequest()) }
+
+    assertThat(thrown).isSameInstanceAs(failure)
+    val line = sink.lines.last()
+    assertThat(line).matches(Regex("request #1 failure duration=\\d+ms IllegalStateException: Authorization: Bearer \\[redacted] \\[redacted] \\[redacted]"))
+  }
+
+  @Test
+  fun `traced backend failure records its kind and numbers requests`() = runTest {
+    val sink = RecordingSink()
+    val delegate = object : ModelRequestBackend {
+      override suspend fun execute(request: ModelRequest): Message.Assistant = throw ModelBackendFailure(ModelBackendFailureKind.PROTOCOL)
+      override suspend fun close() = Unit
+    }
+    val backend = TracingModelRequestBackend(delegate, sink)
+
+    assertFailsWith<ModelBackendFailure> { backend.execute(apiRequest()) }
+    assertFailsWith<ModelBackendFailure> { backend.execute(apiRequest()) }
+
+    assertThat(sink.lines.last()).matches(Regex("request #2 failure duration=\\d+ms kind=PROTOCOL ModelBackendFailure: Codex protocol failure"))
+  }
+
+  @Test
+  fun `traced cancellation is rethrown without a failure entry`() = runTest {
+    val sink = RecordingSink()
+    val cancellation = kotlinx.coroutines.CancellationException("caller cancelled")
+    val delegate = object : ModelRequestBackend {
+      override suspend fun execute(request: ModelRequest): Message.Assistant = throw cancellation
+      override suspend fun close() = Unit
+    }
+
+    val thrown = assertFailsWith<kotlinx.coroutines.CancellationException> { TracingModelRequestBackend(delegate, sink).execute(apiRequest()) }
+
+    assertThat(thrown).isSameInstanceAs(cancellation)
+    assertThat(sink.lines.none { it.contains(" failure ") }).isEqualTo(true)
+  }
+
   private class CapturingPromptExecutor : PromptExecutorAPI {
     var capturedPrompt: Prompt? = null
     var capturedModel: LLModel? = null
@@ -156,6 +249,7 @@ class ModelRequestBackendTest {
       metaInfo = ResponseMetaInfo(Instant.parse("2026-10-02T00:00:00Z")),
     )
     var closed = false
+    var failure: Exception? = null
 
     override suspend fun execute(
       prompt: Prompt,
@@ -164,6 +258,7 @@ class ModelRequestBackendTest {
     ): Message.Assistant {
       capturedPrompt = prompt
       capturedModel = model
+      failure?.let { throw it }
       return reply
     }
 

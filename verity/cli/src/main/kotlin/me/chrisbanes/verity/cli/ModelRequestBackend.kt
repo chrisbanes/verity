@@ -6,8 +6,14 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.params.LLMParams
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.time.TimeSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import me.chrisbanes.verity.agent.ModelBackendFailure
+import me.chrisbanes.verity.agent.redactModelDiagnostic
 
 data class LabeledLocalImage(
   val label: String,
@@ -40,6 +46,44 @@ interface ModelRequestBackend {
   suspend fun execute(request: ModelRequest): Message.Assistant
 
   suspend fun close()
+}
+
+/** Records each request and its reply or redacted failure for `--model-trace`. */
+internal class TracingModelRequestBackend(
+  private val delegate: ModelRequestBackend,
+  private val sink: ModelTraceSink,
+) : ModelRequestBackend {
+  private val ids = AtomicLong()
+
+  override suspend fun execute(request: ModelRequest): Message.Assistant {
+    val id = "#${ids.incrementAndGet()}"
+    trace {
+      write("$id start prompt=${request.promptName} model=${request.model.id} images=${request.images.size}")
+      write("$id system ${request.systemText}")
+      write("$id user ${request.userText}")
+      request.images.forEach { write("$id image ${it.label} ${it.path}") }
+    }
+    val started = TimeSource.Monotonic.markNow()
+    val response = try {
+      delegate.execute(request)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (failure: Exception) {
+      val kind = (failure as? ModelBackendFailure)?.let { " kind=${it.kind}" }.orEmpty()
+      val message = redactModelDiagnostic("${failure::class.simpleName}: ${failure.message}")
+      trace { write("$id failure duration=${started.elapsedNow().inWholeMilliseconds}ms$kind $message") }
+      throw failure
+    }
+    trace { write("$id response finish=${response.finishReason} duration=${started.elapsedNow().inWholeMilliseconds}ms ${response.textContent()}") }
+    return response
+  }
+
+  override suspend fun close() = delegate.close()
+
+  // Non-cancellable so a timeout racing a finished request cannot drop its reply or trace line.
+  private suspend fun trace(block: ModelTraceSink.() -> Unit) = withContext(NonCancellable + Dispatchers.IO) { sink.block() }
+
+  private fun ModelTraceSink.write(text: String) = write("request", text)
 }
 
 /** Executes API-backed requests through Koog while retaining complete native LLM parameters. */

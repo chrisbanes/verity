@@ -358,6 +358,75 @@ class RunCommandTest {
   }
 
   @Test
+  fun `model trace path is forwarded only when requested`() {
+    val dir = createTempDirectory("verity-trace-option").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val requests = mutableListOf<CliPreflightRequest>()
+      val command = {
+        RunCommand(
+          clock = fixedClock(),
+          preflightChecker = { request, _, _, _ ->
+            requests += request
+            error("stop after preflight request")
+          },
+        )
+      }
+
+      Verity().subcommands(command()).test("--output-path ${File(dir, "output").absolutePath} run ${file.absolutePath}")
+      Verity().subcommands(command()).test("--output-path ${File(dir, "output").absolutePath} run --model-trace ${File(dir, "trace.log").absolutePath} ${file.absolutePath}")
+
+      assertThat(requests.map { it.modelTracePath }).containsExactly(null, File(dir, "trace.log").absolutePath)
+      assertThat(File(dir, "trace.log").exists()).isFalse()
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `unsafe model trace exits setup before device session or client creation`() {
+    val dir = createTempDirectory("verity-trace-preflight").toFile()
+    try {
+      val file = writeJourney(dir, "single.journey.yaml", "Single")
+      val target = File(dir, "target.log").apply { writeText("kept\n") }
+      val link = Files.createSymbolicLink(File(dir, "trace.log").toPath(), target.toPath())
+      var sessionCalls = 0
+      var clientCalls = 0
+      val checker = CliPreflightChecker(
+        environment = { null },
+        devicePreflightChecker = DevicePreflightChecker { _, _ -> me.chrisbanes.verity.core.preflight.PreflightReport() },
+      )
+      val command = RunCommand(
+        clock = fixedClock(),
+        preflightChecker = { request, config, includeDevice, includeInspector ->
+          checker.check(request, config, includeDevice, includeInspector)
+        },
+        sessionFactory = { _, _, _ ->
+          sessionCalls += 1
+          error("Device session must not be created")
+        },
+        clientFactory = { _, _ ->
+          clientCalls += 1
+          error("LLM client must not be created")
+        },
+      )
+
+      val result = Verity().subcommands(command).test(
+        "--output-path ${File(dir, "output").absolutePath} --provider openai --api-key test-key " +
+          "run --model-trace $link ${file.absolutePath}",
+      )
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("Model trace file cannot be opened safely")
+      assertThat(sessionCalls).isEqualTo(0)
+      assertThat(clientCalls).isEqualTo(0)
+      assertThat(target.readText()).isEqualTo("kept\n")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `unsupported navigator effort exits setup before device session or client creation`() {
     val dir = createTempDirectory("verity-effort-preflight").toFile()
     try {

@@ -127,3 +127,15 @@ verity --provider openai --openai-auth chatgpt run journeys/login.journey.yaml
 ```
 
 Sign in through Codex first. Verity requires Codex CLI 0.159.0 or newer and checks the required app-server schema and isolation; a newer version alone does not establish compatibility. Codex 0.161.0 is runtime-qualified on macOS arm64; 0.159.0 is source-verified only. ChatGPT defaults both roles to `gpt-6-luna`, subject to the dynamic catalog. Explicit model IDs and efforts must match that catalog exactly. See [configuration](docs/specs/project-configuration.md#openai-authentication) and [preflight](docs/specs/preflight-checks.md#chatgpt-preflight) for support limits and remediation.
+
+### Diagnosing model failures
+
+When a model backend fails, the run reports only a fixed stage and failure class, such as "Navigator flow response was invalid". To see what was actually sent and received, pass `--model-trace` to `run`:
+
+```bash
+verity --provider openai --openai-auth chatgpt run --model-trace verity-trace.log journeys/login.journey.yaml
+```
+
+Verity appends one line per event to the file: each request's prompt, user text and image paths, then the reply or failure. With ChatGPT auth it also records every Codex app-server frame and stderr line. The option works with `--dry-run` too, but a dry-run that needs no generated actions makes no model requests and doesn't touch the file.
+
+The trace contains prompts, hierarchy dumps, image paths and model replies. Only failure messages are redacted, so treat the file as sensitive. Verity creates it owner-only (`0600`), appends to an existing regular file, and refuses symlinks and other non-regular files with setup exit `3`. See [preflight](docs/specs/preflight-checks.md#model-trace) for the format.

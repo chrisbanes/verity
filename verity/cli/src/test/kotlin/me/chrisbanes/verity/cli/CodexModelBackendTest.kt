@@ -602,6 +602,79 @@ class CodexModelBackendTest {
     }
   }
 
+  private class RecordingSink : ModelTraceSink {
+    val lines = java.util.concurrent.CopyOnWriteArrayList<String>()
+    override fun write(source: String, text: String) {
+      lines += "$source $text"
+    }
+  }
+
+  @Test
+  fun `traced request records request entries frames and stderr in order`() = runTest {
+    withContext(Dispatchers.Default) {
+      val fake = FakeCodexLauncher("model-success")
+      val sink = RecordingSink()
+      val backend = fake.prepare(trace = sink)
+      try {
+        withTimeout(12_000) { TracingModelRequestBackend(backend, sink).execute(request()) }
+      } finally {
+        withContext(NonCancellable) {
+          try {
+            backend.close()
+            fake.verifyCleanup()
+          } finally {
+            fake.cleanupReceipts()
+          }
+        }
+      }
+      val lines = sink.lines.toList()
+      fun first(predicate: (String) -> Boolean) = lines.indexOfFirst(predicate).also { assertThat(it >= 0).isTrue() }
+      val initialize = first { it.startsWith("codex.sent ") && "\"method\":\"initialize\"" in it }
+      val received = first { it.startsWith("codex.received ") }
+      val start = first { it.startsWith("request #1 start prompt=navigator model=exact-selected-model") }
+      val turnStart = first { it.startsWith("codex.sent ") && "\"method\":\"turn/start\"" in it }
+      val turnCompleted = first { it.startsWith("codex.received ") && "turn/completed" in it }
+      val response = first { it.startsWith("request #1 response ") }
+      assertThat(initialize < received).isTrue()
+      assertThat(start < turnStart).isTrue()
+      assertThat(turnStart < turnCompleted).isTrue()
+      assertThat(turnCompleted < response).isTrue()
+      first { it == "codex.stderr fake-app-server stderr ready" }
+    }
+  }
+
+  @Test
+  fun `traced reader records a malformed frame before rejecting it`() = runTest {
+    withContext(Dispatchers.Default) {
+      val fake = FakeCodexLauncher("model-direct-malformed")
+      val sink = RecordingSink()
+      val resources = CodexOwnedResources(sink)
+      try {
+        val client = resources.client(resources.launch(listOf("injected-jvm-fake", "app-server"), resources.directory(), emptyMap(), fake::launch))
+        withTimeout(3_000) {
+          while (true) {
+            try {
+              client.requireHealthy()
+            } catch (_: CodexFailure) {
+              break
+            }
+            delay(10)
+          }
+        }
+        assertThat(sink.lines.contains("codex.received {malformed")).isTrue()
+      } finally {
+        withContext(NonCancellable) {
+          try {
+            resources.close()
+            fake.verifyCleanup()
+          } finally {
+            fake.cleanupReceipts()
+          }
+        }
+      }
+    }
+  }
+
   @Test
   fun `reader failure rejects already queued valid final and terminal frames irreversibly`() = runTest {
     withContext(Dispatchers.Default) {

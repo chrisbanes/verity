@@ -27,6 +27,14 @@ Normal `run` resolves configuration and input, validates project context, and pe
 
 Input/parser failures and setup/preflight failures have different [exit codes](run-artifacts.md#exit-codes-and-failure-boundaries). Expected preflight errors include their codes, messages, and remediation in CLI output.
 
+### Model trace
+
+`run --model-trace <file>` opens the trace during local path checks, so Codex preparation and role validation are traced too. Verity appends to an existing regular file and creates a new file with owner-only `0600` permissions. It refuses symlinks, directories and other non-regular files. A path that can't be opened safely reports `path.not_writable` with a fixed message and exits `3` before Codex preparation and session creation. Without the option, nothing is opened or written.
+
+Each line is `<UTC timestamp> <source> <text>`. The source is `request`, `codex.sent`, `codex.received` or `codex.stderr`. Newlines, carriage returns and backslashes in the text are escaped, so each event stays on one line. Lines are capped at 16 KiB and end with `…[truncated N bytes]` when cut. There is no total size cap. Request entries record the prompt name, model, system and user text, each image's label and path (never image bytes), then the reply text, finish reason and duration, or the failure's class, backend failure kind, duration and message passed through the diagnostic redactor. A cancelled or timed-out request has a start entry but no reply or failure entry. If a write fails, tracing stops for the rest of the run and the run continues.
+
+The trace contains prompts, hierarchy dumps, image paths and model replies. Treat it as sensitive.
+
 ### Reasoning-effort capability
 
 Navigator and inspector effort resolve independently. An unset value uses the selected backend's normal defaults and needs no capability-table entry. An explicit value must match the provider, exact model ID, backend/auth path, and supported string shown below. Values are preserved exactly: comparison does not trim or change case, and values are not translated between providers. `none` is an explicit value where listed; it is distinct from omitting the setting.
@@ -77,6 +85,8 @@ Evidence by version and host:
 - **codex-cli 0.161.0** is runtime-qualified on **macOS 26.7 arm64**. Verity's own backend passed the opt-in `codexQualification` task (preparation, role validation, navigator text, inspector screenshot, cleanup) with **gpt-6-luna / low** on 2026-10-09.
 - **0.159.0** is source-verified against rust-v0.159.0 ([evidence](https://github.com/chrisbanes/verity/issues/92#issuecomment-6085385043)), not runtime-qualified. The [historical checkpoint](https://github.com/chrisbanes/verity/issues/92#issuecomment-5955708208) ran a 0.159.0 binary with a probe client, not Verity's backend.
 - Linux, Windows, other hosts and other versions are not qualified; newer versions remain gated by runtime checks.
+
+Safe diagnostics never include raw frames or stderr. With [`--model-trace`](#model-trace), the trace file records every app-server frame sent and received, in the order the client handles them, plus stderr lines as they arrive. That file is the only place they are retained.
 
 Offline fake-child tests cover client behavior and owned cleanup; they are not real inference or entitlement evidence.
 
