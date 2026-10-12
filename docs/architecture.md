@@ -292,6 +292,8 @@ Auto-discovers the device if no ID is given. When `disableAnimations` is true, w
 
 Core owns shared reports and filesystem checks, device owns platform readiness checks, and the CLI composes provider/model/credential checks with journey/context/device validation. MCP performs device and screenshot-target preflight, without LLM credential checks.
 
+A passing iOS device preflight returns the resolved simulator UDID on `PreflightReport.deviceId` (merged by `PreflightReport.plus`, exposed as `CliPreflightResult.deviceId`). The CLI run path and MCP `open_session` pass it to `DeviceSessionFactory.connect`, so simulator discovery runs once; the factory keeps its own discovery for callers that skip preflight. Android leaves it unset.
+
 The CLI command that starts MCP still uses the shared configuration resolver and may reject invalid provider/model settings before server startup. This differs from MCP tool preflight and does not give the MCP module responsibility for LLM execution. See the [preflight spec](specs/preflight-checks.md) and [ADR-0001](adr/0001-mcp-device-boundary.md).
 
 ### Hierarchy Rendering

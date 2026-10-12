@@ -19,6 +19,8 @@ Representative codes include `android.adb.missing`, `android.device.missing`, `i
 
 Android preflight accepts an ADB serial, checks its state when specified, and otherwise requires at least one available device. It rejects numeric IP-address device IDs. iOS preflight currently checks simulators: an explicit UDID must be booted; automatic selection requires exactly one booted simulator. These checks do not establish physical iOS device readiness.
 
+A passing iOS preflight reports the simulator it resolved on `PreflightReport.deviceId`: the explicit UDID echoed back, or the single booted simulator for automatic selection. Failed reports and Android reports leave it unset. Session creation uses that UDID instead of listing simulators again.
+
 ## CLI behavior
 
 Normal `run` resolves configuration and input, validates project context, and performs local preflight before creating the session and LLM client. Provider checks resolve supported names/model IDs, check credential presence, and validate any explicit reasoning effort against the selected model and backend. API-key checks do not contact providers to verify credentials, account entitlement, or remote availability. ChatGPT mode performs the backend-specific preflight below.
@@ -51,7 +53,7 @@ An unknown, blank, unsupported, or unvalidated explicit value reports `provider.
 
 ## MCP behavior
 
-`open_session` checks the selected device before opening a session. Expected preflight failures return `CallToolResult` with `isError = true` and a JSON text report containing the issues. Screenshot file-target failures use the same report shape. Other unexpected tool failures use the tool's generic error response.
+`open_session` checks the selected device before opening a session. Expected preflight failures return `CallToolResult` with `isError = true` and a JSON text report containing the issues. Screenshot file-target failures use the same report shape. Other unexpected tool failures use the tool's generic error response. A passing iOS preflight's resolved UDID is used to open the session, and the response still reports `device: auto-discovered` when no device was supplied.
 
 MCP tools do not validate provider, model, or credential configuration. The CLI wrapper that starts MCP still resolves shared configuration; invalid provider/model settings can therefore prevent startup. This distinction preserves the [MCP device boundary](../adr/0001-mcp-device-boundary.md).
 
