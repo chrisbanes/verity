@@ -231,7 +231,7 @@ class VerityMcpServer(
       val disableAnimations = args.bool("disable_animations") ?: defaultDisableAnimations
       val report = devicePreflightChecker.check(platform, device)
       if (!report.passed) return@addSafeTool preflightError(report)
-      val handle = sessionManager.open(platform, device, disableAnimations)
+      val handle = sessionManager.open(platform, device, disableAnimations, resolvedDeviceId = report.deviceId)
       success(
         "Session opened.\nsession_id: ${handle.sessionId}\ndevice: ${handle.deviceId}\nplatform: $platform",
       )

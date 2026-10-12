@@ -60,6 +60,20 @@ class McpDeviceSessionManagerTest {
   }
 
   @Test
+  fun `open creates the session with the resolved device but labels the handle by the requested one`() = runTest {
+    var capturedDeviceId: String? = null
+    val manager = McpDeviceSessionManager(sessionFactory = { _, id, _ ->
+      capturedDeviceId = id
+      DummyDeviceSession()
+    })
+
+    val handle = manager.open(Platform.IOS, deviceId = null, resolvedDeviceId = "x")
+
+    assertThat(capturedDeviceId).isEqualTo("x")
+    assertThat(handle.deviceId).isEqualTo("auto-discovered")
+  }
+
+  @Test
   fun `withSession executes block with the session`() = runTest {
     val dummySession = DummyDeviceSession()
     val manager = McpDeviceSessionManager(sessionFactory = { _, _, _ -> dummySession })

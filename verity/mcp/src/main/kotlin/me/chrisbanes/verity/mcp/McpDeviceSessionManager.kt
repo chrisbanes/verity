@@ -31,12 +31,13 @@ class McpDeviceSessionManager(
     platform: Platform,
     deviceId: String? = null,
     disableAnimations: Boolean = false,
+    resolvedDeviceId: String? = null,
   ): SessionHandle = openMutex.withLock {
-    val session = sessionFactory(platform, deviceId, disableAnimations)
+    val session = sessionFactory(platform, deviceId ?: resolvedDeviceId, disableAnimations)
     val id = UUID.randomUUID()
-    val resolvedDeviceId = deviceId ?: "auto-discovered"
+    val label = deviceId ?: "auto-discovered"
     sessions[id] = SessionEntry(session)
-    SessionHandle(sessionId = id, deviceId = resolvedDeviceId)
+    SessionHandle(sessionId = id, deviceId = label)
   }
 
   suspend fun <T> withSession(sessionId: UUID, block: suspend (DeviceSession) -> T): T {
