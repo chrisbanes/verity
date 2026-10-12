@@ -332,6 +332,7 @@ internal class CodexModelBackend private constructor(
         if (frame.containsKey("id")) reject()
         val method = string(frame, "method")
         val params = frame["params"] as? JsonObject ?: reject()
+        if (isForeignThreadUnload(frame, params)) return
         if (method == "thread/started") {
           verifyThread(params["thread"] as? JsonObject ?: reject())
           return
@@ -380,6 +381,22 @@ internal class CodexModelBackend private constructor(
       } catch (e: Exception) {
         rejected = true
         throw e
+      }
+    }
+
+    /**
+     * The shared app-server unloads idle threads from earlier requests at any point, even before this
+     * request owns a thread. Those frames carry only a thread identity, so they are ignored; any other
+     * frame for a foreign thread, and the owned thread's own unload, still fail.
+     */
+    private fun isForeignThreadUnload(frame: JsonObject, params: JsonObject): Boolean {
+      if (frame.containsKey("id")) return false
+      val id = (params["threadId"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: return false
+      if (id == (threadId ?: observedThreadId)) return false
+      return when (frame["method"]) {
+        JsonPrimitive("thread/closed") -> true
+        JsonPrimitive("thread/status/changed") -> (params["status"] as? JsonObject)?.get("type") == JsonPrimitive("notLoaded")
+        else -> false
       }
     }
 
@@ -492,6 +509,7 @@ internal class CodexModelBackend private constructor(
     private suspend fun cleanupEvent(frame: JsonObject) {
       // Permissive draining is limited to a request that was already rejected.
       val params = frame["params"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.CLEANUP)
+      if (isForeignThreadUnload(frame, params)) return
       // Real Codex can announce the owned thread after the thread/start response, so as late as unsubscribe.
       if (frame["method"] == JsonPrimitive("thread/started")) {
         try {

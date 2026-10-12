@@ -703,6 +703,29 @@ class CodexModelBackendTest {
   }
 
   @Test
+  fun `foreign thread unloads from the shared app-server are ignored in every request phase`() = runTest {
+    withContext(Dispatchers.Default) {
+      listOf("prestart", "turn", "cleanup").flatMap { phase -> listOf("closed", "notLoaded").map { "model-unload-$phase-foreign-$it" } }.forEach { scenario ->
+        fixture(scenario) { _, backend -> assertThat(backend.execute(request()).finishReason, "scenario=$scenario").isEqualTo("stop") }
+      }
+    }
+  }
+
+  @Test
+  fun `owned thread unloads and other foreign frames still fail the request`() = runTest {
+    withContext(Dispatchers.Default) {
+      val rejected = listOf("prestart", "turn").flatMap { phase -> listOf("closed", "notLoaded").map { "model-unload-$phase-owned-$it" } } +
+        "model-unload-cleanup-owned-closed" +
+        listOf("prestart", "turn", "cleanup").flatMap { phase ->
+          listOf("foreign-idle", "foreign-active", "foreign-systemError", "foreign-item", "missing-closed", "missing-notLoaded", "numeric-closed", "numeric-notLoaded").map { "model-unload-$phase-$it" }
+        }
+      rejected.forEach { scenario ->
+        fixture(scenario) { _, backend -> assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) } }
+      }
+    }
+  }
+
+  @Test
   fun `reader protocol failure between requests prevents any fresh thread or turn`() = runTest {
     withContext(Dispatchers.Default) {
       fixture("model-idle-callback") { fake, backend ->
