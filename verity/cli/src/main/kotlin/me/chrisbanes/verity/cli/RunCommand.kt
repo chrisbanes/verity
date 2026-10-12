@@ -114,6 +114,10 @@ class RunCommand(
     "--dry-run",
     help = "Validate journeys and render generated Maestro YAML without device access",
   ).flag()
+  private val modelTrace by option(
+    "--model-trace",
+    help = "Append a sensitive trace of model requests, replies and backend frames to this file",
+  )
 
   private fun resolveJourneys(
     path: File,
@@ -352,13 +356,14 @@ class RunCommand(
     projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
     var backend: ModelRequestBackend? = null
+    var trace: ModelTrace? = null
     var primary: Throwable? = null
     try {
       val planner = DryRunPlanner(
         context = projectContext.text,
         // DryRunPlanner memoizes the navigator, so the backend is acquired at most once.
         navigatorFactory = {
-          createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform) { backend = it }
+          createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform, { trace = it }) { backend = it }
         },
       )
       val suiteReport = DryRunSuiteReport(journeys.map { resolvedJourney -> planner.plan(resolvedJourney) })
@@ -373,7 +378,11 @@ class RunCommand(
       primary = error
       throw error
     } finally {
-      backend?.let { closeModelBackend(it, primary) }
+      try {
+        backend?.let { closeModelBackend(it, primary) }
+      } finally {
+        trace?.close()
+      }
     }
   }
 
@@ -383,6 +392,7 @@ class RunCommand(
     resolved: ResolvedProjectConfig,
     path: File,
     platform: Platform,
+    traced: (ModelTrace) -> Unit,
     acquired: (ModelRequestBackend) -> Unit,
   ): DryRunNavigator {
     val preflight = preflightChecker(
@@ -391,6 +401,7 @@ class RunCommand(
       false,
       false,
     )
+    preflight.trace?.let(traced)
     if (!preflight.report.passed) throw CliktError(redactModelDiagnostic(preflight.report.renderPlainText()), statusCode = EXIT_SETUP)
     val backend = backendFor(preflight).also(acquired)
     val navigatorAgent = navigatorAgent(parent, backend, preflight)
@@ -398,6 +409,7 @@ class RunCommand(
   }
 
   private fun Verity.preflightRequest(path: File, platform: Platform, deviceId: String?) = CliPreflightRequest(
+    modelTracePath = this@RunCommand.modelTrace,
     cliProvider = provider,
     cliOpenaiAuth = openaiAuth,
     cliNavigatorModel = navigatorModel,
@@ -431,9 +443,11 @@ class RunCommand(
   )
 
   private fun backendFor(preflight: CliPreflightResult): ModelRequestBackend {
-    preflight.backend?.let { return it }
-    check(preflight.openaiAuth != OpenAiAuth.CHATGPT) { "Prepared Codex backend is required" }
-    return ApiModelRequestBackend(MultiLLMPromptExecutor(clientFactory(checkNotNull(preflight.provider), preflight.apiKey.orEmpty())))
+    val backend = preflight.backend ?: run {
+      check(preflight.openaiAuth != OpenAiAuth.CHATGPT) { "Prepared Codex backend is required" }
+      ApiModelRequestBackend(MultiLLMPromptExecutor(clientFactory(checkNotNull(preflight.provider), preflight.apiKey.orEmpty())))
+    }
+    return preflight.trace?.let { TracingModelRequestBackend(backend, it) } ?: backend
   }
 
   private fun navigatorSettings(preflight: CliPreflightResult): ModelRequestSettings = when (checkNotNull(preflight.navigatorModel)) {
@@ -680,6 +694,24 @@ class RunCommand(
       throw CliktError(preflight.report.renderPlainText(), statusCode = EXIT_SETUP)
     }
 
+    return try {
+      runSuiteWithBackend(parent, resolved, journeys, runArtifacts, platform, projectContext, contextDir, requireContext, preflight)
+    } finally {
+      preflight.trace?.close()
+    }
+  }
+
+  private suspend fun runSuiteWithBackend(
+    parent: Verity,
+    resolved: ResolvedProjectConfig,
+    journeys: List<ResolvedJourney>,
+    runArtifacts: RunArtifactDirectory,
+    platform: Platform,
+    projectContext: ContextBundle,
+    contextDir: File?,
+    requireContext: Boolean,
+    preflight: CliPreflightResult,
+  ): SuiteRunResult {
     val backend = backendFor(preflight)
     var primary: Throwable? = null
     var completedResults: List<ResolvedJourneyResult> = emptyList()

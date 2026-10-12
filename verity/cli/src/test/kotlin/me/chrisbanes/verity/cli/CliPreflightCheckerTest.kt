@@ -320,4 +320,99 @@ class CliPreflightCheckerTest {
     assertThat(result.report.errors.map { it.code })
       .isEqualTo(listOf(PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED, PreflightCodes.PROVIDER_EFFORT_UNSUPPORTED))
   }
+  private fun traceRequest(journey: java.nio.file.Path, trace: java.nio.file.Path?) = CliPreflightRequest(
+    cliProvider = "anthropic",
+    cliNavigatorModel = null,
+    cliInspectorModel = null,
+    apiKey = "secret",
+    journeyPath = journey.toString(),
+    contextPath = null,
+    platform = Platform.ANDROID_TV,
+    deviceId = null,
+    modelTracePath = trace?.toString(),
+  )
+
+  @Test
+  fun `no model trace path opens no trace`() = runTest {
+    val dir = Files.createTempDirectory("verity-trace-preflight")
+    try {
+      val journey = Files.createFile(dir.resolve("a.journey.yaml"))
+      val result = CliPreflightChecker(devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() })
+        .check(traceRequest(journey, null), VerityConfig())
+
+      assertThat(result.report.passed).isTrue()
+      assertThat(result.trace).isNull()
+      assertThat(Files.list(dir).use { it.count() }).isEqualTo(1L)
+    } finally {
+      dir.toFile().deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `passing preflight transfers an owner only trace`() = runTest {
+    val dir = Files.createTempDirectory("verity-trace-preflight")
+    try {
+      val journey = Files.createFile(dir.resolve("a.journey.yaml"))
+      val tracePath = dir.resolve("trace.log")
+      val result = CliPreflightChecker(devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() })
+        .check(traceRequest(journey, tracePath), VerityConfig())
+
+      assertThat(result.report.passed).isTrue()
+      assertThat(result.trace).isNotNull()
+      result.trace?.close()
+      assertThat(java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(tracePath))).isEqualTo("rw-------")
+    } finally {
+      dir.toFile().deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `failing preflight closes the trace it opened`() = runTest {
+    val dir = Files.createTempDirectory("verity-trace-preflight")
+    try {
+      val journey = Files.createFile(dir.resolve("a.journey.yaml"))
+      var opened: ModelTrace? = null
+      val result = CliPreflightChecker(
+        devicePreflightChecker = DevicePreflightChecker { _, _ ->
+          PreflightReport(listOf(me.chrisbanes.verity.core.preflight.PreflightIssue("device.missing", me.chrisbanes.verity.core.preflight.PreflightSeverity.ERROR, "No device", "Connect one")))
+        },
+        openTrace = { path -> ModelTrace.open(path).also { opened = it } },
+      ).check(traceRequest(journey, dir.resolve("trace.log")), VerityConfig())
+
+      assertThat(result.report.passed).isFalse()
+      assertThat(result.trace).isNull()
+      // A closed trace ignores writes.
+      opened!!.write("request", "after close")
+      assertThat(Files.size(dir.resolve("trace.log"))).isEqualTo(0L)
+    } finally {
+      dir.toFile().deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `symlink model trace fails setup before Codex preparation`() = runTest {
+    val dir = Files.createTempDirectory("verity-trace-preflight")
+    try {
+      val journey = Files.createFile(dir.resolve("a.journey.yaml"))
+      val link = Files.createSymbolicLink(dir.resolve("trace.log"), Files.createFile(dir.resolve("target.log")))
+      var prepared = 0
+      val result = CliPreflightChecker(
+        environment = { null },
+        devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport() },
+        codexFactory = {
+          prepared++
+          error("Codex must not start")
+        },
+      ).check(traceRequest(journey, link).copy(cliProvider = "openai", cliOpenaiAuth = "chatgpt", apiKey = null), VerityConfig())
+
+      assertThat(result.report.passed).isFalse()
+      val issue = result.report.errors.single()
+      assertThat(issue.code).isEqualTo(PreflightCodes.PATH_NOT_WRITABLE)
+      assertThat(issue.message).isEqualTo("Model trace file cannot be opened safely: $link")
+      assertThat(result.trace).isNull()
+      assertThat(prepared).isEqualTo(0)
+    } finally {
+      dir.toFile().deleteRecursively()
+    }
+  }
 }
