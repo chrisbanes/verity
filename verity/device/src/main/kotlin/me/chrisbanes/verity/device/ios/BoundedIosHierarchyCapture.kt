@@ -3,19 +3,10 @@ package me.chrisbanes.verity.device.ios
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.Reader
-import java.util.concurrent.TimeUnit
 import kotlin.time.Duration
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.device.HierarchyCaptureTimeoutException
@@ -63,19 +54,8 @@ internal class BoundedIosHierarchyCapture(
             .build()
           checkCapture()
           val remaining = (deadline - System.nanoTime()).coerceAtLeast(1)
-          // The caller budget is the only limit; OkHttp defaults would cut a slow cold capture off at 10s.
-          val call = httpClient.newBuilder().callTimeout(remaining, TimeUnit.NANOSECONDS)
-            .connectTimeout(0, TimeUnit.NANOSECONDS).readTimeout(0, TimeUnit.NANOSECONDS).writeTimeout(0, TimeUnit.NANOSECONDS)
-            .build().newCall(request)
-          val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-              awaitCancellation()
-            } finally {
-              call.cancel()
-            }
-          }
           try {
-            runInterruptible(Dispatchers.IO) {
+            httpClient.executeBounded(request, remaining, onCleanup = { onEvent("cleanup-start") }) { call ->
               checkCapture()
               val chunks = ArrayList<ByteArray>()
               try {
@@ -111,10 +91,6 @@ internal class BoundedIosHierarchyCapture(
               }
             }
           } finally {
-            withContext(NonCancellable) {
-              onEvent("cleanup-start")
-              cancellation.cancelAndJoin()
-            }
             onEvent("worker-complete")
           }
         }
