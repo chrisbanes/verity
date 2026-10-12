@@ -175,9 +175,15 @@ class AndroidDeviceSession(
   }
 
   suspend fun restoreAnimationState(state: AnimationState): Unit = withContext(Dispatchers.IO) {
-    executeShell("settings put global window_animation_scale ${state.windowScale}")
-    executeShell("settings put global transition_animation_scale ${state.transitionScale}")
-    executeShell("settings put global animator_duration_scale ${state.animatorScale}")
+    restoreScale("window_animation_scale", state.windowScale)
+    restoreScale("transition_animation_scale", state.transitionScale)
+    restoreScale("animator_duration_scale", state.animatorScale)
+  }
+
+  private fun restoreScale(setting: String, value: String) {
+    executeShell(
+      if (value == AnimationState.UNSET) "settings delete global $setting" else "settings put global $setting $value",
+    )
   }
 
   override fun close() {
@@ -185,7 +191,10 @@ class AndroidDeviceSession(
   }
 }
 
-/** Android global animation scales, validated so they are safe to interpolate into shell commands. */
+/**
+ * Android global animation scales, validated so they are safe to interpolate into shell commands.
+ * A scale the device has never set reads back as [UNSET].
+ */
 data class AnimationState(
   val windowScale: String,
   val transitionScale: String,
@@ -197,14 +206,18 @@ data class AnimationState(
     validateScale(animatorScale, "animator duration")
   }
 
-  private companion object {
-    val SCALE_PATTERN = Regex("""\d+(\.\d+)?""")
+  companion object {
+    /** What `settings get` prints for a setting that has never been written. */
+    const val UNSET = "null"
+
+    private val SCALE_PATTERN = Regex("""\d+(\.\d+)?""")
 
     /** Android animation scale bounds: 0.0 (off) to 10.0 (10x speed) */
     private const val MIN_SCALE = 0.0
     private const val MAX_SCALE = 10.0
 
-    fun validateScale(value: String, name: String) {
+    private fun validateScale(value: String, name: String) {
+      if (value == UNSET) return
       require(value.matches(SCALE_PATTERN)) { "Invalid $name scale: $value" }
       val numeric = value.toDouble()
       require(numeric in MIN_SCALE..MAX_SCALE) {

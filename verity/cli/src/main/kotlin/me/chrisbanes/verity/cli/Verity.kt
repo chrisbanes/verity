@@ -42,8 +42,9 @@ class Verity : CliktCommand(name = "verity") {
     help = "Fail when project context is not configured or contains no markdown files",
   ).flag()
   val noAnimations: Boolean? by option("--no-animations", help = "Disable device animations")
-    .optionalValue("true")
     .convert { it.toBooleanStrict() }
+    // Only an attached value (`--no-animations=false`) is read, so a following subcommand isn't consumed.
+    .optionalValue(true, acceptsUnattachedValue = false)
   val noBundledContext: Boolean by option(
     "--no-bundled-context",
     help = "Skip built-in Maestro and TV controls context",

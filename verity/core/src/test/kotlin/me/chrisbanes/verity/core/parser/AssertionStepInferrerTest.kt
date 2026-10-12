@@ -66,4 +66,12 @@ class AssertionStepInferrerTest {
   fun `launch command is not an assertion`() {
     assertThat(AssertionStepInferrer.infer("Launch the app")).isNull()
   }
+
+  @Test
+  fun `visually forces a visual assertion and is dropped from the description`() {
+    val result = AssertionStepInferrer.infer("Verify visually that the Home row is selected")
+    assertThat(result).isNotNull()
+    assertThat(result!!.description).isEqualTo("the Home row is selected")
+    assertThat(result.mode).isEqualTo(AssertMode.VISUAL)
+  }
 }

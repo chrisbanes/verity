@@ -159,7 +159,7 @@ Steps are parsed through a 6-stage priority chain:
 2. **`[?]` prefix** — Assert with mode chosen by `AssertModeInferrer`
 3. **Wait inference** — anchored `Wait until <condition>`, with default 20 or positive whole-second limit
 4. **Loop inference** — NL pattern: `<verb> ... until <condition>`
-5. **Assertion inference** — NL keywords: "Verify...", "Ensure...", "Confirm...", "Check..."
+5. **Assertion inference** — NL keywords: "Verify...", "Ensure...", "Confirm...", "Check..."; "Verify visually..." forces a visual assertion
 6. **Default** — Action
 
 ### Assert Mode Inference
