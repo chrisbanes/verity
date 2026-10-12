@@ -63,5 +63,6 @@ class IosInteractionMapperTest {
   @Test
   fun `does not map raw keycode instructions`() {
     assertThat(mapper.map("press keycode 174")).isNull()
+    assertThat(mapper.map("long press keycode 174")).isNull()
   }
 }
