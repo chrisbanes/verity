@@ -94,14 +94,6 @@ class PackagedIosSmoke {
   fun iosVariants() = packagedVariants(Platform.IOS)
 }
 
-private val Platform.cliArgument: String get() = name
-
-private val Platform.wireName: String get() = when (this) {
-  Platform.ANDROID_MOBILE -> "android"
-  Platform.ANDROID_TV -> "android-tv"
-  Platform.IOS -> "ios"
-}
-
 private fun packagedVariants(platform: Platform): List<org.junit.jupiter.api.DynamicTest> {
   val variants = System.getProperty("verity.packaged.variants").split(',')
   check(variants.isNotEmpty() && variants.distinct().size == variants.size)
@@ -310,7 +302,7 @@ private class PackagedQualification {
         fixtures.mkdirs()
         File(fixtures, "settings.journey.yaml").writeText(packagedJourney(platform))
       }
-      val options = listOf("-jar", jar.absolutePath, "--provider", "ollama", "--api-key", endpoint, "--platform", platform.cliArgument, "--device", target, "--output-path", output.path)
+      val options = listOf("-jar", jar.absolutePath, "--provider", "ollama", "--api-key", endpoint, "--platform", platform.wireName, "--device", target, "--output-path", output.path)
       val help = start(directory, owned, "help", listOf("-jar", jar.absolutePath, "--help"))
       withTimeout(30_000) { awaitSuccess(help) }
       check(withContext(Dispatchers.IO) { help.stdout.readText().contains("Usage:") })
@@ -779,8 +771,8 @@ class PackagedCliPlatformOptionTest {
         assertThat(dryRun.first, dryRun.third).isEqualTo(0)
         assertThat(dryRun.second.contains("Kind: FAST_PATH\nInteractions:\n- Scroll(DOWN)"), dryRun.second).isTrue()
         for (platform in Platform.entries) {
-          // Clikt enum parsing accepts case-only IOS/ios; Android wire names differ semantically.
-          val arguments = listOf(platform.cliArgument to true, platform.wireName to (platform == Platform.IOS)) +
+          // --platform takes wire names only; enum constant names are rejected.
+          val arguments = listOf(platform.wireName to true, platform.name to false) +
             if (platform == Platform.IOS) listOf("ios-simulator" to false) else emptyList()
           for ((argument, accepted) in arguments) {
             val label = argument + if (accepted) "-accepted" else "-rejected"
@@ -800,7 +792,9 @@ class PackagedCliPlatformOptionTest {
                 assertThat(stdout.readText().contains("Settings visible")).isTrue()
               } else {
                 assertThat(process.exitValue() != 0).isTrue()
-                assertThat(stderr.readText().contains("invalid value for --platform")).isTrue()
+                val message = stderr.readText()
+                assertThat(message.contains("invalid value for --platform")).isTrue()
+                assertThat(message.contains("android-tv, android, ios")).isTrue()
               }
             } finally {
               child.stop()
