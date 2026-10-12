@@ -343,11 +343,14 @@ internal object FakeCodexAppServer {
             "model-late-foreign-thread-started" -> JsonObject(thread + ("id" to JsonPrimitive("foreign-thread")))
             else -> null
           }
+          // Foreign unloads arrive before any thread is owned; the owned thread's own unload follows its announcement.
+          if ("-owned-" !in scenario) unloadEvent(scenario, "prestart", activeThread)
           if (lateThreadStarted == null) {
             event("thread/started", buildJsonObject { put("thread", thread) })
             // Real Codex reports thread settings during thread and turn start.
             event("thread/settings/updated", buildJsonObject { put("threadId", activeThread) })
           }
+          if ("-owned-" in scenario) unloadEvent(scenario, "prestart", activeThread)
           if (scenario == "model-unsolicited-turn") {
             event(
               "turn/started",
@@ -433,6 +436,7 @@ internal object FakeCodexAppServer {
               },
             )
           }
+          unloadEvent(scenario, "cleanup", activeThread)
           if (frame.getValue("params").jsonObject["threadId"] != JsonPrimitive(activeThread)) error("wrong unsubscribe")
           if (scenario.startsWith("model-status-unsubscribe-")) {
             event(
@@ -462,6 +466,20 @@ internal object FakeCodexAppServer {
           put("result", result)
         },
       )
+      if (method == "thread/unsubscribe" && scenario == "model-idle-unloads") {
+        // More unload pairs for the released thread than the client's frame queue holds, while no request reads.
+        val released = frame.getValue("params").jsonObject.getValue("threadId")
+        repeat(48) {
+          event(
+            "thread/status/changed",
+            buildJsonObject {
+              put("threadId", released)
+              put("status", buildJsonObject { put("type", "notLoaded") })
+            },
+          )
+          event("thread/closed", buildJsonObject { put("threadId", released) })
+        }
+      }
       if (method == "thread/unsubscribe" && scenario == "model-idle-callback") {
         val release = Path.of(System.getProperty("verity.fake.release"))
         while (Files.readString(release) != "release") Thread.sleep(5)
@@ -569,6 +587,27 @@ internal object FakeCodexAppServer {
     )
   }
 
+  /**
+   * `model-unload-<phase>-<target>-<kind>`: the shared app-server unloading an idle thread. Target is
+   * owned, foreign, numeric (non-string threadId) or missing; kind is closed, item or a status type.
+   */
+  private fun unloadEvent(scenario: String, phase: String, ownedThread: String?) {
+    if (!scenario.startsWith("model-unload-$phase-")) return
+    val (target, kind) = scenario.removePrefix("model-unload-$phase-").split('-', limit = 2)
+    val params = buildJsonObject {
+      when (target) {
+        "owned" -> put("threadId", ownedThread)
+        "foreign" -> put("threadId", "idle-thread")
+        "numeric" -> put("threadId", 7)
+      }
+    }
+    when (kind) {
+      "closed" -> event("thread/closed", params)
+      "item" -> itemEvent("item/completed", "idle-thread", "idle-turn", "agentMessage", "foreign reply")
+      else -> event("thread/status/changed", JsonObject(params + ("status" to buildJsonObject { put("type", kind) })))
+    }
+  }
+
   private fun itemEvent(method: String, threadId: String, turnId: String, type: String, text: String = "reply", phase: String? = "final_answer") {
     event(
       method,
@@ -655,6 +694,7 @@ internal object FakeCodexAppServer {
       )
     }
     if (scenario == "model-callback-blocked") Thread.sleep(60_000)
+    unloadEvent(scenario, "turn", threadId)
     if (scenario.startsWith("model-status-") && !scenario.startsWith("model-status-unsubscribe-")) {
       event(
         "thread/status/changed",

@@ -48,6 +48,12 @@ internal class CodexAppServerClient internal constructor(
   fun clearDiscardedCorrelation() {
     discardedOwnership = null
   }
+  private val releasedThreads = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+  /** The shared app-server unloads [threadId] some time after unsubscribe; the reader drops those frames even while idle. */
+  fun releaseThread(threadId: String) {
+    releasedThreads.add(threadId)
+  }
   fun ownsTurn(threadId: String, turnId: String): Boolean = discardedOwnership == (threadId to turnId)
   private val writeMutex = Mutex()
   private var nextId = 0L
@@ -74,6 +80,7 @@ internal class CodexAppServerClient internal constructor(
           )
           throw CodexFailure(CodexFailureKind.PROTOCOL)
         }
+        if (unloadedThread(envelope)?.let(releasedThreads::contains) == true) continue
         val method = envelope["method"]?.jsonPrimitive?.contentOrNull
         if (method in discardedNotifications && !envelope.containsKey("id")) {
           val ownership = discardedOwnership
@@ -202,6 +209,21 @@ internal class CodexAppServerClient internal constructor(
   companion object {
     const val MAX_FRAME_BYTES = 8 * 1024 * 1024
     private val discardedNotifications = setOf("item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated")
+
+    /** The thread named by a content-free unload notification (`thread/closed`, or `notLoaded` status), if [frame] is one. */
+    internal fun unloadedThread(frame: JsonObject): String? {
+      if (frame.containsKey("id")) return null
+      val params = frame["params"] as? JsonObject ?: return null
+      val id = (params["threadId"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull ?: return null
+      return when (frame["method"]) {
+        JsonPrimitive("thread/closed") -> id
+
+        // Only the status type matters: the frame is dropped, so the owned-thread activeFlags checks don't apply.
+        JsonPrimitive("thread/status/changed") -> id.takeIf { (params["status"] as? JsonObject)?.get("type") == JsonPrimitive("notLoaded") }
+
+        else -> null
+      }
+    }
 
     internal fun readFrame(input: InputStream): String? {
       val bytes = ByteArrayOutputStream()

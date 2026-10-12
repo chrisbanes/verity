@@ -332,6 +332,7 @@ internal class CodexModelBackend private constructor(
         if (frame.containsKey("id")) reject()
         val method = string(frame, "method")
         val params = frame["params"] as? JsonObject ?: reject()
+        if (isForeignThreadUnload(frame)) return
         if (method == "thread/started") {
           verifyThread(params["thread"] as? JsonObject ?: reject())
           return
@@ -382,6 +383,13 @@ internal class CodexModelBackend private constructor(
         throw e
       }
     }
+
+    /**
+     * The shared app-server unloads idle threads from earlier requests at any point, even before this
+     * request owns a thread. Those frames carry only a thread identity, so they are ignored; any other
+     * frame for a foreign thread, and the owned thread's own unload, still fail.
+     */
+    private fun isForeignThreadUnload(frame: JsonObject): Boolean = CodexAppServerClient.unloadedThread(frame).let { it != null && it != (threadId ?: observedThreadId) }
 
     private fun verifyStatus(params: JsonObject, cleanup: Boolean) {
       val status = params["status"] as? JsonObject ?: reject()
@@ -454,6 +462,7 @@ internal class CodexModelBackend private constructor(
       unsubscribeAttempted = true
       val response = client.request("thread/unsubscribe", buildJsonObject { put("threadId", ownedThreadId) }, ::cleanupEvent)
       if (response["status"] != JsonPrimitive("unsubscribed")) throw CodexFailure(CodexFailureKind.CLEANUP)
+      client.releaseThread(ownedThreadId)
       client.requireHealthy()
       client.clearDiscardedCorrelation()
     }
@@ -492,6 +501,7 @@ internal class CodexModelBackend private constructor(
     private suspend fun cleanupEvent(frame: JsonObject) {
       // Permissive draining is limited to a request that was already rejected.
       val params = frame["params"] as? JsonObject ?: throw CodexFailure(CodexFailureKind.CLEANUP)
+      if (isForeignThreadUnload(frame)) return
       // Real Codex can announce the owned thread after the thread/start response, so as late as unsubscribe.
       if (frame["method"] == JsonPrimitive("thread/started")) {
         try {

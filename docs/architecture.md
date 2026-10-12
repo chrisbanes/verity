@@ -648,10 +648,11 @@ Preparation uses a discovery-only bootstrap to read inherited MCP/plugin/app nam
 
 Launch and thread policy disables tools, approvals, callbacks, delegation, integration capabilities and network-enabled execution. Experimental raw events are required. Every ordinary/raw tool attempt and every server request, including unknown methods and authentication-refresh callbacks, permanently invalidates the request even if a later assistant message looks valid. No execution callback is implemented.
 
-Both connections opt out of `configWarning`, `remoteControl/status/changed`, `account/updated` and `account/rateLimits/updated`. Codex pushes these without thread identity; any other notification outside an owned request fails it. Besides the turn, item, delta, token-usage and status events a request consumes, the handlers accept and ignore only these informational notifications, and only when bound to owned IDs:
+Both connections opt out of `configWarning`, `remoteControl/status/changed`, `account/updated` and `account/rateLimits/updated`. Codex pushes these without thread identity; any other notification outside an owned request fails it. Besides the turn, item, delta, token-usage and status events a request consumes, the handlers accept and ignore only these informational notifications, each bound to owned IDs except foreign thread unloads:
 - `thread/settings/updated` and `warning` for the owned thread;
 - `rawResponse/completed` for the owned thread and turn;
-- the owned thread's `thread/started`, which real Codex can send after the `thread/start` response.
+- the owned thread's `thread/started`, which real Codex can send after the `thread/start` response;
+- `thread/closed` and `thread/status/changed` with status `notLoaded` for any other thread, identified by a string `threadId`. The app-server is shared across requests and unloads idle threads from earlier ones at any point, including before the `thread/start` response. These frames carry no content. The client reader drops them for threads the backend has already unsubscribed, so they cannot fill its bounded frame queue between requests. Other frames for a foreign thread, and the owned thread's own unload, still fail. codex-cli 0.162.1 was observed doing this; that version is not qualified.
 
 `mcpServer/startupStatus/updated` still fails because it reports MCP lifecycle.
 
