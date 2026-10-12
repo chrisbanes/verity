@@ -230,6 +230,7 @@ class RunBackendWiringTest {
         assertThat(backend.closed).isTrue()
         val summary = kotlinx.serialization.json.Json.decodeFromString<me.chrisbanes.verity.core.result.SuiteArtifactSummary>(output.walkTopDown().first { it.name == "summary.json" }.readText())
         assertThat(summary.error?.kind).isEqualTo(if (writeFailure || failureKind == ModelBackendFailureKind.CLEANUP) me.chrisbanes.verity.core.result.ArtifactErrorKind.SETUP_FAILURE else me.chrisbanes.verity.core.result.ArtifactErrorKind.MODEL_FAILURE)
+        if (failureKind == ModelBackendFailureKind.PROTOCOL && !writeFailure) assertThat(summary.error?.message).isEqualTo("Navigator flow backend protocol failed")
         if (!writeFailure) {
           assertThat(summary.total).isEqualTo(2)
           assertThat(summary.passed).isEqualTo(1)

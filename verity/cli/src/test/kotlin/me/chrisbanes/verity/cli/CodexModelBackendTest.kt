@@ -76,7 +76,7 @@ class CodexModelBackendTest {
   }
 
   @Test
-  fun `callback protocol rejection retains backend primary and navigator invalid response despite cleanup failure`() = runTest {
+  fun `callback protocol rejection retains backend primary and navigator backend protocol failure despite cleanup failure`() = runTest {
     withContext(Dispatchers.Default) {
       fixture("model-callback-unknown") { fake, backend ->
         var primary: CodexFailure? = null
@@ -94,7 +94,8 @@ class CodexModelBackendTest {
           fake.releaseCallbacks()
           val failure = result.await().exceptionOrNull() as ModelFailureException
           assertThat(failure.stage).isEqualTo(ModelRequestStage.NAVIGATOR_FLOW)
-          assertThat(failure.failure).isEqualTo(ModelFailureKind.INVALID_RESPONSE)
+          assertThat(failure.failure).isEqualTo(ModelFailureKind.BACKEND_PROTOCOL)
+          assertThat(failure.message).isEqualTo("Navigator flow backend protocol failed")
           assertThat(failure.cause).isEqualTo(null)
           val backendFailure = checkNotNull(primary)
           assertThat(backendFailure.kind).isEqualTo(CodexFailureKind.PROTOCOL)
