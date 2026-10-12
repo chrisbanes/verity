@@ -2,10 +2,13 @@ package me.chrisbanes.verity.core.preflight
 
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isTrue
 import kotlin.test.Test
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class PreflightTest {
   @Test
@@ -64,5 +67,21 @@ class PreflightTest {
 
     assertThat(combined.issues.map { it.code }).isEqualTo(listOf("first", "second"))
     assertThat(combined.passed).isFalse()
+  }
+
+  @Test
+  fun `combined report keeps the first device id`() {
+    val error = PreflightIssue("e", PreflightSeverity.ERROR, "Error.", "Fix it.")
+
+    assertThat((PreflightReport(deviceId = "a") + PreflightReport(issues = listOf(error))).deviceId).isEqualTo("a")
+    assertThat((PreflightReport() + PreflightReport(deviceId = "b")).deviceId).isEqualTo("b")
+    assertThat((PreflightReport(deviceId = "a") + PreflightReport(deviceId = "b")).deviceId).isEqualTo("a")
+  }
+
+  @Test
+  fun `serialized report omits an unset device id`() {
+    val error = PreflightIssue("e", PreflightSeverity.ERROR, "Error.", "Fix it.")
+
+    assertThat(Json.encodeToString(PreflightReport(listOf(error)))).doesNotContain("deviceId")
   }
 }

@@ -30,10 +30,11 @@ class CodexPreflightTest {
           codexFactory = { fake.prepare() },
           devicePreflightChecker = DevicePreflightChecker { _, _ ->
             devices++
-            PreflightReport()
+            PreflightReport(deviceId = "sim-resolved")
           },
         ).check(request(path.toString(), "low"), VerityConfig())
         assertThat(result.report.passed).isTrue()
+        assertThat(result.deviceId).isEqualTo("sim-resolved")
         assertThat(devices).isEqualTo(1)
         val frames = fake.capturedFrames()
         assertThat(frames.count { it["method"] == JsonPrimitive("thread/start") }).isEqualTo(2)

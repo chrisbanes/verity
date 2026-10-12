@@ -638,6 +638,38 @@ class VerityMcpServerTest {
   }
 
   @Test
+  fun `open session creates the session with the preflight resolved device and keeps the label`() = runTest {
+    for ((requested, reported, expectedId, expectedLabel) in listOf(
+      listOf(null, "sim-resolved", "sim-resolved", "auto-discovered"),
+      listOf("sim-explicit", "sim-explicit", "sim-explicit", "sim-explicit"),
+      listOf(null, null, null, "auto-discovered"),
+    )) {
+      var capturedDeviceId: String? = "unset"
+      val server = VerityMcpServer(
+        sessionManager = McpDeviceSessionManager { _, id, _ ->
+          capturedDeviceId = id
+          FakeDeviceSession()
+        },
+        devicePreflightChecker = DevicePreflightChecker { _, _ -> PreflightReport(deviceId = reported) },
+        defaultPlatform = Platform.IOS,
+      ).create()
+
+      val result = server.tools["open_session"]!!.handler.invoke(
+        StubClientConnection(),
+        CallToolRequest(
+          CallToolRequestParams(
+            name = "open_session",
+            arguments = buildJsonObject { requested?.let { put("device", JsonPrimitive(it)) } },
+          ),
+        ),
+      )
+
+      assertThat(capturedDeviceId).isEqualTo(expectedId)
+      assertThat((result.content.first() as TextContent).text).contains("device: $expectedLabel")
+    }
+  }
+
+  @Test
   fun `run_loop retains literal condition and raw key behavior alongside deterministic tools`() = runTest {
     val session = FakeDeviceSession(hierarchyNode = HierarchyNode(attributes = mapOf("text" to "Settings"), states = setOf("focused")))
     val manager = McpDeviceSessionManager { _, _, _ -> session }

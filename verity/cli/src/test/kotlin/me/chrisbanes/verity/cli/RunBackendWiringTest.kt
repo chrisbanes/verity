@@ -75,6 +75,33 @@ class RunBackendWiringTest {
     }
   }
 
+  @Test fun `session creation uses the preflight resolved device and keeps explicit and unresolved ids`() {
+    for ((args, reported, expected) in listOf(
+      Triple("", "sim-resolved", "sim-resolved"),
+      Triple("--device sim-explicit", "sim-explicit", "sim-explicit"),
+      Triple("--device sim-explicit", null, "sim-explicit"),
+      Triple("", null, null),
+    )) {
+      val dir = createTempDirectory("verity-device-id").toFile()
+      var captured: String? = "unset"
+      try {
+        val file = journey(dir, "complete onboarding wizard")
+        val command = RunCommand(
+          preflightChecker = { _, _, _, _ -> preflight(Backend()).copy(report = PreflightReport(deviceId = reported)) },
+          sessionFactory = { _, id, _ ->
+            captured = id
+            FakeDeviceSession()
+          },
+          clientFactory = { _, _ -> error("API fallback") },
+        )
+        Verity().subcommands(command).test("$args --provider openai --openai-auth chatgpt --output-path ${dir.path}/output run ${file.path}")
+        assertThat(captured).isEqualTo(expected)
+      } finally {
+        dir.deleteRecursively()
+      }
+    }
+  }
+
   @Test fun `production backend closes on connection failure model failure and caller cancellation`() {
     for (failure in listOf<Exception?>(null, ModelBackendFailure(ModelBackendFailureKind.PROTOCOL), CallerCancellation(Any()))) {
       val dir = createTempDirectory("verity-backend-fail").toFile()
