@@ -4,13 +4,17 @@ import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FocusChangeObserver
 
 /**
  * Executes a validated [flow] in order. Raw keycode actions cannot be Maestro commands, so each
  * maximal run of other actions becomes its own Maestro sub-flow and each keycode is pressed directly
  * between them, settling afterwards like a key press. The first failed sub-flow stops the walk.
  */
-internal suspend fun DeviceSession.executeOrdered(flow: ActionFlow): FlowResult {
+internal suspend fun DeviceSession.executeOrdered(
+  flow: ActionFlow,
+  focusObserver: FocusChangeObserver = FocusChangeObserver(),
+): FlowResult {
   if (flow.actions.none { it is Interaction.KeyCode }) return executeActions(flow)
 
   var result = FlowResult(success = true)
@@ -27,8 +31,7 @@ internal suspend fun DeviceSession.executeOrdered(flow: ActionFlow): FlowResult 
       continue
     }
     if (!flush()) return result
-    pressKey(action.keycode, action.longPress)
-    waitForAnimationToEnd()
+    pressAndSettle(focusObserver, action.isDirection()) { pressKey(action.keycode, action.longPress) }
   }
   flush()
   return result
