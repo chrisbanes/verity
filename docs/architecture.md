@@ -290,9 +290,7 @@ Auto-discovers the device if no ID is given. When `disableAnimations` is true, w
 
 `TimingDeviceSession` is a further optional decorator, applied by `RunCommand` only for `--timing`. It overrides every suspend member, including the default-bodied `captureHierarchy`, `containsText` and `checkFocused`, so each call is recorded once as a `DEVICE` phase.
 
-Android connect first wakes the device (`KEYCODE_WAKEUP`, `cmd dreams stop-dreaming`) and throws `DeviceNotReadyException` if it is still asleep, dozing, dreaming or showing a screensaver after three attempts. This happens before animation changes, so the CLI and MCP `open_session` fail before the first journey step. Unparseable `dumpsys` output is treated as unknown and proceeds.
-
-Android connect first wakes the device (`KEYCODE_WAKEUP` then `KEYCODE_HOME`, both usable as the adb shell user) and throws `DeviceNotReadyException` if it is still asleep, dozing, dreaming or showing a screensaver after three attempts. This happens before animation changes, so the CLI and MCP `open_session` fail before the first journey step. Unparseable `dumpsys` output is treated as unknown and proceeds.
+Android connect first wakes the device (`KEYCODE_WAKEUP` (adb shell user), then `KEYCODE_HOME` only if a screensaver is still focused) and throws `DeviceNotReadyException` if it is still asleep, dozing, dreaming or showing a screensaver after three attempts. This happens before animation changes, so the CLI and MCP `open_session` fail before the first journey step. Unparseable `dumpsys` output is treated as unknown and proceeds.
 
 ### Preflight Checks
 

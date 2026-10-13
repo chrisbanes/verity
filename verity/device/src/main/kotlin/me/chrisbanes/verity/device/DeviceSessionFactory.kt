@@ -6,9 +6,7 @@ import ios.xctest.XCTestIOSDevice
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import maestro.Maestro
 import maestro.android.AndroidDeviceConnection
@@ -17,6 +15,7 @@ import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.android.AnimationState
+import me.chrisbanes.verity.device.android.ensureAwakeOrClose
 import me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture
 import me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
@@ -80,12 +79,7 @@ object DeviceSessionFactory {
       executeShell = { command -> connection.shell(command).output },
     )
 
-    try {
-      session.ensureAwake()
-    } catch (e: Throwable) {
-      withContext(NonCancellable) { session.close() }
-      throw e
-    }
+    ensureAwakeOrClose(session::ensureAwake, session::close)
 
     if (disableAnimations) {
       val state = session.getAnimationState()

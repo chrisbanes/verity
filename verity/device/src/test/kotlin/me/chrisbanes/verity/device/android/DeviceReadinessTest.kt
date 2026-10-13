@@ -63,12 +63,35 @@ class DeviceReadinessTest {
     assertThat(shell.commands.none { it.startsWith("input") }).isEqualTo(true)
   }
 
-  @Test fun dreamingDeviceIsWoken() = runTest {
+  @Test fun asleepDeviceGetsWakeKeyOnlyAndKeepsForegroundApp() = runTest {
     lateinit var shell: FakeShell
-    shell = FakeShell({ if (shell.wakeRounds() == 0) "mWakefulness=Dreaming" else awake }, { appFocus })
+    shell = FakeShell({ if (shell.wakeRounds() == 0) "mWakefulness=Asleep" else awake }, { appFocus })
     ensureAwake(shell::run, shell.sleeps::add)
-    val wake = shell.commands.filter { it.startsWith("input") }
-    assertThat(wake).isEqualTo(listOf("input keyevent KEYCODE_WAKEUP", "input keyevent KEYCODE_HOME"))
+    assertThat(shell.commands.filter { it.startsWith("input") }).isEqualTo(listOf("input keyevent KEYCODE_WAKEUP"))
+  }
+
+  @Test fun homeIsSentOnlyWhileScreensaverStaysFocused() = runTest {
+    lateinit var shell: FakeShell
+    val home = "input keyevent KEYCODE_HOME"
+    shell = FakeShell({ awake }, { if (shell.commands.contains(home)) appFocus else dreamFocus })
+    ensureAwake(shell::run, shell.sleeps::add)
+    assertThat(shell.commands.filter { it.startsWith("input") })
+      .isEqualTo(listOf("input keyevent KEYCODE_WAKEUP", home))
+  }
+
+  @Test fun closeFailureDoesNotMaskOriginalError() = runTest {
+    val original = DeviceNotReadyException("original")
+    val failure = assertFailure {
+      ensureAwakeOrClose({ throw original }, { error("close failed") })
+    }
+    failure.isInstanceOf(DeviceNotReadyException::class).messageContains("original")
+    assertThat(original.suppressed.single().message).isEqualTo("close failed")
+  }
+
+  @Test fun closeNotCalledOnSuccess() = runTest {
+    var closed = false
+    ensureAwakeOrClose({}, { closed = true })
+    assertThat(closed).isEqualTo(false)
   }
 
   @Test fun stuckScreensaverThrowsAfterThreeAttempts() = runTest {
