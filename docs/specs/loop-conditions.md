@@ -20,14 +20,14 @@ Assertion prefixes such as `[?]` and `[?visual]` retain priority over loop infer
 
 ## Authoring pitfalls
 
-A condition ending `is focused` or `has focus`, or starting `focus is on`, always takes the deterministic `focus` tier. That tier searches the hierarchy for the extracted target text only and never asks a model, so a prose target such as `a card in a row that opens a detail page is focused` never matches and the loop runs to its limit (default 20). To avoid this, quote the exact on-screen label (`"Continue Watching" is focused`), reword the condition without the focus phrases so the inspector evaluates it (for example `a card is visible`), or use `visually` for appearance.
+A condition ending `is focused` or `has focus`, or starting `focus is on`, takes the deterministic `focus` tier unless the literal tier already matched the whole condition. The focus tier searches the hierarchy for the extracted target text only and never asks a model, so a prose target such as `a card in a row that opens a detail page is focused` never matches and the loop runs to its limit (default 20). To avoid this, quote the exact on-screen label (`"Continue Watching" is focused`), reword the condition without the focus phrases so the inspector evaluates it (for example `a card is visible`), or use `visually` for appearance.
 
 `verity run`, including `--dry-run`, prints a non-blocking warning to stderr for each `Loop` or `Wait` condition that takes the focus tier with an unquoted target of four or more words, or any target longer than 40 characters. The warning starts with `Warning:` and names the journey file, the 1-based step number, the condition and the extracted target. It does not change stdout, the dry-run report, run artifacts or exit codes. `visually` conditions are never flagged.
 
 Loop bodies avoid a model call only when every instruction maps to an interaction, so write the platform's mapped phrases:
 
 - Android TV: `Press D-pad up|down|left|right|center`, `Press select|enter|back|home|menu|play|pause|rewind|fast forward` and `press keycode N`.
-- Android mobile: `tap`/`click` (optionally `on`), `long press`/`hold`, `scroll` and `swipe` with a direction, `pull to refresh`, `press back|home|enter|volume up|volume down` and `press keycode N`.
+- Android mobile: `tap`/`click` (optionally `on`), `long press`/`hold`, `scroll up|down`, `swipe up|down|left|right`, `pull to refresh`, `press back|home|enter|volume up|volume down` and `press keycode N`.
 - iOS: the same touch phrases, plus `press home|lock|volume up|volume down`.
 
 Other phrasing, such as `Navigate down`, is unmapped. If any instruction in a body is unmapped, the navigator generates the whole body, costing one model call per iteration. Prefer the explicit mapped phrase, for example `Press D-pad down until "Settings" is focused`.
