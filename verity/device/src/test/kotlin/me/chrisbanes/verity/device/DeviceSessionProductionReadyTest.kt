@@ -3,6 +3,7 @@ package me.chrisbanes.verity.device
 import assertk.assertFailure
 import assertk.assertThat
 import assertk.assertions.contains
+import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isNull
@@ -54,15 +55,18 @@ class DeviceSessionProductionReadyTest {
     session.pressKey(174, true)
     session.pressKey("Remote Dpad Up", true)
     session.pressKey("Remote Dpad Up", false)
-    assertThat(commands).isEqualTo(listOf("input keyevent 174", "input keyevent --longpress 174", "input keyevent --longpress 19"))
-    assertThat(driver.pressedKeys).isEqualTo(listOf(KeyCode.REMOTE_UP))
+    assertThat(commands).isEqualTo(
+      listOf("input keyevent 174", "input keyevent --longpress 174", "input keyevent --longpress 19", "input keyevent 19"),
+    )
+    assertThat(driver.pressedKeys).isEmpty()
     assertFailure { session.pressKey(-1, false) }.messageContains("non-negative")
     assertFailure { session.pressKey("19; unwanted", true) }.messageContains("Unknown key name")
-    assertThat(commands.size).isEqualTo(3)
+    assertFailure { session.pressKey("19; unwanted") }.messageContains("Unknown key name: '19; unwanted'")
+    assertThat(commands.size).isEqualTo(4)
   }
 
   @Test
-  fun `named long press table preserves all thirty Maestro Android key mappings`() = runTest {
+  fun `named press table preserves all thirty Maestro Android key mappings`() = runTest {
     // Maestro 2.11.0 AndroidDriver numeric lowering, independently pinned from its bytecode.
     val expected = mapOf(
       KeyCode.ENTER to 66, KeyCode.BACKSPACE to 67, KeyCode.BACK to 4,
@@ -85,6 +89,8 @@ class DeviceSessionProductionReadyTest {
     for ((key, code) in expected) {
       session.pressKey(key.description, true)
       assertThat(commands.last()).isEqualTo("input keyevent --longpress $code")
+      session.pressKey(key.description)
+      assertThat(commands.last()).isEqualTo("input keyevent $code")
     }
   }
 
