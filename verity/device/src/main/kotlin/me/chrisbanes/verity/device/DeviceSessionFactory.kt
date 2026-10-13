@@ -15,6 +15,7 @@ import maestro.drivers.IOSDriver
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
 import me.chrisbanes.verity.device.android.AnimationState
+import me.chrisbanes.verity.device.android.ensureAwakeOrClose
 import me.chrisbanes.verity.device.ios.BoundedIosHierarchyCapture
 import me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
@@ -77,6 +78,8 @@ object DeviceSessionFactory {
       onCommandStart = onCommandStart,
       executeShell = { command -> connection.shell(command).output },
     )
+
+    ensureAwakeOrClose(session::ensureAwake, session::close)
 
     if (disableAnimations) {
       val state = session.getAnimationState()

@@ -160,6 +160,9 @@ class AndroidDeviceSession(
     maestro.waitForAnimationToEnd(null)
   }
 
+  /** Wakes the device and fails with [DeviceNotReadyException] if it stays asleep or dreaming. */
+  suspend fun ensureAwake() = ensureAwake(executeShell)
+
   suspend fun getAnimationState(): AnimationState = withContext(Dispatchers.IO) {
     AnimationState(
       windowScale = executeShell("settings get global window_animation_scale").trim(),
