@@ -14,6 +14,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import me.chrisbanes.verity.agent.ModelBackendFailure
 import me.chrisbanes.verity.agent.redactModelDiagnostic
+import me.chrisbanes.verity.core.timing.PhaseKind
+import me.chrisbanes.verity.core.timing.PhaseTimer
 
 data class LabeledLocalImage(
   val label: String,
@@ -46,6 +48,16 @@ interface ModelRequestBackend {
   suspend fun execute(request: ModelRequest): Message.Assistant
 
   suspend fun close()
+}
+
+/** Times each request for `--timing`; sits inside [TracingModelRequestBackend] so both measure the same call. */
+internal class TimedModelRequestBackend(
+  private val delegate: ModelRequestBackend,
+  private val timer: PhaseTimer,
+) : ModelRequestBackend {
+  override suspend fun execute(request: ModelRequest): Message.Assistant = timer.phase(PhaseKind.MODEL_REQUEST, request.promptName) { delegate.execute(request) }
+
+  override suspend fun close() = delegate.close()
 }
 
 /** Records each request and its reply or redacted failure for `--model-trace`. */

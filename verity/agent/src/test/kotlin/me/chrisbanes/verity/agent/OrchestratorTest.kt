@@ -6,6 +6,7 @@ import assertk.assertions.containsExactly
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isGreaterThan
 import assertk.assertions.isNotEqualTo
 import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
@@ -15,6 +16,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
@@ -31,6 +34,8 @@ import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
+import me.chrisbanes.verity.core.timing.PhaseKind
+import me.chrisbanes.verity.core.timing.RecordingPhaseTimer
 import me.chrisbanes.verity.device.DeviceSession
 
 class OrchestratorTest {
@@ -115,6 +120,56 @@ class OrchestratorTest {
 
     assertThat(result.passed).isFalse()
     assertThat(result.segments.single().reasoning).isEqualTo("Tree mismatch")
+  }
+
+  @Test
+  fun `run records setup and each segment as named timing steps with device time attributed`() = runTest {
+    var now = 0L
+    val timer = RecordingPhaseTimer { now }
+    val fake = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"), screen("Home"))))
+    val session = object : DeviceSession by fake {
+      override suspend fun executeActions(flow: ActionFlow): FlowResult = timer.phase(PhaseKind.DEVICE, "executeActions") {
+        now += 5_000_000
+        fake.executeActions(flow)
+      }
+
+      override suspend fun captureHierarchyTree(): HierarchyNode = timer.phase(PhaseKind.DEVICE, "captureHierarchyTree") {
+        now += 7_000_000
+        fake.captureHierarchyTree()
+      }
+
+      override suspend fun captureHierarchy(filter: HierarchyFilter): String = HierarchyRenderer.render(captureHierarchyTree(), filter)
+    }
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
+      inspectorFactory = {
+        InspectorAgent(
+          evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "ok"}""") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
+        )
+      },
+      timer = timer,
+    )
+    val journey = Journey(
+      name = "j",
+      app = APP_ID,
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(
+        JourneyStep.Assert(description = "Home is visible", mode = AssertMode.TREE),
+        JourneyStep.Assert(description = "Home again", mode = AssertMode.TREE),
+      ),
+    )
+
+    val result = orchestrator.run(journey)
+
+    assertThat(result.passed).isTrue()
+    val steps = timer.report().steps
+    assertThat(steps.map { it.label }).containsExactly("j setup", "j segment 0", "j segment 1")
+    assertThat(steps[0].deviceTotal).isEqualTo(5.milliseconds)
+    assertThat(steps[1].deviceTotal).isGreaterThan(Duration.ZERO)
+    assertThat(steps[1].phases.map { it.name }).containsExactly("captureHierarchyTree")
+    assertThat(steps[2].deviceTotal).isGreaterThan(Duration.ZERO)
   }
 
   @Test

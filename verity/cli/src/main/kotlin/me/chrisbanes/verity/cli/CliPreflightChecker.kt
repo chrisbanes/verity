@@ -19,6 +19,8 @@ import me.chrisbanes.verity.core.preflight.PreflightCodes
 import me.chrisbanes.verity.core.preflight.PreflightIssue
 import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.core.preflight.PreflightSeverity
+import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
+import me.chrisbanes.verity.core.timing.PhaseTimer
 import me.chrisbanes.verity.device.preflight.DevicePreflightChecker
 import me.chrisbanes.verity.device.preflight.PlatformDevicePreflightChecker
 
@@ -35,6 +37,7 @@ data class CliPreflightRequest(
   val platform: Platform,
   val deviceId: String?,
   val modelTracePath: String? = null,
+  val timer: PhaseTimer = NoOpPhaseTimer,
 )
 
 data class CliPreflightResult(
@@ -207,6 +210,8 @@ class CliPreflightChecker internal constructor(
                   inspector?.let { add(it to inspectorEffort) }
                 },
               )
+              // After validation so preflight's own threads are not timed as part of the run.
+              prepared.timer = request.timer
             }
           } catch (error: TimeoutCancellationException) {
             if (!currentCoroutineContext().isActive) throw error

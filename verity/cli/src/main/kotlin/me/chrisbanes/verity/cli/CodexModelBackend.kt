@@ -36,6 +36,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
+import me.chrisbanes.verity.core.timing.PhaseKind
+import me.chrisbanes.verity.core.timing.PhaseTimer
 
 /** One prepared process with serialized, isolated ephemeral model requests. */
 internal class CodexModelBackend private constructor(
@@ -45,6 +48,8 @@ internal class CodexModelBackend private constructor(
   internal val resources: CodexOwnedResources,
   private val echoFields: CodexThreadEchoFields,
 ) : ModelRequestBackend {
+  /** Set once by the preflight checker before the first request; no-op unless `--timing` is on. */
+  internal var timer: PhaseTimer = NoOpPhaseTimer
   private val requestMutex = Mutex()
   private val stateLock = Any()
   private val requestJob = SupervisorJob()
@@ -211,27 +216,31 @@ internal class CodexModelBackend private constructor(
     private var finalText: String? = null
     private var legacyText: String? = null
 
+    private suspend fun <T> detail(name: String, block: suspend () -> T): T = timer.phase(PhaseKind.MODEL_DETAIL, name, block)
+
     suspend fun startThread() {
       client.correlateDiscarded(null, null)
-      val start = client.request(
-        "thread/start",
-        buildJsonObject {
-          put("model", model)
-          put("modelProvider", "openai")
-          put("allowProviderModelFallback", false)
-          put("experimentalRawEvents", true)
-          put("ephemeral", true)
-          put("approvalPolicy", "never")
-          put("approvalsReviewer", "user")
-          put("sandbox", "read-only")
-          put("cwd", workingDirectory.toString())
-          put("baseInstructions", request.systemText)
-          put("developerInstructions", "")
-          put("config", isolation.threadConfig())
-          listOf("runtimeWorkspaceRoots", "selectedCapabilityRoots", "dynamicTools", "environments").forEach { put(it, JsonArray(emptyList())) }
-        },
-        ::event,
-      )
+      val start = detail("thread/start") {
+        client.request(
+          "thread/start",
+          buildJsonObject {
+            put("model", model)
+            put("modelProvider", "openai")
+            put("allowProviderModelFallback", false)
+            put("experimentalRawEvents", true)
+            put("ephemeral", true)
+            put("approvalPolicy", "never")
+            put("approvalsReviewer", "user")
+            put("sandbox", "read-only")
+            put("cwd", workingDirectory.toString())
+            put("baseInstructions", request.systemText)
+            put("developerInstructions", "")
+            put("config", isolation.threadConfig())
+            listOf("runtimeWorkspaceRoots", "selectedCapabilityRoots", "dynamicTools", "environments").forEach { put(it, JsonArray(emptyList())) }
+          },
+          ::event,
+        )
+      }
       val thread = start["thread"] as? JsonObject ?: reject()
       val candidateThreadId = string(thread, "id")
       if (observedThreadId != null && observedThreadId != candidateThreadId) reject()
@@ -250,37 +259,39 @@ internal class CodexModelBackend private constructor(
     suspend fun execute(): Message.Assistant {
       startThread()
       turnStartInitiated = true
-      val response = client.request(
-        "turn/start",
-        buildJsonObject {
-          put("threadId", threadId)
-          put("serviceTierForTurn", "default")
-          settings.reasoningEffort?.let { put("effort", it) }
-          put(
-            "input",
-            JsonArray(
-              buildList {
-                add(textInput(request.userText))
-                request.images.forEach { image ->
-                  add(textInput(image.label))
-                  add(
-                    buildJsonObject {
-                      put("type", "localImage")
-                      put("path", image.path.toAbsolutePath().toString())
-                    },
-                  )
-                }
-              },
-            ),
-          )
-        },
-        ::event,
-      )
+      val response = detail("turn/start") {
+        client.request(
+          "turn/start",
+          buildJsonObject {
+            put("threadId", threadId)
+            put("serviceTierForTurn", "default")
+            settings.reasoningEffort?.let { put("effort", it) }
+            put(
+              "input",
+              JsonArray(
+                buildList {
+                  add(textInput(request.userText))
+                  request.images.forEach { image ->
+                    add(textInput(image.label))
+                    add(
+                      buildJsonObject {
+                        put("type", "localImage")
+                        put("path", image.path.toAbsolutePath().toString())
+                      },
+                    )
+                  }
+                },
+              ),
+            )
+          },
+          ::event,
+        )
+      }
       val turn = response["turn"] as? JsonObject ?: reject()
       identifyTurn(turn)
       if (turn["status"] != JsonPrimitive("inProgress")) reject()
       checkTurnItems(turn)
-      while (!terminal) event(client.receive())
+      detail("turn/await") { while (!terminal) event(client.receive()) }
       if (rejected) reject()
       val text = finalText ?: legacyText ?: throw CodexFailure(CodexFailureKind.REQUEST)
       if (text.isBlank()) throw CodexFailure(CodexFailureKind.REQUEST)
@@ -460,7 +471,7 @@ internal class CodexModelBackend private constructor(
       val ownedThreadId = threadId ?: observedThreadId ?: return
       if (unsubscribeAttempted) return
       unsubscribeAttempted = true
-      val response = client.request("thread/unsubscribe", buildJsonObject { put("threadId", ownedThreadId) }, ::cleanupEvent)
+      val response = detail("thread/unsubscribe") { client.request("thread/unsubscribe", buildJsonObject { put("threadId", ownedThreadId) }, ::cleanupEvent) }
       if (response["status"] != JsonPrimitive("unsubscribed")) throw CodexFailure(CodexFailureKind.CLEANUP)
       client.requireHealthy()
       client.clearDiscardedCorrelation()

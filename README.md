@@ -139,3 +139,24 @@ verity --provider openai --openai-auth chatgpt run --model-trace verity-trace.lo
 Verity appends one line per event to the file: each request's prompt, user text and image paths, then the reply or failure. With ChatGPT auth it also records every Codex app-server frame and stderr line. The option works with `--dry-run` too, but a dry-run that needs no generated actions makes no model requests and doesn't touch the file.
 
 The trace contains prompts, hierarchy dumps, image paths and model replies. Only failure messages are redacted, so treat the file as sensitive. Verity creates it owner-only (`0600`), appends to an existing regular file, and refuses symlinks and other non-regular files with setup exit `3`. See [preflight](docs/specs/preflight-checks.md#model-trace) for the format.
+
+### Timing a run
+
+To see where a run spends its time, pass `--timing`. After the suite result Verity prints, for each journey setup and segment, the wall time with the model and device totals, then the phases behind them:
+
+```bash
+verity run --timing journeys/login.journey.yaml
+```
+
+```
+Timing
+Login setup: 1204ms (model 0ms, device 1203ms)
+  device executeActions x1 1203ms
+Login segment 0: 5120ms (model 4310ms, device 790ms)
+  device captureHierarchyTree x1 310ms
+  device waitForAnimationToEnd x2 480ms
+  model_request navigator x1 4310ms
+  model_detail turn/await x1 4100ms
+```
+
+`model_detail` lines (Codex `thread/start`, `turn/start`, `turn/await`, `thread/unsubscribe`) are part of the model request and are not added to the totals. The report is printed only, never stored in run artifacts or the model trace, and `--dry-run` ignores it.
