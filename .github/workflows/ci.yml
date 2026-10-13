@@ -169,7 +169,17 @@ jobs:
           applesimutils --version
 
       - name: Wait for iOS simulator
-        run: xcrun simctl bootstatus '${{ steps.simulator.outputs.udid }}' -b
+        timeout-minutes: 20
+        env:
+          UDID: ${{ steps.simulator.outputs.udid }}
+        # Like the action's own wait: bound each attempt to 360 seconds and restart the boot on failure.
+        run: |
+          for attempt in 1 2 3; do
+            perl -e 'alarm shift; exec @ARGV' 360 xcrun simctl bootstatus "$UDID" -b && exit 0
+            echo "::warning::iOS simulator boot attempt $attempt failed; restarting it"
+            xcrun simctl shutdown "$UDID" || true
+          done
+          exit 1
 
       - name: iOS smoke tests
         env:
