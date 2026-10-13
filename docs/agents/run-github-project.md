@@ -47,18 +47,20 @@
 - Field name: `Priority`
 - Field ID: `PVTSSF_lAHOAAN4ns4BlcH_zhkJCTA`
 - Options in descending order:
-  1. `High`: `809f4128`
-  2. `Medium`: `1625741a`
-  3. `Low`: `ee7fe4f2`
+  1. `P0`: `08ca3ee5`
+  2. `P1`: `809f4128`
+  3. `P2`: `1625741a`
+  4. `P3`: `ee7fe4f2`
 
 The Project `Priority` field is the single source of truth for issue priority.
 Do not create, read, or apply priority labels as a fallback. Add an issue to this
 Project before assigning its priority, and read the field when ordering work.
-An empty field means priority has not been assigned; do not assume `Medium`.
+An empty field means priority has not been assigned; do not assume `P2`.
 
-- `High`: foundational or blocking work.
-- `Medium`: important follow-up or enabling workflow.
-- `Low`: later, experimental, or source-dependent work.
+- `P0`: urgent or critical work that preempts everything else.
+- `P1`: foundational or blocking work.
+- `P2`: important follow-up or enabling workflow.
+- `P3`: later, experimental, or source-dependent work.
 
 Priority does not change queue authorization or triage readiness.
 
