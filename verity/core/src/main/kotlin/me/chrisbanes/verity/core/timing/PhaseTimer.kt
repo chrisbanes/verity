@@ -22,8 +22,8 @@ data class PhaseTiming(val kind: PhaseKind, val name: String, val count: Int, va
 
 data class StepTiming(val label: String, val total: Duration, val phases: List<PhaseTiming>) {
   /** Only outer model requests; [PhaseKind.MODEL_DETAIL] runs inside them and would double count. */
-  val modelTotal: Duration get() = phases.filter { it.kind == PhaseKind.MODEL_REQUEST }.sumOf { it.total }
-  val deviceTotal: Duration get() = phases.filter { it.kind == PhaseKind.DEVICE }.sumOf { it.total }
+  val modelTotal: Duration get() = phases.filter { it.kind == PhaseKind.MODEL_REQUEST }.fold(Duration.ZERO) { acc, it -> acc + it.total }
+  val deviceTotal: Duration get() = phases.filter { it.kind == PhaseKind.DEVICE }.fold(Duration.ZERO) { acc, it -> acc + it.total }
 }
 
 data class TimingReport(val steps: List<StepTiming>) {
@@ -36,11 +36,7 @@ data class TimingReport(val steps: List<StepTiming>) {
   }
 
   private fun Duration.ms() = "${inWholeMilliseconds}ms"
-
-  private fun Iterable<Duration>.sumOf(): Duration = fold(Duration.ZERO, Duration::plus)
 }
-
-private inline fun List<PhaseTiming>.sumOf(selector: (PhaseTiming) -> Duration): Duration = fold(Duration.ZERO) { acc, it -> acc + selector(it) }
 
 /** Steps are sequential, so one current-step slot suffices; synchronized because phases may record from several dispatchers. */
 class RecordingPhaseTimer(private val nowNanos: () -> Long = System::nanoTime) : PhaseTimer {
