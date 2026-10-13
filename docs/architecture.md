@@ -290,6 +290,8 @@ Auto-discovers the device if no ID is given. When `disableAnimations` is true, w
 
 `TimingDeviceSession` is a further optional decorator, applied by `RunCommand` only for `--timing`. It overrides every suspend member, including the default-bodied `captureHierarchy`, `containsText` and `checkFocused`, so each call is recorded once as a `DEVICE` phase.
 
+Android connect first wakes the device (`KEYCODE_WAKEUP`, `cmd dreams stop-dreaming`) and throws `DeviceNotReadyException` if it is still asleep, dozing, dreaming or showing a screensaver after three attempts. This happens before animation changes, so the CLI and MCP `open_session` fail before the first journey step. Unparseable `dumpsys` output is treated as unknown and proceeds.
+
 ### Preflight Checks
 
 Core owns shared reports and filesystem checks, device owns platform readiness checks, and the CLI composes provider/model/credential checks with journey/context/device validation. MCP performs device and screenshot-target preflight, without LLM credential checks.

@@ -6,7 +6,9 @@ import ios.xctest.XCTestIOSDevice
 import java.io.File
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import maestro.Maestro
 import maestro.android.AndroidDeviceConnection
@@ -77,6 +79,13 @@ object DeviceSessionFactory {
       onCommandStart = onCommandStart,
       executeShell = { command -> connection.shell(command).output },
     )
+
+    try {
+      session.ensureAwake()
+    } catch (e: Throwable) {
+      withContext(NonCancellable) { session.close() }
+      throw e
+    }
 
     if (disableAnimations) {
       val state = session.getAnimationState()
