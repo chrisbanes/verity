@@ -2,7 +2,9 @@ package me.chrisbanes.verity.agent
 
 import ai.koog.prompt.message.Message
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.containsExactly
+import assertk.assertions.doesNotContain
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
@@ -18,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
@@ -491,6 +494,141 @@ class OrchestratorTest {
     assertThat(recorder.generatedFlows).containsExactly("0:actions:$generatedYaml")
     assertThat(session.renderedActionFlows).containsExactly(LAUNCH_FLOW, generatedYaml)
     assertThat(session.executedActionFlows.last()).isSameInstanceAs(selected)
+  }
+
+  /** The fake only supports unbounded capture; the navigator hierarchy uses the bounded overload. */
+  private fun withBoundedCapture(fake: FakeDeviceSession): DeviceSession = object : DeviceSession by fake {
+    override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = fake.captureHierarchyTree()
+  }
+
+  private fun slowPathOrchestrator(session: DeviceSession, messages: MutableList<String>) = Orchestrator(
+    session = session,
+    navigatorFactory = {
+      NavigatorAgent("unused") { _, userMessage ->
+        messages += userMessage
+        modelReply("""{"actions":[{"type":"tapOnText","text":"Settings"}]}""")
+      }
+    },
+    inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
+  )
+
+  private val slowJourney = Journey(
+    name = "slow-hierarchy",
+    app = APP_ID,
+    platform = Platform.ANDROID_MOBILE,
+    steps = listOf(JourneyStep.Action(instruction = "navigate to settings page")),
+  )
+
+  @Test
+  fun `slow path passes rendered content hierarchy to navigator`() = runTest {
+    val tree = HierarchyNode(attributes = mapOf("text" to "Watch Trailer"), states = setOf("focused"))
+    val session = FakeDeviceSession(screens = ArrayDeque(List(5) { tree }))
+    val messages = mutableListOf<String>()
+
+    val result = slowPathOrchestrator(withBoundedCapture(session), messages).run(slowJourney)
+
+    assertThat(result.passed).isTrue()
+    val message = messages.single()
+    assertThat(message).contains("Current accessibility tree (use its focused node to plan navigation):")
+    assertThat(message).contains(HierarchyRenderer.render(tree, HierarchyFilter.CONTENT))
+    assertThat(session.renderedActionFlows.last()).isEqualTo(flow("- tapOn: \"Settings\""))
+  }
+
+  @Test
+  fun `slow path continues without hierarchy when capture fails`() = runTest {
+    val fake = FakeDeviceSession()
+    val session = object : DeviceSession by fake {
+      override suspend fun captureHierarchyTree(): HierarchyNode = throw IllegalStateException("boom")
+      override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = throw IllegalStateException("boom")
+    }
+    val messages = mutableListOf<String>()
+
+    val result = slowPathOrchestrator(session, messages).run(slowJourney)
+
+    assertThat(result.passed).isTrue()
+    assertThat(messages.single()).doesNotContain("Current accessibility tree")
+    assertThat(fake.renderedActionFlows.last()).isEqualTo(flow("- tapOn: \"Settings\""))
+  }
+
+  @Test
+  fun `slow path continues without hierarchy when bounded capture times out`() = runTest {
+    val fake = FakeDeviceSession()
+    var first = true
+    val session = object : DeviceSession by fake {
+      override suspend fun captureHierarchyTree(): HierarchyNode = error("unbounded capture must not be used")
+      override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+        // Only the navigator's capture expires; later bounded captures (focus observation) are unaffected.
+        if (first) {
+          first = false
+          throw me.chrisbanes.verity.device.CaptureDeadlineExceededException(me.chrisbanes.verity.device.CaptureOperation.HIERARCHY)
+        }
+        return fake.captureHierarchyTree()
+      }
+    }
+    val messages = mutableListOf<String>()
+
+    val result = slowPathOrchestrator(session, messages).run(slowJourney)
+
+    assertThat(result.passed).isTrue()
+    assertThat(messages.single()).doesNotContain("Current accessibility tree")
+  }
+
+  @Test
+  fun `slow path aborts when capture expires because the caller was cancelled`() = runTest {
+    val fake = FakeDeviceSession()
+    val session = object : DeviceSession by fake {
+      override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+        kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!.cancel()
+        throw me.chrisbanes.verity.device.CaptureDeadlineExceededException(me.chrisbanes.verity.device.CaptureOperation.HIERARCHY)
+      }
+    }
+    val messages = mutableListOf<String>()
+
+    // Run in a child so cancelling it does not cancel the test scope itself.
+    val run = async { slowPathOrchestrator(session, messages).run(slowJourney) }
+    assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { run.await() }
+    assertThat(messages).isEmpty()
+  }
+
+  @Test
+  fun `slow path aborts when the caller is cancelled while rendering the hierarchy`() = runTest {
+    val fake = FakeDeviceSession()
+    val session = object : DeviceSession by fake {
+      override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode {
+        // Cancel after capture succeeds: only a render checkpoint can observe it before the navigator call.
+        kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!.cancel()
+        return HierarchyNode(attributes = mapOf("text" to "Home"))
+      }
+    }
+    val messages = mutableListOf<String>()
+
+    val run = async { slowPathOrchestrator(session, messages).run(slowJourney) }
+    assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { run.await() }
+    assertThat(messages).isEmpty()
+  }
+
+  @Test
+  fun `slow path rethrows cancellation from hierarchy capture before calling navigator`() = runTest {
+    val fake = FakeDeviceSession()
+    val session = object : DeviceSession by fake {
+      override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = throw kotlin.coroutines.cancellation.CancellationException("cancelled")
+    }
+    val messages = mutableListOf<String>()
+
+    assertFailsWith<kotlin.coroutines.cancellation.CancellationException> { slowPathOrchestrator(session, messages).run(slowJourney) }
+    assertThat(messages).isEmpty()
+  }
+
+  @Test
+  fun `loop slow path passes hierarchy to navigator`() = runTest {
+    val tree = HierarchyNode(attributes = mapOf("text" to "Home"), states = setOf("focused"))
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"), tree, screen("Settings"))))
+    val messages = mutableListOf<String>()
+    val journey = slowJourney.copy(steps = listOf(JourneyStep.Loop(action = "navigate to settings page", until = "Settings", max = 1)))
+
+    slowPathOrchestrator(withBoundedCapture(session), messages).run(journey)
+
+    assertThat(messages.single()).contains(HierarchyRenderer.render(tree, HierarchyFilter.CONTENT))
   }
 
   @Test

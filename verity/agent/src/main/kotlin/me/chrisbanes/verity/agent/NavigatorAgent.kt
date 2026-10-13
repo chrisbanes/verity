@@ -29,9 +29,10 @@ class NavigatorAgent(
     appId: String,
     platform: Platform,
     injectedContext: String = "",
+    hierarchy: String? = null,
   ): ActionFlow {
     val systemPrompt = buildSystemPrompt(platform, bundledContext, injectedContext)
-    val userMessage = buildUserMessage(actions, appId)
+    val userMessage = buildUserMessage(actions, appId, hierarchy)
     // One bounded retry: an invalid action list is fed back to the model once before the step fails.
     var message = userMessage
     var attempt = 0
@@ -71,6 +72,9 @@ class NavigatorAgent(
 
   companion object {
     private const val MAX_VALIDATION_RETRIES = 1
+
+    /** Upper bound on prompt text taken from the screen tree, so a huge list or WebView can't exhaust context or the request budget. */
+    const val MAX_HIERARCHY_CHARS = 12_000
 
     fun buildSystemPrompt(
       platform: Platform,
@@ -127,9 +131,21 @@ class NavigatorAgent(
       }.trim()
     }
 
-    fun buildUserMessage(actions: List<String>, appId: String): String = buildString {
+    /** Keeps whole leading lines up to [MAX_HIERARCHY_CHARS] and marks the cut; shorter trees are returned unchanged. */
+    private fun capHierarchy(hierarchy: String): String {
+      if (hierarchy.length <= MAX_HIERARCHY_CHARS) return hierarchy
+      val cut = hierarchy.lastIndexOf('\n', MAX_HIERARCHY_CHARS).takeIf { it > 0 } ?: MAX_HIERARCHY_CHARS
+      return hierarchy.substring(0, cut) + "\n... (tree truncated)"
+    }
+
+    fun buildUserMessage(actions: List<String>, appId: String, hierarchy: String? = null): String = buildString {
       appendLine("App ID: $appId")
       appendLine()
+      if (!hierarchy.isNullOrBlank()) {
+        appendLine("Current accessibility tree (use its focused node to plan navigation):")
+        appendLine(capHierarchy(hierarchy))
+        appendLine()
+      }
       appendLine("Generate the structured JSON action list for these instructions:")
       actions.forEachIndexed { index, action ->
         appendLine("${index + 1}. $action")

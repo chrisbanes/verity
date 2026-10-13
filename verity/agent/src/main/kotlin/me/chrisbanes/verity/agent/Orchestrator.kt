@@ -2,6 +2,8 @@ package me.chrisbanes.verity.agent
 
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
@@ -27,6 +29,8 @@ import me.chrisbanes.verity.core.result.TrailOrigin
 import me.chrisbanes.verity.core.result.WaitArtifact
 import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
 import me.chrisbanes.verity.core.timing.PhaseTimer
+import me.chrisbanes.verity.device.CaptureDeadlineExceededException
+import me.chrisbanes.verity.device.CaptureOperation
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.validateActionFlow
 
@@ -288,7 +292,27 @@ class Orchestrator(
     memory: JourneyMemory,
     source: TrailSource,
   ): SlowPathResult {
-    val selected = navigator.generate(instructions, appId, platform, context)
+    val hierarchy = try {
+      // Capture and render share one budget; render checkpoints observe caller cancellation and expiry.
+      val started = System.nanoTime()
+      val callerContext = currentCoroutineContext()
+      val tree = session.captureHierarchyTree(HIERARCHY_CAPTURE_TIMEOUT)
+      HierarchyRenderer.render(tree, HierarchyFilter.CONTENT) {
+        callerContext.ensureActive()
+        if (System.nanoTime() - started >= HIERARCHY_CAPTURE_TIMEOUT.inWholeNanoseconds) throw CaptureDeadlineExceededException(CaptureOperation.HIERARCHY)
+      }
+    } catch (e: CancellationException) {
+      // Budget expiry is a CancellationException subclass; only a cancelled caller aborts the step.
+      if (e !is CaptureDeadlineExceededException) throw e
+      currentCoroutineContext().ensureActive()
+      System.err.println("Warning: hierarchy capture for navigator timed out; generating without it")
+      null
+    } catch (e: Exception) {
+      // Class and message only: never log the tree, which may contain app text.
+      System.err.println("Warning: could not capture hierarchy for navigator (${e::class.simpleName}: ${e.message}); generating without it")
+      null
+    }
+    val selected = navigator.generate(instructions, appId, platform, context, hierarchy)
     validateActionFlow(selected, session)
     val reference = try {
       artifactRecorder.saveGeneratedFlow(segmentIndex, label, ActionFlowYamlRenderer.render(selected))
@@ -396,6 +420,9 @@ class Orchestrator(
   )
 
   companion object {
+    /** Budget for the optional navigator hierarchy; expiry is treated like any capture failure. */
+    private val HIERARCHY_CAPTURE_TIMEOUT = 5.seconds
+
     fun isFastPath(instructions: List<String>, platform: Platform): Boolean {
       val mapper = InteractionMapper.forPlatform(platform)
       return mapper.allMappable(instructions)

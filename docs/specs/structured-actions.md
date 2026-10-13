@@ -22,6 +22,8 @@ Execution splits an ordered list at its keycode actions. Each maximal run of oth
 
 The device-free compiler prepares the complete command list before any driver operation. Mapped groups also pass complete-list validation before their first direct key press. Preparation failures are safe local errors. Runtime failures keep the existing `FlowResult`, and cancellation propagates. Both Android and iOS retain their existing Maestro Orchestra and driver connections.
 
+Slow-path generation also receives the current content hierarchy, when it can be captured, so the model can see which node is focused; a capture failure only omits it.
+
 Generated actions exclude screenshots, assertions, scripts, nested flows, media, coordinates and arbitrary configuration. Those supplied-YAML capabilities remain at the public MCP boundary. Internal execution does not render, write or reparse YAML. It renders the selected list only when writing an optional generated-flow artifact or a dry-run preview; execution receives that same selected object.
 
 Dry run remains device-free, defers provider creation until generation is required, and plans the whole suite before writing Markdown. Model response failures exit `5`; local preparation and required output failures exit `3`. Existing loop ordering, assertion handling, valid `NONE` scroll suggestions and suite stop/continuation rules remain in effect.
