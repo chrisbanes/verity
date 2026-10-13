@@ -45,9 +45,13 @@ import me.chrisbanes.verity.core.result.JourneyArtifactResult
 import me.chrisbanes.verity.core.result.SegmentArtifactResult
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
+import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
+import me.chrisbanes.verity.core.timing.PhaseTimer
+import me.chrisbanes.verity.core.timing.RecordingPhaseTimer
 import me.chrisbanes.verity.device.ActionFlowPreparationException
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.DeviceSessionFactory
+import me.chrisbanes.verity.device.TimingDeviceSession
 
 private const val EXIT_INPUT = 2
 private const val EXIT_SETUP = 3
@@ -118,6 +122,14 @@ class RunCommand(
     "--model-trace",
     help = "Append a sensitive trace of model requests, replies and backend frames to this file",
   )
+  private val timing by option(
+    "--timing",
+    help = "Print per-step model and device durations after the run",
+  ).flag()
+
+  // Only a real run records; the default no-op keeps ordinary runs identical.
+  private val recorder: RecordingPhaseTimer? by lazy { if (timing) RecordingPhaseTimer() else null }
+  private val timer: PhaseTimer get() = recorder ?: NoOpPhaseTimer
 
   private fun resolveJourneys(
     path: File,
@@ -246,77 +258,82 @@ class RunCommand(
       return@runBlocking
     }
 
-    val suiteResult = try {
-      if (journeyRunner != null) {
-        runResolvedJourneysWithArtifacts(journeys, runArtifacts, journeyRunner)
-      } else if (suiteRunner != null) {
-        try {
-          suiteRunner.invoke(journeys)
-        } catch (e: CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e, journeys.singleOrNull())
-        }
-      } else {
-        runSuiteWithDevice(
-          parent = parent,
-          config = config,
-          resolved = resolved,
-          path = path,
-          journeys = journeys,
-          runArtifacts = runArtifacts,
-        )
-      }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: JourneyExecutionFailure) {
-      val message = e.message ?: "Journey suite failed"
-      try {
-        writeJourneyFailureSummary(
-          runArtifacts = runArtifacts,
-          inputPath = path.path,
-          message = message,
-          journeys = journeys,
-          metadata = metadata,
-          failedJourney = e.resolvedJourney ?: journeys.singleOrNull()?.takeIf { candidate -> e.completedResults.none { it.resolvedJourney == candidate } },
-          failedAt = e.failedAt,
-          completedResults = e.completedResults,
-          kind = e.kind,
-        )
-      } catch (artifactError: CancellationException) {
-        throw artifactError
-      } catch (artifactError: Exception) {
-        val artifactMessage = artifactError.message ?: "Failed to write journey failure artifacts"
-        writeSetupFailureSummary(runArtifacts, path.path, artifactMessage, metadata = metadata)
-        throw CliktError(artifactMessage, statusCode = EXIT_SETUP)
-      }
-      throw CliktError(
-        message,
-        statusCode = when (e.kind) {
-          ArtifactErrorKind.SETUP_FAILURE -> EXIT_SETUP
-          ArtifactErrorKind.MODEL_FAILURE -> EXIT_MODEL
-          else -> EXIT_JOURNEY
-        },
-      )
-    } catch (e: Exception) {
-      val message = e.message ?: "Journey suite setup failed"
-      writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
-      throw CliktError(message, statusCode = EXIT_SETUP)
-    }
-
-    printSuiteResult(suiteResult)
     try {
-      writeSuiteArtifacts(path, suiteResult, runArtifacts, metadata)
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      val message = e.message ?: "Failed to write run artifacts"
-      writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
-      throw CliktError(message, statusCode = EXIT_SETUP)
-    }
+      val suiteResult = try {
+        if (journeyRunner != null) {
+          runResolvedJourneysWithArtifacts(journeys, runArtifacts, journeyRunner)
+        } else if (suiteRunner != null) {
+          try {
+            suiteRunner.invoke(journeys)
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Exception) {
+            throw JourneyExecutionFailure(e.message ?: "Journey suite failed", e, journeys.singleOrNull())
+          }
+        } else {
+          runSuiteWithDevice(
+            parent = parent,
+            config = config,
+            resolved = resolved,
+            path = path,
+            journeys = journeys,
+            runArtifacts = runArtifacts,
+          )
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: JourneyExecutionFailure) {
+        val message = e.message ?: "Journey suite failed"
+        try {
+          writeJourneyFailureSummary(
+            runArtifacts = runArtifacts,
+            inputPath = path.path,
+            message = message,
+            journeys = journeys,
+            metadata = metadata,
+            failedJourney = e.resolvedJourney ?: journeys.singleOrNull()?.takeIf { candidate -> e.completedResults.none { it.resolvedJourney == candidate } },
+            failedAt = e.failedAt,
+            completedResults = e.completedResults,
+            kind = e.kind,
+          )
+        } catch (artifactError: CancellationException) {
+          throw artifactError
+        } catch (artifactError: Exception) {
+          val artifactMessage = artifactError.message ?: "Failed to write journey failure artifacts"
+          writeSetupFailureSummary(runArtifacts, path.path, artifactMessage, metadata = metadata)
+          throw CliktError(artifactMessage, statusCode = EXIT_SETUP)
+        }
+        throw CliktError(
+          message,
+          statusCode = when (e.kind) {
+            ArtifactErrorKind.SETUP_FAILURE -> EXIT_SETUP
+            ArtifactErrorKind.MODEL_FAILURE -> EXIT_MODEL
+            else -> EXIT_JOURNEY
+          },
+        )
+      } catch (e: Exception) {
+        val message = e.message ?: "Journey suite setup failed"
+        writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
+        throw CliktError(message, statusCode = EXIT_SETUP)
+      }
 
-    if (!suiteResult.passed) {
-      throw CliktError("Journey suite failed", statusCode = EXIT_JOURNEY)
+      printSuiteResult(suiteResult)
+      try {
+        writeSuiteArtifacts(path, suiteResult, runArtifacts, metadata)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        val message = e.message ?: "Failed to write run artifacts"
+        writeSetupFailureSummary(runArtifacts, path.path, message, metadata = metadata)
+        throw CliktError(message, statusCode = EXIT_SETUP)
+      }
+
+      if (!suiteResult.passed) {
+        throw CliktError("Journey suite failed", statusCode = EXIT_JOURNEY)
+      }
+    } finally {
+      // Also on failure: a slow failing run is the one worth measuring.
+      recorder?.let { echo(it.report().render()) }
     }
   }
 
@@ -410,6 +427,7 @@ class RunCommand(
 
   private fun Verity.preflightRequest(path: File, platform: Platform, deviceId: String?) = CliPreflightRequest(
     modelTracePath = this@RunCommand.modelTrace,
+    timer = this@RunCommand.timer,
     cliProvider = provider,
     cliOpenaiAuth = openaiAuth,
     cliNavigatorModel = navigatorModel,
@@ -447,7 +465,8 @@ class RunCommand(
       check(preflight.openaiAuth != OpenAiAuth.CHATGPT) { "Prepared Codex backend is required" }
       ApiModelRequestBackend(MultiLLMPromptExecutor(clientFactory(checkNotNull(preflight.provider), preflight.apiKey.orEmpty())))
     }
-    return preflight.trace?.let { TracingModelRequestBackend(backend, it) } ?: backend
+    val timed = if (timing) TimedModelRequestBackend(backend, timer) else backend
+    return preflight.trace?.let { TracingModelRequestBackend(timed, it) } ?: timed
   }
 
   private fun navigatorSettings(preflight: CliPreflightResult): ModelRequestSettings = when (checkNotNull(preflight.navigatorModel)) {
@@ -724,7 +743,7 @@ class RunCommand(
       echo("Inspector model: ${inspectorModel.id}")
       projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
-      val session = sessionFactory(platform, preflight.deviceId ?: resolved.deviceId, resolved.disableAnimations)
+      val session = sessionFactory(platform, preflight.deviceId ?: resolved.deviceId, resolved.disableAnimations).let { if (timing) TimingDeviceSession(it, timer) else it }
       val navigatorFactory = { navigatorAgent(parent, backend, preflight) }
       val inspectorFactory = {
         InspectorAgent(
@@ -746,6 +765,7 @@ class RunCommand(
               inspectorFactory = inspectorFactory,
               context = projectContext.text,
               artifactRecorder = artifactRecorder,
+              timer = timer,
             )
             orchestrator.run(resolved.journey)
           }.copy(metadata = resolved.toRunArtifactMetadata()).also { completedResults = it.results }

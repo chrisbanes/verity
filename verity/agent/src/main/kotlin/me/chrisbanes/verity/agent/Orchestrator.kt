@@ -25,6 +25,8 @@ import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.TrailGranularity
 import me.chrisbanes.verity.core.result.TrailOrigin
 import me.chrisbanes.verity.core.result.WaitArtifact
+import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
+import me.chrisbanes.verity.core.timing.PhaseTimer
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.validateActionFlow
 
@@ -40,10 +42,13 @@ class Orchestrator(
   private val context: String = "",
   private val artifactRecorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
   private val nowNanos: () -> Long = System::nanoTime,
+  private val timer: PhaseTimer = NoOpPhaseTimer,
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments.
-    session.executeActions(ActionFlow(journey.app, listOf(Interaction.LaunchApp())))
+    timer.step("${journey.name} setup") {
+      session.executeActions(ActionFlow(journey.app, listOf(Interaction.LaunchApp())))
+    }
 
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
@@ -52,22 +57,24 @@ class Orchestrator(
 
     try {
       for (segment in segments) {
-        // Create fresh subagents for this segment to ensure isolation
-        val navigator = navigatorFactory()
-        val inspector = inspectorFactory()
+        val result = timer.step("${journey.name} segment ${segment.index}") {
+          // Create fresh subagents for this segment to ensure isolation
+          val navigator = navigatorFactory()
+          val inspector = inspectorFactory()
 
-        val result = try {
-          executeSegment(segment, journey.app, journey.platform, navigator, inspector, memory)
-        } catch (e: InteractionExecutionFailure) {
-          val instructions = segment.actions.map { it.instruction }
-          SegmentResult(
-            index = segment.index,
-            passed = false,
-            reasoning = e.message.orEmpty(),
-            executionMode = if (isFastPath(instructions, journey.platform)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
-            actions = instructions,
-            error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, e.message.orEmpty()),
-          )
+          try {
+            executeSegment(segment, journey.app, journey.platform, navigator, inspector, memory)
+          } catch (e: InteractionExecutionFailure) {
+            val instructions = segment.actions.map { it.instruction }
+            SegmentResult(
+              index = segment.index,
+              passed = false,
+              reasoning = e.message.orEmpty(),
+              executionMode = if (isFastPath(instructions, journey.platform)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
+              actions = instructions,
+              error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, e.message.orEmpty()),
+            )
+          }
         }
         results.add(result)
         if (!result.passed) break

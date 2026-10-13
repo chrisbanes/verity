@@ -9,6 +9,7 @@ import assertk.assertions.isTrue
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -32,6 +33,8 @@ import me.chrisbanes.verity.agent.ModelFailureKind
 import me.chrisbanes.verity.agent.ModelRequestStage
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.timing.PhaseKind
+import me.chrisbanes.verity.core.timing.RecordingPhaseTimer
 
 class CodexModelBackendTest {
   private class CallerCancellation(val marker: Any) : CancellationException("caller-owned")
@@ -204,6 +207,35 @@ class CodexModelBackendTest {
         val failure = assertFailsWith<CodexFailure> { backend.execute(request()) }
         assertThat(failure.kind).isEqualTo(CodexFailureKind.CLEANUP)
         assertThat(failure.cause).isEqualTo(null)
+      }
+    }
+  }
+
+  @Test
+  fun `request records thread and turn detail phases in order without model totals`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture { _, backend ->
+        val timer = RecordingPhaseTimer()
+        backend.timer = timer
+        timer.step("s") { backend.execute(request()) }
+        val step = timer.report().steps.single()
+        assertThat(step.phases.map { it.kind to it.name }).isEqualTo(
+          listOf("thread/start", "turn/start", "turn/await", "thread/unsubscribe").map { PhaseKind.MODEL_DETAIL to it },
+        )
+        assertThat(step.phases.map { it.count }).isEqualTo(listOf(1, 1, 1, 1))
+        assertThat(step.modelTotal).isEqualTo(Duration.ZERO)
+      }
+    }
+  }
+
+  @Test
+  fun `failed cleanup still records the phases that ran`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture("model-unsubscribe-failed") { _, backend ->
+        val timer = RecordingPhaseTimer()
+        backend.timer = timer
+        assertFailsWith<CodexFailure> { timer.step("s") { backend.execute(request()) } }
+        assertThat(timer.report().steps.single().phases.map { it.name }).isEqualTo(listOf("thread/start", "turn/start", "turn/await", "thread/unsubscribe"))
       }
     }
   }

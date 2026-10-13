@@ -11,6 +11,8 @@ import assertk.assertions.exists
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isGreaterThan
+import assertk.assertions.isNotEqualTo
 import assertk.assertions.isTrue
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
@@ -41,7 +43,9 @@ import me.chrisbanes.verity.agent.SegmentResult
 import me.chrisbanes.verity.agent.inspectionReply
 import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
+import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.ArtifactError
@@ -2089,6 +2093,84 @@ class RunCommandTest {
     ),
     passed = true,
   )
+
+  private fun timingSession() = FakeDeviceSession(Platform.ANDROID_MOBILE, HierarchyNode(attributes = mapOf("text" to "Home")))
+
+  private fun timingJourney(dir: File) = writeJourneyWithSteps(dir, "timing.journey.yaml", "Timed run", platform = "android", steps = listOf("[?tree] Home is visible"))
+
+  private fun runTiming(dir: File, session: DeviceSession, flags: String, args: String = ""): com.github.ajalt.clikt.testing.CliktCommandTestResult {
+    val command = successfulProductionCommand(mutableListOf(), session)
+    return Verity().subcommands(command).test(
+      "--output-path ${File(dir, "out").absolutePath} --provider openai --api-key test-key --inspector-model gpt-5.2-pro run $flags ${timingJourney(dir).absolutePath} $args",
+    )
+  }
+
+  @Test
+  fun `timing prints per-step model and device durations after the suite result and default output has none`() {
+    val dir = createTempDirectory("verity-timing").toFile()
+    try {
+      val timed = runTiming(dir, timingSession(), "--timing")
+      assertThat(timed.statusCode).isEqualTo(0)
+      val lines = timed.output.lines()
+      assertThat(lines.indexOf("Timing")).isGreaterThan(lines.indexOfFirst { it.startsWith("Failed:") })
+      assertThat(timed.output).contains("Timed run segment 0:")
+      assertThat(timed.output).contains("Timed run setup:")
+      assertThat(timed.output).contains("device executeActions x1")
+      assertThat(timed.output).contains("model_request tree-eval x1")
+
+      val plain = runTiming(dir, timingSession(), "")
+      assertThat(plain.statusCode).isEqualTo(0)
+      assertThat(plain.output).doesNotContain("Timing")
+      assertThat(timed.output.substringBefore("\nTiming")).isEqualTo(plain.output.trimEnd())
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `timing still prints when the run fails`() {
+    val dir = createTempDirectory("verity-timing-fail").toFile()
+    try {
+      val fake = timingSession()
+      val failing = object : DeviceSession by fake {
+        override suspend fun executeActions(flow: ActionFlow): FlowResult = error("device lost")
+      }
+      val result = runTiming(dir, failing, "--timing")
+      assertThat(result.statusCode).isNotEqualTo(0)
+      assertThat(result.output).contains("Timing\nTimed run setup:")
+      assertThat(result.output).contains("device executeActions x1")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `timing is ignored by dry-run`() {
+    val dir = createTempDirectory("verity-timing-dry").toFile()
+    try {
+      val result = Verity().subcommands(RunCommand()).test(
+        "--output-path ${File(dir, "out").absolutePath} run --dry-run --timing ${timingJourney(dir).absolutePath}",
+      )
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(result.output).doesNotContain("Timing\n")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `timing works together with model trace`() {
+    val dir = createTempDirectory("verity-timing-trace").toFile()
+    try {
+      val trace = File(dir, "trace.log")
+      val result = runTiming(dir, timingSession(), "--timing --model-trace ${trace.absolutePath}")
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(result.output).contains("model_request tree-eval x1")
+      assertThat(trace.readText()).contains("start prompt=tree-eval")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
 
   private fun successfulProductionCommand(
     requests: MutableList<CapturedEffortRequest>,

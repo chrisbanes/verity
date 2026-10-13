@@ -23,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -35,6 +36,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.chrisbanes.verity.agent.ModelBackendFailure
 import me.chrisbanes.verity.agent.ModelBackendFailureKind
+import me.chrisbanes.verity.core.timing.PhaseKind
+import me.chrisbanes.verity.core.timing.RecordingPhaseTimer
 
 class ModelRequestBackendTest {
   @Test
@@ -239,6 +242,42 @@ class ModelRequestBackendTest {
 
     assertThat(thrown).isSameInstanceAs(cancellation)
     assertThat(sink.lines.none { it.contains(" failure ") }).isEqualTo(true)
+  }
+
+  @Test
+  fun `timed backend records the request by prompt name rethrows failures and delegates close`() = runTest {
+    var now = 0L
+    val timer = RecordingPhaseTimer { now }
+    var closed = false
+    val failure = IllegalStateException("boom")
+    val delegate = object : ModelRequestBackend {
+      override suspend fun execute(request: ModelRequest): Message.Assistant {
+        now += 40_000_000
+        if (request.promptName == "tree-eval") throw failure
+        return Message.Assistant("ok", ResponseMetaInfo(Instant.parse("2026-10-02T00:00:00Z")))
+      }
+
+      override suspend fun close() {
+        closed = true
+      }
+    }
+    val backend = TimedModelRequestBackend(delegate, timer)
+
+    timer.step("s") {
+      backend.execute(apiRequest())
+      val thrown = assertFailsWith<IllegalStateException> { backend.execute(apiRequest().copy(promptName = "tree-eval")) }
+      assertThat(thrown).isSameInstanceAs(failure)
+    }
+    backend.close()
+
+    val step = timer.report().steps.single()
+    assertThat(step.phases.map { Triple(it.kind, it.name, it.total) }).isEqualTo(
+      listOf(
+        Triple(PhaseKind.MODEL_REQUEST, "visual-eval", 40.milliseconds),
+        Triple(PhaseKind.MODEL_REQUEST, "tree-eval", 40.milliseconds),
+      ),
+    )
+    assertThat(closed).isEqualTo(true)
   }
 
   private class CapturingPromptExecutor : PromptExecutorAPI {

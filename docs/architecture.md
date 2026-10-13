@@ -288,6 +288,8 @@ object DeviceSessionFactory {
 
 Auto-discovers the device if no ID is given. When `disableAnimations` is true, wraps the session in an `AnimationRestoringSession` decorator that saves scales on connect and restores on close.
 
+`TimingDeviceSession` is a further optional decorator, applied by `RunCommand` only for `--timing`. It overrides every suspend member, including the default-bodied `captureHierarchy`, `containsText` and `checkFocused`, so each call is recorded once as a `DEVICE` phase.
+
 ### Preflight Checks
 
 Core owns shared reports and filesystem checks, device owns platform readiness checks, and the CLI composes provider/model/credential checks with journey/context/device validation. MCP performs device and screenshot-target preflight, without LLM credential checks.
@@ -541,9 +543,12 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 ```
 --dry-run                Render mapped or generated actions as YAML without device access
 --model-trace <file>     Append a sensitive trace of model requests, replies and backend frames
+--timing                 Print per-step model and device durations after the run
 ```
 
 `--model-trace` is opened during local preflight, before Codex preparation and session creation. `TracingModelRequestBackend` records every request and its reply or redacted failure, whatever the backend. `CodexModelBackend.prepare(trace = …)` passes the same `ModelTraceSink` to `CodexAppServerClient`, which adds sent and received app-server frames and stderr. API providers add nothing below the request layer. The trace captures prompts, hierarchy dumps, image paths and model replies, so it is sensitive. It is never written into run artifacts. See the [preflight spec](specs/preflight-checks.md#model-trace) for the file contract.
+
+`--timing` is a boolean with no file. A `RecordingPhaseTimer` (`core.timing`, injected clock for tests) is created only when it is set; otherwise `NoOpPhaseTimer` is used and output is unchanged. `Orchestrator` records the app launch as `<journey> setup` and each segment as `<journey> segment <index>` steps. Within a step, `TimedModelRequestBackend` (inside `TracingModelRequestBackend`) records each request as a `MODEL_REQUEST` phase named by prompt, `CodexModelBackend.RequestSession` records `thread/start`, `turn/start`, `turn/await` (generation) and `thread/unsubscribe` as `MODEL_DETAIL` phases, and `TimingDeviceSession` records every `DeviceSession` call as a `DEVICE` phase. Step model and device totals sum only `MODEL_REQUEST` and `DEVICE` phases, so detail phases are not double counted. The report is printed to stdout after the suite result, also when the run fails. It is never written to run artifacts or the model trace, and `--dry-run` ignores it. Individual Maestro commands inside `executeActions` are not timed separately.
 
 `--platform` takes the platform wire names (the same as `device.platform` and journey `platform`), not enum constant names.
 
