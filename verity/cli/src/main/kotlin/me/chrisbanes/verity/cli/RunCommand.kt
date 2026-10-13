@@ -34,6 +34,7 @@ import me.chrisbanes.verity.core.model.AssertionStrategy
 import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.parser.JourneyWarnings
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ArtifactStatus
@@ -225,6 +226,7 @@ class RunCommand(
       writeParserFailureSummaryOrExitSetup(runArtifacts, path.path, message, metadata)
       throw CliktError(message, statusCode = EXIT_INPUT)
     }
+    journeys.forEach { JourneyWarnings.check(it.journey, it.file.path).forEach { warning -> echo(warning, err = true) } }
 
     if (dryRun) {
       val dryRunReport = try {

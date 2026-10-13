@@ -173,7 +173,7 @@ The `AssertModeInferrer` selects the cheapest sufficient mode:
 
 The `LoopStepInferrer` matches `<verb> ... until <condition>` with anchored `up to N times`, `max N`, `for up to N` or `N iterations` limits and an optional final period. The default limit is 20; zero still performs one immediate condition check.
 
-The leading verb must be press, navigate, move, scroll, go or step. `Loop.actionInstructions` derives ordered, trimmed semicolon components and rejects empty components. Execution and dry-run consume that same representation; platform interaction mapping remains unchanged. Core's `FocusConditionParser` recognises the three anchored forms documented in [loop conditions](specs/loop-conditions.md).
+The leading verb must be press, navigate, move, scroll, go or step. `Loop.actionInstructions` derives ordered, trimmed semicolon components and rejects empty components. Execution and dry-run consume that same representation; platform interaction mapping remains unchanged. Core's `FocusConditionParser` recognises the three anchored forms documented in [loop conditions](specs/loop-conditions.md). `JourneyWarnings` (core) flags prose-like focus targets in loop and wait conditions; `RunCommand` prints these as non-blocking `Warning:` lines on stderr, including for `--dry-run`.
 
 ---
 

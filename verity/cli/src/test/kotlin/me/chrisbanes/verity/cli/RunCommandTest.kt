@@ -231,6 +231,33 @@ class RunCommandTest {
     }
   }
 
+  @Test fun `prose focus loop condition warns on stderr without changing stdout or status`() {
+    val dir = createTempDirectory("verity-loop-warning").toFile()
+    try {
+      val prose = "a card in a row that opens a detail page"
+      val warned = writeJourneyWithSteps(dir, "warn.journey.yaml", "Warn", steps = listOf("Press D-pad down until $prose is focused"))
+      val quiet = writeJourneyWithSteps(dir, "quiet.journey.yaml", "Quiet", steps = listOf("Press D-pad down until Settings is focused"))
+      val dry = Verity().subcommands(RunCommand(loadConfig = { VerityConfig(provider = "definitely-not-real") }))
+        .test(listOf("--output-path", File(dir, "out").absolutePath, "run", "--dry-run", warned.absolutePath))
+      assertThat(dry.statusCode).isEqualTo(0)
+      assertThat(dry.stderr).contains("Warning:")
+      assertThat(dry.stderr).contains("\"$prose\"")
+      assertThat(dry.stdout).doesNotContain("Warning:")
+      val dryQuiet = Verity().subcommands(RunCommand(loadConfig = { VerityConfig(provider = "definitely-not-real") }))
+        .test(listOf("--output-path", File(dir, "out2").absolutePath, "run", "--dry-run", quiet.absolutePath))
+      assertThat(dryQuiet.stderr).isEqualTo("")
+
+      val real = Verity().subcommands(
+        runCommand { journeys -> SuiteRunResult(journeys.map { ResolvedJourneyResult(it, JourneyResult(it.journey.name, listOf(SegmentResult(0, passed = true)))) }) },
+      ).test(listOf("--output-path", File(dir, "out3").absolutePath, "run", warned.absolutePath))
+      assertThat(real.statusCode).isEqualTo(0)
+      assertThat(real.stderr).contains("Warning:")
+      assertThat(real.stdout).doesNotContain("Warning:")
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
   @Test fun `production static wait suite previews stdout and saved Markdown without provider or device access`() {
     val dir = createTempDirectory("verity-wait-preview").toFile()
     try {
