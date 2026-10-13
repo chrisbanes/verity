@@ -9,6 +9,9 @@ class DeviceNotReadyException(message: String) : IllegalStateException(message)
 
 private val wakefulness = Regex("""mWakefulness=(\w+)""")
 private val focusLine = Regex("""mCurrentFocus=.*""")
+
+// Whole class-name segments only, so an app activity like MyDreamActivity is not a screensaver.
+private val dreamComponent = Regex("""[./](DreamActivity|Somnambulator)\b""")
 private const val WAKE_ATTEMPTS = 3
 
 /**
@@ -19,7 +22,7 @@ internal fun parseDeviceReadiness(power: String, focus: String): String? {
   val state = wakefulness.find(power)?.groupValues?.get(1)
   if (state != null && state != "Awake") return "device is ${state.lowercase()}"
   val focused = focusLine.find(focus)?.value
-  if (focused != null && "Dream" in focused) return "screensaver ($focused) is focused"
+  if (focused != null && dreamComponent.containsMatchIn(focused)) return "screensaver ($focused) is focused"
   return null
 }
 

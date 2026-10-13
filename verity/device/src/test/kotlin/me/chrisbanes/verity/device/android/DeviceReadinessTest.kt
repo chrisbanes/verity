@@ -27,6 +27,16 @@ class DeviceReadinessTest {
 
   @Test fun dreamActivityFocusIsNotReady() = assertThat(parseDeviceReadiness(awake, dreamFocus)).isNotNull().contains("com.brdgwtr.screensaver/")
 
+  @Test fun appActivityContainingDreamIsReady() {
+    for (name in listOf("com.example/com.example.MyDreamActivity", "com.dream.app/.DreamerActivity")) {
+      assertThat(parseDeviceReadiness(awake, "  mCurrentFocus=Window{1 u0 $name}")).isNull()
+    }
+  }
+
+  @Test fun systemUiSomnambulatorIsNotReady() = assertThat(
+    parseDeviceReadiness(awake, "  mCurrentFocus=Window{1 u0 com.android.systemui/com.android.systemui.Somnambulator}"),
+  ).isNotNull()
+
   @Test fun unknownOutputProceeds() {
     assertThat(parseDeviceReadiness("", "")).isNull()
     assertThat(parseDeviceReadiness(awake, "  mCurrentFocus=null")).isNull()
