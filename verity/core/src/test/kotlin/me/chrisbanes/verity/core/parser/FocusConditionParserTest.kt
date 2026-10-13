@@ -15,4 +15,10 @@ class FocusConditionParserTest {
       assertThat(FocusConditionParser.parse(condition)).isNull()
     }
   }
+
+  @Test
+  fun `parseTarget reports whether the target was quoted`() {
+    assertThat(FocusConditionParser.parseTarget("'Settings' is focused")).isEqualTo(FocusConditionParser.FocusTarget("Settings", true))
+    assertThat(FocusConditionParser.parseTarget("Settings is focused")).isEqualTo(FocusConditionParser.FocusTarget("Settings", false))
+  }
 }
