@@ -43,20 +43,11 @@ class AndroidDeviceSession(
 
   override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
 
-  override suspend fun pressKey(keyName: String) = withContext(Dispatchers.IO) {
-    val keyCode = checkNotNull(KeyCode.Companion.getByName(keyName)) {
-      "Unknown key name: '$keyName'"
-    }
-    maestro.pressKey(keyCode)
-  }
+  override suspend fun pressKey(keyName: String) = pressKey(keyName, false)
 
   override suspend fun pressKey(keyName: String, longPress: Boolean) {
-    if (!longPress) {
-      pressKey(keyName)
-      return
-    }
     val key = checkNotNull(KeyCode.Companion.getByName(keyName)) { "Unknown key name: '$keyName'" }
-    pressKey(androidKeycode(key), true)
+    pressKey(androidKeycode(key), longPress)
   }
 
   override suspend fun pressKey(keycode: Int, longPress: Boolean) {
@@ -66,7 +57,7 @@ class AndroidDeviceSession(
     }
   }
 
-  // Preserve Maestro 2.11.0 AndroidDriver's closed mapping for named holds.
+  // Preserve Maestro 2.11.0 AndroidDriver's closed mapping for named presses.
   private fun androidKeycode(key: KeyCode): Int = when (key) {
     KeyCode.ENTER -> 66
     KeyCode.BACKSPACE -> 67

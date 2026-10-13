@@ -252,7 +252,7 @@ interface DeviceSession : AutoCloseable {
 }
 ```
 
-Named short presses retain the legacy Maestro route. Android implements the new overloads with validated integer `input keyevent` commands, adding `--longpress` for holds; named holds use the current closed Maestro-to-Android key mapping. Raw codes must be non-negative JVM integers. The two capability properties advertise which overloads a session supports, and the MCP layer reads them to reject unsupported calls early. iOS keeps both `false`: it retains named short presses and rejects raw codes and holds. Animation-restoring session wrappers forward the overloads through the existing delegation.
+Android implements named presses and the raw overload with validated integer `input keyevent` commands, adding `--longpress` for holds; named presses use the current closed Maestro-to-Android key mapping and bypass Maestro. Raw codes must be non-negative JVM integers. The two capability properties advertise which overloads a session supports, and the MCP layer reads them to reject unsupported calls early. iOS keeps both `false`: it keeps the legacy Maestro route for named short presses and rejects raw codes and holds. Animation-restoring session wrappers forward the overloads through the existing delegation.
 
 ### Structured execution
 
