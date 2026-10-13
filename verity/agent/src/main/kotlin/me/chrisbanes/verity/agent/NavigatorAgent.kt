@@ -32,13 +32,20 @@ class NavigatorAgent(
   ): ActionFlow {
     val systemPrompt = buildSystemPrompt(platform, bundledContext, injectedContext)
     val userMessage = buildUserMessage(actions, appId)
-    val response = cleanResponse(requestModelText(ModelRequestStage.NAVIGATOR_FLOW) { executeRequest(systemPrompt, userMessage) })
-    return try {
-      ActionFlow.decodeResponse(appId, response).also { validateFlow(it) }
-    } catch (error: CancellationException) {
-      throw error
-    } catch (error: InvalidActionFlowException) {
-      throw ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.INVALID_RESPONSE, error.detail)
+    // One bounded retry: an invalid action list is fed back to the model once before the step fails.
+    var message = userMessage
+    var attempt = 0
+    while (true) {
+      val response = cleanResponse(requestModelText(ModelRequestStage.NAVIGATOR_FLOW) { executeRequest(systemPrompt, message) })
+      try {
+        return ActionFlow.decodeResponse(appId, response).also { validateFlow(it) }
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: InvalidActionFlowException) {
+        val detail = error.detail ?: error.reason.name
+        if (attempt++ >= MAX_VALIDATION_RETRIES) throw ModelFailureException(ModelRequestStage.NAVIGATOR_FLOW, ModelFailureKind.INVALID_RESPONSE, error.detail)
+        message = "$userMessage\n\nYour previous response was rejected: $detail\nPrevious response:\n$response\n\nReturn a corrected JSON object."
+      }
     }
   }
 
@@ -63,6 +70,8 @@ class NavigatorAgent(
   }
 
   companion object {
+    private const val MAX_VALIDATION_RETRIES = 1
+
     fun buildSystemPrompt(
       platform: Platform,
       bundledContext: String,

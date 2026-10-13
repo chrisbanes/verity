@@ -4,7 +4,7 @@ CLI execution and dry-run planning share a complete `ActionFlow`: the requested 
 
 The navigator returns strict JSON with an `actions` array. Metadata is checked before decoding. The request supplies the app ID; a response cannot replace it. Unknown properties or action types, invalid regular expressions, unsupported keys and invalid waits fail before execution. The supported actions are key presses, raw Android keycodes, text/ID taps, text/focused long presses, literal text input, directional scroll/swipe, pull to refresh, default scroll, application launch, animation waits and positive visible waits. A visible wait requires a positive integer timeout and exactly one text or ID selector.
 
-An unknown `keyPress` name fails with `UNSUPPORTED_KEY` and a detail that names the key and points to `keyCode`. The name is echoed only when it matches `[A-Za-z0-9 _.-]{1,64}`; otherwise the detail omits it. The navigator appends this detail to its otherwise fixed invalid-response diagnostic.
+An unknown `keyPress` name fails with `UNSUPPORTED_KEY` and a detail that names the key and points to `keyCode`. The name is echoed only when it matches `[A-Za-z0-9 _.-]{1,64}`; otherwise the detail omits it. The navigator appends this detail to its otherwise fixed invalid-response diagnostic. Before failing, the navigator makes one bounded retry: it re-requests the flow with the validation detail and its previous response, and fails only if the retry is also invalid.
 
 ## Raw keycodes
 
