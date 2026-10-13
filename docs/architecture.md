@@ -46,22 +46,30 @@ The three CLI fat JAR tasks merge service descriptors, Kotlin module metadata an
 
 CI and release workflows map the Actions secrets `GRADLE_REMOTE_CACHE_URL`, `GRADLE_REMOTE_CACHE_USERNAME`, and `GRADLE_REMOTE_CACHE_PASSWORD` to those properties. Same-repository pull requests and tagged releases read from the remote cache with `remoteBuildCachePush=false`; only pushes to `main` enable Gradle cache uploads. Fork pull requests do not receive Actions secrets and fall back to the local cache. When the remote cache is configured, CI excludes the disabled local build cache from the Actions cache. The workflows work before the secrets are added.
 
-CI builds and verifies packaged inputs before native tests. The independent
+The `build` job builds and verifies the six CLI archives and uploads them as
+`cli-archives`. The native jobs wait for it and pass the downloaded archives to
+Gradle with `-PpackagedArchives=<dir>`, so they neither rebuild archives nor run
+R8. A `changes` job skips both native jobs on pull requests that change only
+`docs/**`, `**/*.md`, `research/**` or `.github/ISSUE_TEMPLATE/**`; skipped jobs
+satisfy the required checks. Pushes to `main` always run them. The
 `smoke-android` job uses an API 34 AOSP x86-64 emulator on Linux through
 `reactivecircus/android-emulator-runner`. The `smoke-ios` job uses `macos-latest`
 and `futureware-tech/simulator-action` to select an available iOS simulator,
-erase it, wait for boot and shut it down after the job. No simulator model or
-runtime version is pinned. The macOS pre-native build uses `--no-daemon`.
+erase it and start booting it first, then waits for boot just before the tests
+and shuts it down after the job. No simulator model or runtime version is pinned.
 
 Gradle commands run directly in the workflow. Android tests use the emulator
 action's `ANDROID_SERIAL`; iOS tests receive the simulator action's UUID through
-`IOS_SIMULATOR_UDID`. Packaged and ordinary tagged smoke tests are explicitly
-forced to execute; native tests are excluded from the default offline `check`.
+`IOS_SIMULATOR_UDID`. Packaged and ordinary tagged smoke tests run in one Gradle
+invocation, packaged first. They are not forced to rerun, so a build cache hit
+can stand in for a device run; its `reports/packaged/` qualification reports are
+then absent. Native tests are excluded from the default offline `check`.
 
 Linux Android tests exercise the Linux and universal JARs and their shrunk
-counterparts; macOS iOS tests exercise the macOS and universal JARs and their
-shrunk counterparts. Normal CI does not test macOS-specific
-Android interoperability. There is no shared Android-to-iOS runner or handoff,
+counterparts. On pushes to `main`, macOS iOS tests exercise the macOS and
+universal JARs and their shrunk counterparts; pull requests run only the shrunk
+macOS JAR, the archive releases ship for that host. Normal CI does not test
+macOS-specific Android interoperability. There is no shared Android-to-iOS runner or handoff,
 and no bootstrap observer or supplementary health diagnostics. The packaged
 harness retains its own process cleanup, caller cancellation and functional test
 reports.

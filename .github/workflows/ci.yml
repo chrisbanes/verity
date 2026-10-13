@@ -35,7 +35,55 @@ jobs:
       - name: Build
         run: ./gradlew build --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
+      # Smoke jobs test these exact archives instead of rebuilding them (and rerunning R8) on each device host.
+      - name: Retain CLI archives
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-archives
+          path: |
+            verity/cli/build/libs/verity-*.jar
+            verity/cli/build/libs/shrunk/verity-*.jar
+          if-no-files-found: error
+          # JARs are already compressed; a week covers re-running a failed smoke job.
+          compression-level: 0
+          retention-days: 7
+
+      - name: Retain packaging results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packaging-results
+          path: |
+            verity/smoke-tests/build/reports/smoke-grpc.txt
+            verity/cli/build/reports/packaged-grpc.txt
+            verity/cli/build/reports/host-packaging.tsv
+            verity/cli/build/reports/shrunk-packaging.tsv
+          if-no-files-found: error
+
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      smoke: ${{ github.event_name != 'pull_request' || steps.filter.outputs.smoke == 'true' }}
+
+    steps:
+      # Skipped jobs satisfy required checks, so pull requests that only touch these paths skip native smoke tests.
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
+        with:
+          predicate-quantifier: every
+          filters: |
+            smoke:
+              - '!docs/**'
+              - '!**/*.md'
+              - '!research/**'
+              - '!.github/ISSUE_TEMPLATE/**'
+
   smoke-android:
+    needs: [build, changes]
+    if: needs.changes.outputs.smoke == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -50,8 +98,10 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
-      - name: Verify Linux packaged inputs
-        run: ./gradlew :verity:cli:verifyHostJars :verity:cli:verifyShrunkJars :verity:smoke-tests:packagedProbeJar --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-archives
+          path: ${{ runner.temp }}/cli-archives
 
       - name: Enable KVM
         run: |
@@ -66,9 +116,7 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
-          script: |
-            ./gradlew :verity:smoke-tests:packagedAndroidTest --rerun -PpackagedVariant=linux-x86_64,universal,linux-x86_64-shrunk,universal-shrunk --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
-            ./gradlew :verity:smoke-tests:test --rerun -Pinclude.tags=android --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          script: ./gradlew :verity:smoke-tests:packagedAndroidTest :verity:smoke-tests:test -PpackagedArchives=${{ runner.temp }}/cli-archives -PpackagedVariant=linux-x86_64,universal,linux-x86_64-shrunk,universal-shrunk -Pinclude.tags=android --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain Android smoke results
         if: always()
@@ -79,16 +127,24 @@ jobs:
             verity/smoke-tests/build/test-results/test/*.xml
             verity/smoke-tests/build/test-results/packagedAndroidTest/*.xml
             verity/smoke-tests/build/reports/packaged/
-            verity/smoke-tests/build/reports/smoke-grpc.txt
-            verity/cli/build/reports/packaged-grpc.txt
-            verity/cli/build/reports/host-packaging.tsv
-            verity/cli/build/reports/shrunk-packaging.tsv
           if-no-files-found: error
 
   smoke-ios:
+    needs: [build, changes]
+    if: needs.changes.outputs.smoke == 'true'
     runs-on: macos-latest
 
     steps:
+      # Boot in the background while the job sets up; the tests step waits for it.
+      - name: Start iOS simulator
+        id: simulator
+        uses: futureware-tech/simulator-action@v6
+        with:
+          os: iOS
+          erase_before_boot: true
+          wait_for_boot: false
+          shutdown_after_job: true
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-java@v6
@@ -100,11 +156,10 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
-      - name: Verify macOS packaged inputs
-        # Shadow runs R8 in its own JVM with the default heap (a quarter of the runner's RAM), which is too small here.
-        env:
-          JAVA_TOOL_OPTIONS: -Xmx3g
-        run: ./gradlew :verity:cli:verifyHostJars :verity:cli:verifyShrunkJars :verity:smoke-tests:packagedProbeJar --no-daemon --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+      - uses: actions/download-artifact@v8
+        with:
+          name: cli-archives
+          path: ${{ runner.temp }}/cli-archives
 
       - name: Install AppleSimulatorUtils
         run: |
@@ -113,22 +168,16 @@ jobs:
           brew install applesimutils
           applesimutils --version
 
-      - name: Start iOS simulator
-        id: simulator
-        uses: futureware-tech/simulator-action@v6
-        with:
-          os: iOS
-          erase_before_boot: true
-          wait_for_boot: true
-          shutdown_after_job: true
+      - name: Wait for iOS simulator
+        run: xcrun simctl bootstatus '${{ steps.simulator.outputs.udid }}' -b
 
       - name: iOS smoke tests
         env:
           MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
           IOS_SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
-        run: |
-          ./gradlew :verity:smoke-tests:packagedIosTest --rerun -PpackagedVariant=macos-aarch64,universal,macos-aarch64-shrunk,universal-shrunk --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
-          ./gradlew :verity:smoke-tests:test --rerun -Pinclude.tags=ios --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
+          # Pull requests run the archive releases ship for this host; pushes to main run every macOS-compatible variant.
+          PACKAGED_VARIANTS: ${{ github.event_name == 'push' && 'macos-aarch64,universal,macos-aarch64-shrunk,universal-shrunk' || 'macos-aarch64-shrunk' }}
+        run: ./gradlew :verity:smoke-tests:packagedIosTest :verity:smoke-tests:test "-PpackagedArchives=$RUNNER_TEMP/cli-archives" "-PpackagedVariant=$PACKAGED_VARIANTS" -Pinclude.tags=ios --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
       - name: Retain iOS smoke results
         if: always()
@@ -139,8 +188,4 @@ jobs:
             verity/smoke-tests/build/test-results/test/*.xml
             verity/smoke-tests/build/test-results/packagedIosTest/*.xml
             verity/smoke-tests/build/reports/packaged/
-            verity/smoke-tests/build/reports/smoke-grpc.txt
-            verity/cli/build/reports/packaged-grpc.txt
-            verity/cli/build/reports/host-packaging.tsv
-            verity/cli/build/reports/shrunk-packaging.tsv
           if-no-files-found: error

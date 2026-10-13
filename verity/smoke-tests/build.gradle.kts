@@ -81,6 +81,10 @@ configurations.configureEach {
   exclude(group = "io.grpc", module = "grpc-netty")
 }
 
+// CI smoke jobs pass the build job's verity/cli/build/libs here, so device jobs neither rebuild archives nor rerun R8.
+val prebuiltArchives = providers.gradleProperty("packagedArchives").orNull?.let { layout.projectDirectory.dir(it) }
+fun cliArchive(configuration: Configuration, path: String): Provider<File> = prebuiltArchives?.let { directory -> providers.provider { directory.file(path).asFile } } ?: configuration.elements.map { it.single().asFile }
+
 val packagedRuntime = configurations.create("packagedRuntime") {
   isCanBeConsumed = false
   isCanBeResolved = true
@@ -88,7 +92,7 @@ val packagedRuntime = configurations.create("packagedRuntime") {
 dependencies {
   add(packagedRuntime.name, project(path = ":verity:cli", configuration = "packagedUniversal"))
 }
-val universalJar = packagedRuntime.elements.map { it.single().asFile }
+val universalJar = cliArchive(packagedRuntime, "verity-$version.jar")
 val packagedRuntimeShrunk = configurations.create("packagedRuntimeShrunk") {
   isCanBeConsumed = false
   isCanBeResolved = true
@@ -96,7 +100,7 @@ val packagedRuntimeShrunk = configurations.create("packagedRuntimeShrunk") {
 dependencies {
   add(packagedRuntimeShrunk.name, project(path = ":verity:cli", configuration = "packagedUniversalShrunk"))
 }
-val universalShrunkJar = packagedRuntimeShrunk.elements.map { it.single().asFile }
+val universalShrunkJar = cliArchive(packagedRuntimeShrunk, "shrunk/verity-$version.jar")
 
 val smokeRuntime = configurations.testRuntimeClasspath
 val verifySmokeGrpc = tasks.register<VerifyPackagedGrpc>("verifySmokeGrpc") {
@@ -162,16 +166,18 @@ val packagedMacosShrunk = packagedHost("packagedMacosShrunk", "packagedMacosArm6
 val packagedLinuxShrunk = packagedHost("packagedLinuxShrunk", "packagedLinuxX64Shrunk")
 val productionJars = mapOf(
   "universal" to universalJar,
-  "macos-aarch64" to packagedMacos.elements.map { it.single().asFile },
-  "linux-x86_64" to packagedLinux.elements.map { it.single().asFile },
+  "macos-aarch64" to cliArchive(packagedMacos, "verity-$version-macos-aarch64.jar"),
+  "linux-x86_64" to cliArchive(packagedLinux, "verity-$version-linux-x86_64.jar"),
   "universal-shrunk" to universalShrunkJar,
-  "macos-aarch64-shrunk" to packagedMacosShrunk.elements.map { it.single().asFile },
-  "linux-x86_64-shrunk" to packagedLinuxShrunk.elements.map { it.single().asFile },
+  "macos-aarch64-shrunk" to cliArchive(packagedMacosShrunk, "shrunk/verity-$version-macos-aarch64.jar"),
+  "linux-x86_64-shrunk" to cliArchive(packagedLinuxShrunk, "shrunk/verity-$version-linux-x86_64.jar"),
 )
 val selectedVariants = providers.gradleProperty("packagedVariant").orElse("universal")
 val packagedReports = layout.buildDirectory.dir("reports/packaged")
 fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
-  dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", ":verity:cli:verifyShrunkJars", packagedProbeJar)
+  dependsOn(packagedProbeJar)
+  // Prebuilt archives were verified by the job that built them.
+  if (prebuiltArchives == null) dependsOn(":verity:cli:verifyPackagedGrpc", ":verity:cli:verifyHostJars", ":verity:cli:verifyShrunkJars")
   testClassesDirs = sourceSets.test.get().output.classesDirs
   classpath = sourceSets.test.get().runtimeClasspath
   maxHeapSize = "512m"
@@ -204,3 +210,5 @@ fun packagedTest(name: String, tag: String) = tasks.register<Test>(name) {
 }
 val packagedAndroidTest = packagedTest("packagedAndroidTest", "packaged-android")
 val packagedIosTest = packagedTest("packagedIosTest", "packaged-ios")
+// Packaged and tagged device tests share one emulator or simulator, so never run them concurrently.
+tasks.test { mustRunAfter(packagedAndroidTest, packagedIosTest) }
