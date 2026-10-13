@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.device
 
 import java.nio.file.Path
+import kotlin.time.Duration
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
@@ -13,6 +14,8 @@ import me.chrisbanes.verity.core.model.Platform
 class FakeDeviceSession(
   override val platform: Platform = Platform.ANDROID_TV,
   private val hierarchyNode: HierarchyNode = HierarchyNode(attributes = emptyMap()),
+  /** When set, also enables bounded capture (used by focus observation); otherwise that is unsupported. */
+  private val hierarchyProvider: (() -> HierarchyNode)? = null,
 ) : DeviceSession {
   override val supportsRawKeycodes: Boolean get() = platform != Platform.IOS
   override val supportsLongPress: Boolean get() = platform != Platform.IOS
@@ -63,7 +66,9 @@ class FakeDeviceSession(
     }
   }
 
-  override suspend fun captureHierarchyTree(): HierarchyNode = hierarchyNode
+  override suspend fun captureHierarchyTree(): HierarchyNode = hierarchyProvider?.invoke() ?: hierarchyNode
+
+  override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode = hierarchyProvider?.invoke() ?: super.captureHierarchyTree(timeout)
 
   override suspend fun captureScreenshot(output: Path) = Unit
 
