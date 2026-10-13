@@ -183,7 +183,8 @@ jobs:
 
       - name: iOS smoke tests
         env:
-          MAESTRO_DRIVER_STARTUP_TIMEOUT: "300000"
+          # A cold first driver start on a freshly erased simulator can exceed 300 s; stay under the harness's 600 s connect timeout.
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: "540000"
           IOS_SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
           # Pull requests run the archive releases ship for this host; pushes to main run every macOS-compatible variant.
           PACKAGED_VARIANTS: ${{ github.event_name == 'push' && 'macos-aarch64,universal,macos-aarch64-shrunk,universal-shrunk' || 'macos-aarch64-shrunk' }}
