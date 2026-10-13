@@ -139,13 +139,13 @@ class OrchestratorJourneyMemoryTest {
   }
 
   @Test
-  fun `slow path flow is one entry with exactly two surrounding captures`() = runTest {
+  fun `slow path flow is one entry with a memory capture, a navigator capture and an after capture`() = runTest {
     val session = Session(Platform.ANDROID_MOBILE)
     val result = orchestrator(session).run(
       journey(Platform.ANDROID_MOBILE, JourneyStep.Action("navigate to settings page")),
     )
 
-    assertThat(session.events).containsExactly("capture", "flow", "capture")
+    assertThat(session.events).containsExactly("capture", "capture", "flow", "capture")
     val entry = result.trail!!.entries.single()
     assertThat(entry.granularity).isEqualTo(TrailGranularity.FLOW)
     assertThat(entry.instructions).containsExactly("navigate to settings page")
@@ -171,7 +171,7 @@ class OrchestratorJourneyMemoryTest {
       journey(Platform.ANDROID_MOBILE, JourneyStep.Action("open the menu"), JourneyStep.Action("pick the third item"), JourneyStep.Action("go back")),
     )
 
-    assertThat(session.events).containsExactly("capture", "flow", "capture")
+    assertThat(session.events).containsExactly("capture", "capture", "flow", "capture")
     assertThat(result.trail!!.entries.single().instructions).containsExactly("open the menu", "pick the third item", "go back")
   }
 
