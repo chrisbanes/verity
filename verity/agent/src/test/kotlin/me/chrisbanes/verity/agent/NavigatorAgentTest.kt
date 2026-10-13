@@ -172,6 +172,33 @@ class NavigatorAgentTest {
     }
   }
 
+  @Test fun `invalid action list is retried once with the validation error`() = runTest {
+    val users = mutableListOf<String>()
+    val replies = ArrayDeque(listOf("""{"actions":[{"type":"keyPress","keyName":"KEYCODE_BOOKMARK"}]}""", """{"actions":[{"type":"keyCode","keycode":174}]}"""))
+    val navigator = NavigatorAgent("context") { _, user ->
+      users += user
+      modelReply(replies.removeFirst())
+    }
+    val flow = navigator.generate(listOf("Press the Bookmark key (keycode 174)"), "com.example", Platform.ANDROID_TV)
+
+    assertThat(flow.actions).isEqualTo(listOf(Interaction.KeyCode(174)))
+    assertThat(users.size).isEqualTo(2)
+    assertThat(users[1]).contains("unknown key name 'KEYCODE_BOOKMARK'")
+    assertThat(users[1]).contains("Press the Bookmark key")
+  }
+
+  @Test fun `validation retry is bounded to one extra request`() = runTest {
+    var requests = 0
+    val navigator = NavigatorAgent("context") { _, _ ->
+      requests++
+      modelReply("""{"actions":[{"type":"keyPress","keyName":"KEYCODE_BOOKMARK"}]}""")
+    }
+    val failure = runCatching { navigator.generate(listOf("navigate"), "com.example", Platform.ANDROID_TV) }.exceptionOrNull() as ModelFailureException
+
+    assertThat(failure.failure).isEqualTo(ModelFailureKind.INVALID_RESPONSE)
+    assertThat(requests).isEqualTo(2)
+  }
+
   @Test fun `unsupported generated actions are safe invalid model responses`() = runTest {
     for (reply in listOf("""{"actions":[{"type":"keyPress","keyName":"not-a-key"}]}""", """{"actions":[{"type":"tapOnText","text":"["}]}""", """{"appId":"other","actions":[]}""")) {
       val navigator = NavigatorAgent("context") { _, _ -> modelReply(reply) }
