@@ -60,15 +60,15 @@ class DeviceReadinessTest {
     val shell = FakeShell({ awake }, { appFocus })
     ensureAwake(shell::run, shell.sleeps::add)
     assertThat(shell.wakeRounds()).isEqualTo(0)
-    assertThat(shell.commands.none { it.contains("stop-dreaming") }).isEqualTo(true)
+    assertThat(shell.commands.none { it.startsWith("input") }).isEqualTo(true)
   }
 
   @Test fun dreamingDeviceIsWoken() = runTest {
     lateinit var shell: FakeShell
     shell = FakeShell({ if (shell.wakeRounds() == 0) "mWakefulness=Dreaming" else awake }, { appFocus })
     ensureAwake(shell::run, shell.sleeps::add)
-    val wake = shell.commands.filter { it.startsWith("input") || it.startsWith("cmd") }
-    assertThat(wake).isEqualTo(listOf("input keyevent KEYCODE_WAKEUP", "cmd dreams stop-dreaming"))
+    val wake = shell.commands.filter { it.startsWith("input") }
+    assertThat(wake).isEqualTo(listOf("input keyevent KEYCODE_WAKEUP", "input keyevent KEYCODE_HOME"))
   }
 
   @Test fun stuckScreensaverThrowsAfterThreeAttempts() = runTest {

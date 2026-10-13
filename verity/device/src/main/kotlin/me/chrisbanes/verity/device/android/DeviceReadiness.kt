@@ -39,7 +39,7 @@ internal suspend fun ensureAwake(executeShell: (String) -> String, sleep: suspen
     reason() ?: return
     withContext(Dispatchers.IO) {
       executeShell("input keyevent KEYCODE_WAKEUP")
-      executeShell("cmd dreams stop-dreaming")
+      executeShell("input keyevent KEYCODE_HOME")
     }
     sleep(1_000)
   }
