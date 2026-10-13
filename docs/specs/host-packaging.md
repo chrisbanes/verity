@@ -180,8 +180,9 @@ intrinsics, because R8 rewrites production's intrinsic calls and drops the unuse
 methods. Rules are never added only to make test code link.
 
 CI runs the `-shrunk` variants of `packagedAndroidTest` and `packagedIosTest`
-beside the unshrunk variants. Each shrunk variant is accepted on its unshrunk
-counterpart's host.
+beside the unshrunk variants. Pull requests run only `macos-aarch64-shrunk` in
+`packagedIosTest`; pushes to `main` run all four macOS-compatible variants.
+Each shrunk variant is accepted on its unshrunk counterpart's host.
 
 `packageRelease` publishes the shrunk archives by default. The offline and
 device checks above, and a granted live ChatGPT journey through the shrunk macOS
@@ -231,8 +232,8 @@ Build time is the median of three `--rerun --profile` runs of
 own archive and then runs R8, took 96.9 s (94.8–118.9 s). R8 runs in a separate
 JVM. Shadow then rewrites its output in the Gradle daemon and buffers every
 entry, so `gradle.properties` sets the daemon heap to 2 GiB, matching CI. R8's
-own JVM uses the default heap, a quarter of physical memory; the macOS CI job
-raises it to 3 GiB through `JAVA_TOOL_OPTIONS` because that is too small there.
+own JVM uses the default heap, a quarter of physical memory. CI runs R8 only in
+the Linux `build` job; the device jobs reuse its archives.
 
 ## Release assets and installation
 
