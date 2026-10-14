@@ -624,6 +624,7 @@ class RunCommand(
     ),
     passed = result.passed,
     failedAt = result.failedAt,
+    error = result.setupError,
     segments = result.segments.map { segment ->
       val assertionMode = segment.assertionMode
       val assertionDescription = segment.assertionDescription
@@ -675,7 +676,10 @@ class RunCommand(
       echo("App: ${resolved.journey.app}")
       echo("Platform: ${resolved.journey.platform}")
 
-      if (result.passed) {
+      val setupError = result.setupError
+      if (setupError != null) {
+        echo("FAILED: Setup failed: ${setupError.message}")
+      } else if (result.passed) {
         echo("PASSED: All ${result.segments.size} segments passed")
       } else {
         echo("FAILED: Segment ${result.failedAt} failed")

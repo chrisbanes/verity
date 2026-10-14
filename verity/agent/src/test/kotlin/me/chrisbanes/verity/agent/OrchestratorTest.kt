@@ -97,6 +97,31 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `failed setup launch fails the journey without running segments`() = runTest {
+    val session = FakeDeviceSession(launchResult = FlowResult(success = false, output = "launchApp failed: UNKNOWN\n"))
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { error("no segment should run") },
+      inspectorFactory = { error("no segment should run") },
+    )
+    val journey = Journey(
+      name = "launch-failure",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action("press d-pad down")),
+    )
+
+    val result = orchestrator.run(journey)
+
+    assertThat(result.passed).isFalse()
+    assertThat(result.failedAt).isNull()
+    assertThat(result.segments).isEmpty()
+    assertThat(result.setupError?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+    assertThat(result.setupError?.message).isEqualTo("Failed to launch app 'com.example.app': launchApp failed: UNKNOWN")
+    assertThat(session.executedActionFlows).containsExactly(ActionFlow("com.example.app", listOf(Interaction.LaunchApp())))
+  }
+
+  @Test
   fun `run preserves inspector reasoning for tree assertions`() = runTest {
     val session = FakeDeviceSession()
     val orchestrator = Orchestrator(
@@ -1541,6 +1566,7 @@ class OrchestratorTest {
     private val screens: ArrayDeque<HierarchyNode> = ArrayDeque(),
     private val onExecuteActions: (String) -> Unit = {},
     private val onCaptureScreenshot: (Path) -> Unit = {},
+    private val launchResult: FlowResult = FlowResult(success = true),
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val renderedActionFlows = mutableListOf<String>()
@@ -1553,7 +1579,7 @@ class OrchestratorTest {
       val yaml = ActionFlowYamlRenderer.render(flow)
       onExecuteActions(yaml)
       renderedActionFlows += yaml
-      return FlowResult(success = true)
+      return if (flow.actions == listOf(Interaction.LaunchApp())) launchResult else FlowResult(success = true)
     }
     override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) = Unit

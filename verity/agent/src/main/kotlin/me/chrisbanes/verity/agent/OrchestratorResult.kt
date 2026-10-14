@@ -28,8 +28,10 @@ data class JourneyResult(
   val journeyName: String,
   val segments: List<SegmentResult>,
   val trail: JourneyTrailArtifact? = null,
+  /** Set when setup (the app launch) failed, so no segment ran. */
+  val setupError: ArtifactError? = null,
 ) {
-  val passed: Boolean get() = segments.all { it.passed }
+  val passed: Boolean get() = setupError == null && segments.all { it.passed }
   val failedAt: Int? get() = segments.firstOrNull { !it.passed }?.index
 }
 
