@@ -41,7 +41,9 @@ class AndroidDeviceSession(
 
   override suspend fun executeFlow(yaml: String): FlowResult = executeMaestroFlow(maestro, yaml, onCommandStart)
 
-  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeMaestroActions(maestro, flow, onCommandStart = onCommandStart)
+  override suspend fun executeActions(flow: ActionFlow): FlowResult = executeWithLeanbackLaunch(flow, executeShell) {
+    executeMaestroActions(maestro, it, onCommandStart = onCommandStart)
+  }
 
   override suspend fun pressKey(keyName: String) = pressKey(keyName, false)
 
