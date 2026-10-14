@@ -88,6 +88,8 @@ class NavigatorAgent(
         Platform.ANDROID_TV -> """
           You are generating structured actions for an Android TV app.
           Android TV uses D-pad navigation (Remote Dpad Up/Down/Left/Right/Center).
+          Move focus with keyPress Remote Dpad Up/Down/Left/Right. When the target is the focused node or inside it, select it with keyPress Remote Dpad Center: {"type":"keyPress","keyName":"Remote Dpad Center"}. Do not use tap actions on TV.
+          To long-press the focused item use {"type":"longPressOnFocused"}; keyPress has no longPress field.
           Always add waitForAnimation after navigation actions.
           Use waitUntilVisible for content that needs time to load.
           keyCode(keycode non-negative integer, longPress optional boolean) sends a raw Android keycode; use it when a step names a keycode or the key is not in Maestro's set; for example KEYCODE_BOOKMARK is 174: {"type":"keyCode","keycode":174}
