@@ -78,7 +78,7 @@ class LeanbackLaunchTest {
     run(ActionFlow("com.android.tv.settings", listOf(Interaction.LaunchApp(clearState = true))), shell)
     assertThat(shell.mutating()).containsExactly(
       "am force-stop com.android.tv.settings",
-      "pm clear com.android.tv.settings",
+      "pm clear --user current com.android.tv.settings",
       "am start -W -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER -n 'com.android.tv.settings/.MainSettings'",
     )
   }
