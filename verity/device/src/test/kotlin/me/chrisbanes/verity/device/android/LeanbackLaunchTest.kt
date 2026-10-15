@@ -18,7 +18,12 @@ class LeanbackLaunchTest {
   private val settings = "priority=3 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\ncom.android.tv.settings/.MainSettings"
   private val launcher = "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.example/.MainActivity"
 
-  private class FakeShell(private val launcher: String, private val leanback: String, private val start: String = "Status: ok") {
+  private class FakeShell(
+    private val launcher: String,
+    private val leanback: String,
+    private val start: String = "Starting: Intent { cmp=x }\nStatus: ok\nComplete",
+    private val clear: String = "Success",
+  ) {
     val commands = mutableListOf<String>()
     fun run(command: String): String {
       commands += command
@@ -26,6 +31,7 @@ class LeanbackLaunchTest {
         command.contains("category.LAUNCHER ") -> launcher
         command.contains("category.LEANBACK_LAUNCHER ") -> leanback
         command.startsWith("am start") -> start
+        command.startsWith("pm clear") -> clear
         else -> ""
       }
     }
@@ -61,7 +67,7 @@ class LeanbackLaunchTest {
     assertThat(maestroFlows).isEmpty()
     assertThat(shell.mutating()).containsExactly(
       "am force-stop com.android.tv.settings",
-      "am start -W -n com.android.tv.settings/.MainSettings",
+      "am start -W -n 'com.android.tv.settings/.MainSettings'",
     )
   }
 
@@ -71,7 +77,7 @@ class LeanbackLaunchTest {
     assertThat(shell.mutating()).containsExactly(
       "am force-stop com.android.tv.settings",
       "pm clear com.android.tv.settings",
-      "am start -W -n com.android.tv.settings/.MainSettings",
+      "am start -W -n 'com.android.tv.settings/.MainSettings'",
     )
   }
 
@@ -107,6 +113,27 @@ class LeanbackLaunchTest {
     val result = run(ActionFlow("com.android.tv.settings", listOf(Interaction.LaunchApp())), shell)
     assertThat(result.success).isFalse()
     assertThat(result.output).contains("does not exist")
+  }
+
+  @Test fun amStartWithoutOkStatusFails() = runTest {
+    val shell = FakeShell(notFound, settings, start = "Starting: Intent { cmp=x }\nStatus: timeout")
+    val result = run(ActionFlow("com.android.tv.settings", listOf(Interaction.LaunchApp())), shell)
+    assertThat(result.success).isFalse()
+    assertThat(result.output).contains("Status: timeout")
+  }
+
+  @Test fun failedClearStateStopsBeforeStart() = runTest {
+    val shell = FakeShell(notFound, settings, clear = "Failed")
+    val result = run(ActionFlow("com.android.tv.settings", listOf(Interaction.LaunchApp(clearState = true))), shell)
+    assertThat(result.success).isFalse()
+    assertThat(result.output).contains("pm clear com.android.tv.settings failed")
+    assertThat(shell.commands.none { it.startsWith("am start") }).isTrue()
+  }
+
+  @Test fun nestedActivityComponentIsQuotedForTheShell() = runTest {
+    val shell = FakeShell(notFound, "priority=0\ncom.example/.MainActivity\$TvActivity")
+    assertThat(run(ActionFlow("com.example", listOf(Interaction.LaunchApp())), shell).success).isTrue()
+    assertThat(shell.commands.last()).isEqualTo("am start -W -n 'com.example/.MainActivity\$TvActivity'")
   }
 
   @Test fun unsafePackageNameNeverReachesShell() = runTest {

@@ -8,7 +8,9 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.device.prepareMaestroActions
 
 private val packageName = Regex("""[A-Za-z0-9_.]+""")
-private val componentName = Regex("""[A-Za-z0-9_.]+/[A-Za-z0-9_.]+""")
+
+// `$` allows nested activity classes; the component is single-quoted so the device shell doesn't expand it.
+private val componentName = Regex("""[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+""")
 
 /**
  * Runs [flow], launching apps that only declare a `LEANBACK_LAUNCHER` activity through the shell,
@@ -48,12 +50,17 @@ internal suspend fun executeWithLeanbackLaunch(
       continue
     }
     flushPending()?.let { return it }
-    val output = withContext(Dispatchers.IO) {
+    // Require affirmative output: `pm clear` prints "Success" and `am start -W` prints "Status: ok".
+    val failure = withContext(Dispatchers.IO) {
       executeShell("am force-stop $appId")
-      if (action.clearState == true) executeShell("pm clear $appId")
-      executeShell("am start -W -n $leanback")
+      if (action.clearState == true) {
+        val cleared = executeShell("pm clear $appId")
+        if (!cleared.contains("Success")) return@withContext "pm clear $appId failed: ${cleared.trim()}"
+      }
+      val started = executeShell("am start -W -n '$leanback'")
+      if (!started.contains("Status: ok")) "am start -n $leanback failed: ${started.trim()}" else null
     }
-    if (output.contains("Error")) return FlowResult(false, "am start -n $leanback failed: ${output.trim()}")
+    if (failure != null) return FlowResult(false, failure)
   }
   return flushPending() ?: FlowResult(true)
 }
