@@ -40,6 +40,7 @@ object DryRunRenderer {
           appendLine("Interactions:")
           loop.interactions.forEach { appendLine("- $it") }
         }
+        if (loop.batching) appendLine("Batching: D-pad presses batched from the current hierarchy; checks after each batch")
         loop.yaml?.let {
           appendLine("Generated Loop YAML:")
           appendYaml(it)

@@ -285,6 +285,16 @@ class RunResultContractTest {
   }
 
   @Test
+  fun `loop presses per check are omitted when absent and round trip when present`() {
+    val unbatched = LoopArtifact("Home", 2, ConditionTier.TREE, "r")
+    assertThat(json.encodeToString(LoopArtifact.serializer(), unbatched).contains("pressesPerCheck")).isEqualTo(false)
+    val batched = unbatched.copy(iterations = 6, pressesPerCheck = listOf(6))
+    val encoded = json.encodeToString(LoopArtifact.serializer(), batched)
+    assertThat(encoded).contains("\"pressesPerCheck\":[6]")
+    assertThat(json.decodeFromString(LoopArtifact.serializer(), encoded)).isEqualTo(batched)
+  }
+
+  @Test
   fun `model failure has a stable distinct wire value`() {
     assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.MODEL_FAILURE)).isEqualTo("\"model_failure\"")
     assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"model_failure\"")).isEqualTo(ArtifactErrorKind.MODEL_FAILURE)

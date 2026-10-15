@@ -3,18 +3,22 @@ package me.chrisbanes.verity.agent
 import ai.koog.prompt.message.Message
 import java.nio.file.Path
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import me.chrisbanes.verity.core.hierarchy.NodeBounds
 import me.chrisbanes.verity.core.model.InspectionVerdict
+import me.chrisbanes.verity.core.model.VerdictTarget
 
 /** One request per check, retaining provider completion metadata until verdict validation. */
 class InspectorAgent(
   private val evaluateTreeContent: suspend (systemPrompt: String, userMessage: String, references: List<Path>) -> Message.Assistant,
   private val evaluateVisualContent: suspend (systemPrompt: String, userMessage: String, screenshotPath: Path, references: List<Path>) -> Message.Assistant,
 ) {
-  suspend fun evaluateTree(hierarchy: String, assertion: String, context: InspectionContext = InspectionContext(), onFailure: ((ModelFailureException) -> Unit)? = null): InspectionVerdict = request(ModelRequestStage.INSPECTOR_TREE, onFailure) {
-    evaluateTreeContent(SYSTEM_PROMPT, withReferences(buildTreeMessage(hierarchy, assertion), context), context.referenceScreenshots)
+  suspend fun evaluateTree(hierarchy: String, assertion: String, context: InspectionContext = InspectionContext(), onFailure: ((ModelFailureException) -> Unit)? = null, loopHints: Boolean = false): InspectionVerdict = request(ModelRequestStage.INSPECTOR_TREE, onFailure) {
+    evaluateTreeContent(SYSTEM_PROMPT, withReferences(buildTreeMessage(hierarchy, assertion, loopHints), context), context.referenceScreenshots)
   }
 
   suspend fun evaluateVisual(screenshotPath: Path, assertion: String, context: InspectionContext = InspectionContext(), onFailure: ((ModelFailureException) -> Unit)? = null): InspectionVerdict = request(ModelRequestStage.INSPECTOR_VISUAL, onFailure) {
@@ -47,11 +51,22 @@ class InspectorAgent(
         "Respond with ONLY JSON: {\"passed\": true/false, \"reasoning\": \"...\"}\n" +
         "Do not include any other text or explanation outside the JSON."
 
-    fun buildTreeMessage(hierarchy: String, assertion: String): String = buildString {
+    /** Appended only for checks inside a batchable D-pad loop, so every other prompt is unchanged. */
+    const val LOOP_HINTS =
+      "This check repeats a D-pad press until the assertion passes. When passed is false, you may add one of these optional keys to the same JSON object:\n" +
+        "- \"target\": the exact bounds string of the node that would satisfy the assertion, copied from its tree line, for example {\"passed\": false, \"reasoning\": \"...\", \"target\": \"[0,600][320,700]\"}. When no node in the tree would satisfy it, use the string \"notVisible\": {\"passed\": false, \"reasoning\": \"...\", \"target\": \"notVisible\"}.\n" +
+        "- \"estimatedIterations\": a positive integer of further presses needed, only when the assertion is not about a node (for example a playback position). Underestimate rather than overestimate.\n" +
+        "Omit both when unsure."
+
+    fun buildTreeMessage(hierarchy: String, assertion: String, loopHints: Boolean = false): String = buildString {
       appendLine("Accessibility tree:")
       appendLine(hierarchy)
       appendLine()
       appendLine("Assertion to evaluate: $assertion")
+      if (loopHints) {
+        appendLine()
+        appendLine(LOOP_HINTS)
+      }
     }.trim()
 
     fun buildVisualMessage(assertion: String): String = "Current screenshot: evaluate the attached current screenshot against this assertion: $assertion"
@@ -68,7 +83,21 @@ class InspectorAgent(
       if (passed == null || passed.isString || passed.booleanOrNull == null || reasoning == null || !reasoning.isString) {
         throw ModelFailureException(stage, ModelFailureKind.INVALID_VERDICT)
       }
-      return InspectionVerdict(passed.booleanOrNull!!, reasoning.content)
+      return InspectionVerdict(passed.booleanOrNull!!, reasoning.content, parseTarget(objectValue["target"], stage), parseEstimate(objectValue["estimatedIterations"], stage))
+    }
+
+    private fun parseTarget(value: JsonElement?, stage: ModelRequestStage): VerdictTarget? {
+      if (value == null || value is JsonNull) return null
+      val text = (value as? JsonPrimitive)?.takeIf { it.isString }?.content ?: throw ModelFailureException(stage, ModelFailureKind.INVALID_VERDICT)
+      if (text == "notVisible") return VerdictTarget.NotVisible
+      val bounds = NodeBounds.parse(text) ?: throw ModelFailureException(stage, ModelFailureKind.INVALID_VERDICT)
+      return VerdictTarget.Bounds(bounds)
+    }
+
+    private fun parseEstimate(value: JsonElement?, stage: ModelRequestStage): Int? {
+      if (value == null || value is JsonNull) return null
+      val primitive = value as? JsonPrimitive
+      return primitive?.takeUnless { it.isString }?.content?.toIntOrNull()?.takeIf { it >= 1 } ?: throw ModelFailureException(stage, ModelFailureKind.INVALID_VERDICT)
     }
   }
 }

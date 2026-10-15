@@ -43,4 +43,5 @@ data class LoopResult(
   val tier: ConditionTier? = null,
   val conditionReasoning: String = "",
   val evidence: List<EvidenceArtifact> = emptyList(),
+  val pressesPerCheck: List<Int>? = null,
 )

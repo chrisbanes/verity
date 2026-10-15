@@ -43,6 +43,8 @@ data class LoopArtifact(
   val iterations: Int,
   val tier: ConditionTier,
   val reasoning: String,
+  /** Bodies completed before each check after the first, for batched D-pad loops only; sums to [iterations]. */
+  val pressesPerCheck: List<Int>? = null,
 )
 
 @Serializable

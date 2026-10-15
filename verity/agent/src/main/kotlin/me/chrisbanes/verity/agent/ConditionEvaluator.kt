@@ -29,17 +29,18 @@ class ConditionEvaluator(
   private val verifyScreenshot: suspend (Path) -> Unit = ::requireScreenshot,
   private val onInspectedScreenshot: suspend (Path) -> Unit = {},
 ) {
-  suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext()): ConditionEvaluation {
+  /** [loopHints] asks a tree-tier inspector for the optional batching fields; see [InspectorAgent.LOOP_HINTS]. */
+  suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext(), loopHints: Boolean = false): ConditionEvaluation {
     require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot)
-    return evaluateOn(condition, context, inspection, session::captureHierarchyTree) {}
+    return evaluateOn(condition, context, inspection, session::captureHierarchyTree, loopHints) {}
   }
 
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
     require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot, onInspectedScreenshot)
-    return evaluateOn(condition, context, inspection, { session.captureHierarchyTree(deadline.remaining()) }, deadline::checkpoint)
+    return evaluateOn(condition, context, inspection, { session.captureHierarchyTree(deadline.remaining()) }, loopHints = false, deadline::checkpoint)
   }
 
   /** One hierarchy capture answers the literal, focus and tree tiers. */
@@ -48,6 +49,7 @@ class ConditionEvaluator(
     context: InspectionContext,
     inspection: ScreenInspection,
     captureTree: suspend () -> HierarchyNode,
+    loopHints: Boolean,
     checkpoint: () -> Unit,
   ): ConditionEvaluation {
     visualDescription(condition)?.let { description ->
@@ -56,20 +58,21 @@ class ConditionEvaluator(
     }
     val tree = captureTree()
     checkpoint()
-    if (tree.containsText(condition, checkpoint = checkpoint)) return literalEvaluation(condition)
+    if (tree.containsText(condition, checkpoint = checkpoint)) return literalEvaluation(condition, tree)
     FocusConditionParser.parse(condition)?.let { target ->
-      return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint))
+      return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint), tree)
     }
     val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.CONTENT, checkpoint)
-    val evaluation = inspection.inspectTree(hierarchy, condition, context)
-    return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence)
+    val evaluation = inspection.inspectTree(hierarchy, condition, context, loopHints)
+    return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence, tree)
   }
 
-  private fun literalEvaluation(text: String) = ConditionEvaluation(InspectionVerdict(true, "Text '$text' is visible"), ConditionTier.LITERAL)
+  private fun literalEvaluation(text: String, tree: HierarchyNode) = ConditionEvaluation(InspectionVerdict(true, "Text '$text' is visible"), ConditionTier.LITERAL, tree = tree)
 
-  private fun focusEvaluation(target: String, passed: Boolean) = ConditionEvaluation(
+  private fun focusEvaluation(target: String, passed: Boolean, tree: HierarchyNode) = ConditionEvaluation(
     InspectionVerdict(passed, if (passed) "Text '$target' is focused" else "Text '$target' is not focused"),
     ConditionTier.FOCUS,
+    tree = tree,
   )
 
   companion object {
@@ -83,7 +86,10 @@ class ConditionEvaluator(
     }
 
     /** Whether [condition] is evaluated against a screenshot rather than the tree. */
-    internal fun isVisual(condition: String): Boolean = VISUAL_PREFIX.containsMatchIn(condition.trim())
+    fun isVisual(condition: String): Boolean = VISUAL_PREFIX.containsMatchIn(condition.trim())
+
+    /** Whether a loop may batch presses for [condition]: only tree-tier checks predict, so focus forms and `visually` never do. */
+    fun canBatchPresses(condition: String): Boolean = !isVisual(condition) && FocusConditionParser.parse(condition) == null
   }
 }
 
@@ -91,6 +97,8 @@ data class ConditionEvaluation(
   val verdict: InspectionVerdict,
   val tier: ConditionTier,
   val evidence: List<EvidenceArtifact> = emptyList(),
+  /** The tree this check read; null for the visual tier. */
+  val tree: HierarchyNode? = null,
 )
 
 internal data class InspectionEvaluation(
@@ -115,7 +123,7 @@ internal class ScreenInspection(
     return inspectTree(hierarchy, description, context)
   }
 
-  suspend fun inspectTree(hierarchy: String, description: String, context: InspectionContext): InspectionEvaluation {
+  suspend fun inspectTree(hierarchy: String, description: String, context: InspectionContext, loopHints: Boolean = false): InspectionEvaluation {
     deadline?.checkpoint()
     val reference = try {
       artifactRecorder.saveHierarchy(segmentIndex, hierarchy)
@@ -126,7 +134,7 @@ internal class ScreenInspection(
     }
     deadline?.checkpoint()
     return InspectionEvaluation(
-      inspector.evaluateTree(hierarchy, description, context, deadline?.onModelFailure),
+      inspector.evaluateTree(hierarchy, description, context, deadline?.onModelFailure, loopHints),
       reference?.let { listOf(EvidenceArtifact(EvidenceType.HIERARCHY, it)) } ?: emptyList(),
     )
   }

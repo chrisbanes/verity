@@ -4,12 +4,16 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
+import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.test.runTest
+import me.chrisbanes.verity.core.hierarchy.NodeBounds
+import me.chrisbanes.verity.core.model.InspectionVerdict
+import me.chrisbanes.verity.core.model.VerdictTarget
 
 class InspectorAgentTest {
   @Test
@@ -57,6 +61,44 @@ class InspectorAgentTest {
     )) {
       assertFailsWith<ModelFailureException> { InspectorAgent.parseVerdict(reply) }
     }
+  }
+
+  @Test
+  fun `optional loop fields decode when valid and are absent from legacy verdicts`() {
+    val bounds = InspectorAgent.parseVerdict("""{"passed":false,"reasoning":"r","target":"[0,600][320,700]"}""")
+    assertThat(bounds.target).isEqualTo(VerdictTarget.Bounds(NodeBounds(0, 600, 320, 700)))
+    assertThat(InspectorAgent.parseVerdict("""{"passed":false,"reasoning":"r","target":"notVisible"}""").target).isEqualTo(VerdictTarget.NotVisible)
+    assertThat(InspectorAgent.parseVerdict("""{"passed":false,"reasoning":"r","estimatedIterations":3}""").estimatedIterations).isEqualTo(3)
+    val explicitNulls = InspectorAgent.parseVerdict("""{"passed":false,"reasoning":"r","target":null,"estimatedIterations":null}""")
+    assertThat(explicitNulls).isEqualTo(InspectionVerdict(false, "r"))
+    val legacy = InspectorAgent.parseVerdict("""{"passed": true, "reasoning": "Home text found"}""")
+    assertThat(legacy.target).isNull()
+    assertThat(legacy.estimatedIterations).isNull()
+  }
+
+  @Test
+  fun `malformed optional loop fields are invalid verdicts even when passed`() {
+    val malformed = listOf(
+      """"target":5""", """"target":"card 6"""", """"target":"[0,0][0,0]"""", """"target":["[0,0][1,1]"]""",
+      """"estimatedIterations":0""", """"estimatedIterations":-2""", """"estimatedIterations":1.5""",
+      """"estimatedIterations":"3"""", """"estimatedIterations":true""",
+    )
+    for (field in malformed) {
+      for (passed in listOf(false, true)) {
+        val failure = assertFailsWith<ModelFailureException> { InspectorAgent.parseVerdict("""{"passed":$passed,"reasoning":"r",$field}""") }
+        assertThat(failure.failure).isEqualTo(ModelFailureKind.INVALID_VERDICT)
+      }
+    }
+  }
+
+  @Test
+  fun `loop hints are opt-in and leave the default tree message unchanged`() {
+    val default = InspectorAgent.buildTreeMessage("hierarchy text", "Home is visible")
+    assertThat(default).isEqualTo("Accessibility tree:\nhierarchy text\n\nAssertion to evaluate: Home is visible")
+    val hinted = InspectorAgent.buildTreeMessage("hierarchy text", "Home is visible", loopHints = true)
+    assertThat(hinted).isEqualTo(default + "\n\n" + InspectorAgent.LOOP_HINTS)
+    assertThat(hinted).contains("notVisible")
+    assertThat(hinted).contains("estimatedIterations")
   }
 
   @Test

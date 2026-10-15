@@ -3,9 +3,11 @@ package me.chrisbanes.verity.cli
 import com.github.ajalt.clikt.core.CliktError
 import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
+import me.chrisbanes.verity.agent.ConditionEvaluator
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.redactModelDiagnostic
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
+import me.chrisbanes.verity.core.hierarchy.FocusStepPlanner
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
@@ -65,6 +67,8 @@ data class DryRunLoopReport(
   val kind: DryRunExecutionKind,
   val yaml: String? = null,
   val interactions: List<String> = emptyList(),
+  /** Whether a run presses this body in batches predicted from the current hierarchy. */
+  val batching: Boolean = false,
 ) {
   val interaction: String? get() = interactions.singleOrNull()
 }
@@ -103,6 +107,8 @@ class DryRunPlanner(
         kind = body.kind,
         interactions = body.interactions,
         yaml = body.yaml,
+        batching = ConditionEvaluator.canBatchPresses(loop.until) &&
+          FocusStepPlanner.batchDirection(InteractionMapper.forPlatform(resolvedJourney.journey.platform).mapAll(loop.actionInstructions), resolvedJourney.journey.platform) != null,
       )
     },
     assertion = segment.assertion?.let { DryRunAssertionReport(it.description, it.mode) },
