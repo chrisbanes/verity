@@ -127,9 +127,18 @@ class LoopBatchingTest {
     assertThat(segment.loop?.iterations).isEqualTo(7)
   }
 
-  @Test fun `an over-counted batch falls back to single presses and exhausts the loop`() = runTest {
-    // Device focus skips card 3, so six presses land on card 7 and card 6 is never focused.
+  @Test fun `an over-counted batch stops when focus reaches the target early`() = runTest {
+    // Device focus skips card 3, so card 6 is reached on the fifth of six predicted presses.
     val session = session { presses -> list(0..9, if (presses < 3) presses else minOf(presses + 1, 9)) }
+    val segment = run(session, "Card 6 is focused", 8)
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(5))
+    assertThat(segment.loop?.iterations).isEqualTo(5)
+  }
+
+  @Test fun `a target the focus order skips falls back to single presses and exhausts the loop`() = runTest {
+    // Device focus skips card 6 itself, so six presses land on card 7 and card 6 is never focused.
+    val session = session { presses -> list(0..9, if (presses < 6) presses else minOf(presses + 1, 9)) }
     val segment = run(session, "Card 6 is focused", 8)
     assertThat(segment.passed).isFalse()
     assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(6, 1, 1))
@@ -161,6 +170,16 @@ class LoopBatchingTest {
     assertThat(session.pressedKeys.size).isEqualTo(4)
     assertThat(segment.loop?.iterations).isEqualTo(4)
     assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(4))
+  }
+
+  @Test fun `a tree target reached early stops the batch before the model check`() = runTest {
+    // The model's target is card 6, but device focus skips card 3, so press five reaches it.
+    val session = session { presses -> list(0..9, if (presses < 3) presses else minOf(presses + 1, 9)) }
+    val inspector = Inspector { call -> if (call == 1) """{"passed":false,"reasoning":"no","target":"[0,600][300,700]"}""" else """{"passed":true,"reasoning":"done"}""" }
+    val segment = run(session, "the focused card is Card 6", 20, inspector)
+    assertThat(segment.passed).isTrue()
+    assertThat(session.pressedKeys.size).isEqualTo(5)
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(5))
   }
 
   @Test fun `an estimate without a target presses that many before checking`() = runTest {

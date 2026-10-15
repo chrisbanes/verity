@@ -391,7 +391,7 @@ class Orchestrator(
       val keyName = (fastPathInteractions.single() as Interaction.KeyPress).keyName
       val focusObserver = FocusChangeObserver()
       val seen = mutableListOf<FocusObservation>()
-      // Cleared on the first edge, wrap or wrong on-screen prediction; every later body is checked.
+      // Cleared on the first edge, wrap or unmet on-screen prediction; every later body is checked.
       var batching = true
       validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
       while (completedBodies < loop.max) {
@@ -414,6 +414,8 @@ class Orchestrator(
             }
             seen += after
             baseline = after
+            // Arriving early means the focus order skipped a predicted step; pressing on would overshoot.
+            if (prediction?.target != null && after.focusedNodes.any { it.path.isRelatedPath(prediction.target) }) break
           }
         } catch (e: InteractionExecutionFailure) {
           if (pressed > 0) pressesPerCheck += pressed
@@ -422,7 +424,7 @@ class Orchestrator(
         pressesPerCheck += pressed
         evaluation = check()
         if (evaluation.verdict.passed) return result()
-        if (prediction?.onScreen == true) batching = false
+        if (prediction?.target != null) batching = false
       }
       return result()
     }
@@ -447,13 +449,27 @@ class Orchestrator(
     return result()
   }
 
-  private class BatchPrediction(val presses: Int, val onScreen: Boolean)
+  /** [target] is the on-screen target's node path, in [observeFocus] form, or null when off-screen. */
+  private class BatchPrediction(val presses: Int, val target: String? = null)
+
+  /** Equal, or one path is an ancestor of the other (a focused card around a target label, say). */
+  private fun String.isRelatedPath(other: String): Boolean = this == other || other.startsWith(if (this == "/") this else "$this/") || startsWith(if (other == "/") other else "$other/")
+
+  /** Preorder path of the first node with [bounds], in the child-index form [observeFocus] reports. */
+  private fun HierarchyNode.pathOf(bounds: NodeBounds, path: String = "/"): String? {
+    if (bounds() == bounds) return path
+    children.forEachIndexed { index, child -> child.pathOf(bounds, if (path == "/") "/$index" else "$path/$index")?.let { return it } }
+    return null
+  }
 
   /** Presses toward the unmet condition from the check's tree, or null to press once. */
   private fun predictPresses(condition: String, direction: Direction, evaluation: ConditionEvaluation): BatchPrediction? {
     val tree = evaluation.tree ?: return null
-    fun pastVisible(labelledOnly: Boolean = false) = FocusStepPlanner.stepsPastVisible(tree, direction, labelledOnly)?.let { BatchPrediction(it, onScreen = false) }
-    fun toTarget(bounds: NodeBounds) = FocusStepPlanner.stepsToTarget(tree, direction, bounds)?.let { BatchPrediction(it, onScreen = true) }
+    fun pastVisible(labelledOnly: Boolean = false) = FocusStepPlanner.stepsPastVisible(tree, direction, labelledOnly)?.let { BatchPrediction(it) }
+    fun toTarget(bounds: NodeBounds): BatchPrediction? {
+      val path = tree.pathOf(bounds) ?: return null
+      return FocusStepPlanner.stepsToTarget(tree, direction, bounds)?.let { BatchPrediction(it, path) }
+    }
     return when (evaluation.tier) {
       ConditionTier.FOCUS -> {
         val text = FocusConditionParser.parse(condition) ?: return null
@@ -473,17 +489,15 @@ class Orchestrator(
         val verdict = evaluation.verdict
         val byTarget = when (val target = verdict.target) {
           VerdictTarget.NotVisible -> pastVisible()
-          is VerdictTarget.Bounds -> target.bounds.takeIf { bounds -> tree.anyNode { it.bounds() == bounds } }?.let(::toTarget)
+          is VerdictTarget.Bounds -> toTarget(target.bounds)
           null -> null
         }
-        byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it, onScreen = false) }
+        byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it) }
       }
 
       ConditionTier.LITERAL, ConditionTier.VISUAL -> null
     }
   }
-
-  private fun HierarchyNode.anyNode(predicate: (HierarchyNode) -> Boolean): Boolean = predicate(this) || children.any { it.anyNode(predicate) }
 
   /** Nodes whose own attributes contain [text], as [containsText] matches. */
   private fun HierarchyNode.nodesContainingText(text: String): List<HierarchyNode> {
