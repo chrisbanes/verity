@@ -358,7 +358,7 @@ class Orchestrator(
     val instructions = loop.actionInstructions
     val fastPathInteractions = InteractionMapper.forPlatform(platform).mapAll(instructions)
     val visual = ConditionEvaluator.isVisual(loop.until)
-    val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeUnless { visual }
+    val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeIf { ConditionEvaluator.canBatchPresses(loop.until) }
     val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot)
     suspend fun check() = evaluator.evaluate(loop.until, memory.inspectionContext(visual), loopHints = direction != null)
     var evaluation = check()

@@ -107,7 +107,7 @@ class DryRunPlanner(
         kind = body.kind,
         interactions = body.interactions,
         yaml = body.yaml,
-        batching = !ConditionEvaluator.isVisual(loop.until) &&
+        batching = ConditionEvaluator.canBatchPresses(loop.until) &&
           FocusStepPlanner.batchDirection(InteractionMapper.forPlatform(resolvedJourney.journey.platform).mapAll(loop.actionInstructions), resolvedJourney.journey.platform) != null,
       )
     },

@@ -94,11 +94,12 @@ class LoopBatchingTest {
     assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(6))
   }
 
-  @Test fun `focus-tier conditions are checked after every press`() = runTest {
+  @Test fun `focus-form conditions keep checking after every press`() = runTest {
     val session = linear()
     val segment = run(session, "Card 6 is focused", 20)
     assertThat(segment.passed).isTrue()
-    assertThat(segment.loop?.pressesPerCheck).isEqualTo(List(6) { 1 })
+    assertThat(segment.loop?.iterations).isEqualTo(6)
+    assertThat(segment.loop?.pressesPerCheck).isNull()
   }
 
   @Test fun `off-screen target batches past the visible cards and plans again from each new tree`() = runTest {
@@ -149,12 +150,22 @@ class LoopBatchingTest {
     assertThat(segment.loop?.iterations).isEqualTo(8)
   }
 
-  @Test fun `a target around the current focus gives no prediction`() = runTest {
-    // The model names the whole list, which already contains focus.
+  @Test fun `a target around the current focus gives way to the estimate`() = runTest {
+    // The model names the whole list, which already contains focus, so only its estimate is used.
     val session = session { presses -> list(0..9, presses).copy(attributes = mapOf("bounds" to "[0,0][300,1000]")) }
-    val inspector = Inspector { call -> if (call < 3) """{"passed":false,"reasoning":"no","target":"[0,0][300,1000]"}""" else """{"passed":true,"reasoning":"done"}""" }
-    val segment = run(session, "the focused card is Card 2", 20, inspector)
-    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(1, 1))
+    val inspector = Inspector { call -> if (call == 1) """{"passed":false,"reasoning":"no","target":"[0,0][300,1000]","estimatedIterations":3}""" else """{"passed":true,"reasoning":"done"}""" }
+    val segment = run(session, "the focused card is Card 3", 20, inspector)
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(3))
+  }
+
+  @Test fun `a target label inside a card stops the batch when its card is focused`() = runTest {
+    // Device focus skips card 3; the model names card 6's label, a descendant of the focused card.
+    val session = session { presses -> list(0..9, if (presses < 3) presses else minOf(presses + 1, 9)) }
+    val inspector = Inspector { call -> if (call == 1) """{"passed":false,"reasoning":"no","target":"[10,610][290,640]"}""" else """{"passed":true,"reasoning":"done"}""" }
+    val segment = run(session, "the focused card is Card 6", 8, inspector)
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(5))
   }
 
   @Test fun `an edge stops the batch early and later bodies are checked one at a time`() = runTest {

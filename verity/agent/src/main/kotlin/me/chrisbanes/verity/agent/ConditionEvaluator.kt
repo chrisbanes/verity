@@ -87,6 +87,9 @@ class ConditionEvaluator(
 
     /** Whether [condition] is evaluated against a screenshot rather than the tree. */
     fun isVisual(condition: String): Boolean = VISUAL_PREFIX.containsMatchIn(condition.trim())
+
+    /** Whether a loop may batch presses for [condition]: only tree-tier checks predict, so focus forms and `visually` never do. */
+    fun canBatchPresses(condition: String): Boolean = !isVisual(condition) && FocusConditionParser.parse(condition) == null
   }
 }
 
