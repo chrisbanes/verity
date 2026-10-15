@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.agent
 
 import kotlin.time.Duration.Companion.seconds
+import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
@@ -18,19 +19,26 @@ internal fun Interaction.KeyCode.isDirection() = !longPress && keycode in DIRECT
 /**
  * Runs [press] exactly once, then settles. For a [direction] press on Android TV, a focus change
  * replaces the animation wait; no change, or any baseline/observation failure, falls back to it.
+ * A [baseline] from the previous press's settle skips the baseline capture. Returns the focus
+ * observed after a change, for the next press in the same run, else null.
  * shortcut: a press that changes nothing costs the 2s budget plus the fallback wait.
  */
 internal suspend fun DeviceSession.pressAndSettle(
   focusObserver: FocusChangeObserver,
   direction: Boolean,
+  baseline: FocusObservation? = null,
   press: suspend () -> Unit,
-) {
-  val baseline = if (direction && platform == Platform.ANDROID_TV) {
-    focusObserver.capture(this, FOCUS_BUDGET) as? FocusCaptureResult.Captured
-  } else {
-    null
+): FocusObservation? {
+  val before = when {
+    !direction || platform != Platform.ANDROID_TV -> null
+    baseline != null -> baseline
+    else -> (focusObserver.capture(this, FOCUS_BUDGET) as? FocusCaptureResult.Captured)?.observation
   }
   press()
-  if (baseline != null && focusObserver.awaitChange(this, baseline.observation, FOCUS_BUDGET).changed) return
+  if (before != null) {
+    val result = focusObserver.awaitChange(this, before, FOCUS_BUDGET)
+    if (result.changed) return result.after
+  }
   waitForAnimationToEnd()
+  return null
 }

@@ -33,6 +33,7 @@ internal class JourneyMemory(
   private val session: DeviceSession,
   private val focusObserver: FocusChangeObserver = FocusChangeObserver(),
   private val tempRoot: Path? = null,
+  launched: Boolean = false,
 ) {
   private class Verdict(val subject: String, val passed: Boolean, val reasoning: String)
 
@@ -44,6 +45,11 @@ internal class JourneyMemory(
   private var hasFirst = false
   private var hasLatest = false
 
+  private var freshlyLaunched = launched
+
+  /** True at most once: when the setup launch succeeded and nothing has executed or claimed it since. */
+  fun claimFreshLaunch(): Boolean = freshlyLaunched.also { freshlyLaunched = false }
+
   /** Runs [block] once, appending one entry with focus observed before and after the whole call. */
   suspend fun <T> recordExecution(
     source: TrailSource,
@@ -52,6 +58,7 @@ internal class JourneyMemory(
     outcome: (T) -> Boolean = { true },
     block: suspend () -> T,
   ): T {
+    freshlyLaunched = false
     val before = captureFocus()
     val result = try {
       block()

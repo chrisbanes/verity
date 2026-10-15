@@ -26,7 +26,7 @@ class RunBackendWiringTest {
     override suspend fun execute(request: ModelRequest): Message.Assistant {
       requests += request
       failure?.takeIf { failAfter == null || requests.size == failAfter }?.let { throw it }
-      return modelReply(if (request.promptName == "navigator") """{"actions":[{"type":"launchApp"}]}""" else """{"passed":true,"reasoning":"verified"}""")
+      return modelReply(if (request.promptName == "navigator") """{"actions":[{"type":"tapOnText","text":"Next"}]}""" else """{"passed":true,"reasoning":"verified"}""")
     }
     override suspend fun close() {
       closed = true

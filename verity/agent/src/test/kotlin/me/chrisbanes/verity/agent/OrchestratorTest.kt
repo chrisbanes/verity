@@ -521,6 +521,71 @@ class OrchestratorTest {
     assertThat(session.executedActionFlows.last()).isSameInstanceAs(selected)
   }
 
+  private suspend fun runGenerated(vararg replies: String): FakeDeviceSession {
+    val session = FakeDeviceSession(screens = ArrayDeque(List(20) { screen("Home") }))
+    val queue = ArrayDeque(replies.toList())
+    Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(queue.removeFirst()) } },
+      inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> error("unused") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
+    ).run(
+      Journey(
+        name = "relaunch",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        // A visible check between actions splits them into separate segments.
+        steps = replies.indices.flatMap { listOf(JourneyStep.Action(instruction = "launch the app and open item $it"), JourneyStep.Assert(description = "Home", mode = AssertMode.VISIBLE)) },
+      ),
+    )
+    return session
+  }
+
+  @Test
+  fun `leading relaunch right after setup is skipped`() = runTest {
+    val session = runGenerated(
+      """{"actions":[{"type":"launchApp"},{"type":"tapOnText","text":"A"}]}""",
+      """{"actions":[{"type":"launchApp"}]}""",
+    )
+    assertThat(session.executedActionFlows.map { it.actions }).containsExactly(
+      listOf(Interaction.LaunchApp()),
+      listOf(Interaction.TapOnText("A")),
+      listOf(Interaction.LaunchApp()),
+    )
+  }
+
+  @Test
+  fun `relaunch that clears state or runs alone after setup is handled`() = runTest {
+    val clearing = runGenerated("""{"actions":[{"type":"launchApp","clearState":true}]}""")
+    assertThat(clearing.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp(clearState = true)))
+    val alone = runGenerated("""{"actions":[{"type":"launchApp"}]}""")
+    assertThat(alone.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()))
+  }
+
+  @Test
+  fun `the setup launch stands in for only one generated launch`() = runTest {
+    val session = runGenerated("""{"actions":[{"type":"launchApp"}]}""", """{"actions":[{"type":"launchApp"},{"type":"tapOnText","text":"A"}]}""")
+    assertThat(session.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp(), Interaction.TapOnText("A")))
+  }
+
+  @Test
+  fun `launch only loop body relaunches after its first iteration`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(List(20) { screen("Home") }))
+    Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply("""{"actions":[{"type":"launchApp"}]}""") } },
+      inspectorFactory = { InspectorAgent(evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not ready"}""") }, evaluateVisualContent = { _, _, _, _ -> error("unused") }) },
+    ).run(
+      Journey(
+        name = "relaunch-loop",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Loop(action = "relaunch the app", until = "Settings", max = 3)),
+      ),
+    )
+    // Setup, then iterations 2 and 3; the setup launch stands in for iteration 1.
+    assertThat(session.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp()))
+  }
+
   /** The fake only supports unbounded capture; the navigator hierarchy uses the bounded overload. */
   private fun withBoundedCapture(fake: FakeDeviceSession): DeviceSession = object : DeviceSession by fake {
     override suspend fun captureHierarchyTree(timeout: kotlin.time.Duration): HierarchyNode = fake.captureHierarchyTree()
