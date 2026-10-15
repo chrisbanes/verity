@@ -270,7 +270,7 @@ Android and iOS execute those commands through the existing Orchestra and driver
 
 ### Implementations
 
-**`AndroidDeviceSession`**: Connects via Dadb (ADB over TCP). Creates a Maestro instance with persistent gRPC connection. Supports device ID, IP:port, or auto-discovery.
+**`AndroidDeviceSession`**: Connects via Dadb (ADB over TCP). Creates a Maestro instance with persistent gRPC connection. Supports device ID, IP:port, or auto-discovery. For an `executeActions` flow containing `LaunchApp`, it checks `cmd package resolve-activity --brief -c android.intent.category.LAUNCHER <app>`. If that resolves, Maestro launches as usual. Otherwise it resolves the `MAIN`/`LEANBACK_LAUNCHER` activity (TV-only apps such as `com.android.tv.settings`, which Maestro's `launchApp` cannot start) and runs `am force-stop --user current`, `pm clear --user current` when `clearState` is true (unqualified `am force-stop` targets all users and `pm clear` the system user, while `am start` targets the current user), then `am start -W` with that action, category and `-n '<component>'`, with Maestro running the other actions in order between launches. The launch succeeds only when `pm clear` prints `Success` and `am start` prints `Status: ok`, and fails if `am force-stop` reports an exception or error (it is otherwise silent, even for protected packages); the component is single-quoted because nested activity classes contain `$`. An app with neither category fails the flow with a launch error. The app ID must match `[A-Za-z0-9_.]+` before any shell command runs. `executeFlow` YAML is not rewritten.
 
 **`IosDeviceSession`**: Installs XCTest runner on device/simulator. Communicates via HTTP to the on-device XCTest server (localhost:22087). Simulator management via `xcrun simctl`, physical devices via `devicectl`.
 
@@ -373,7 +373,7 @@ Reasoning effort is an optional, independent string setting for each role. An ex
 
 ### NavigatorAgent
 
-Converts natural language actions to an `ActionFlow` through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS). Only the Android TV and mobile prompts teach the `keyCode` action, for a step that names a keycode or a key outside Maestro's set.
+Converts natural language actions to an `ActionFlow` through a constructor-injected one-shot prompt callback returning Koog `Message.Assistant`. The CLI owns the executor and model selection for both execution and preview. The navigator receives the target `Platform` and adjusts output accordingly (D-pad commands for TV, tap/swipe for mobile, iOS gestures for iOS). Only the Android TV and mobile prompts teach the `keyCode` action, for a step that names a keycode or a key outside Maestro's set. The Android TV prompt also says to move focus with D-pad keys, select a focused target (or one inside the focused node) with `keyPress` `Remote Dpad Center`, never use tap actions, and long-press the focused item with `longPressOnFocused`.
 
 `generate` takes an optional pre-rendered hierarchy string. When non-blank it is placed in the user message after the app ID, under a heading telling the model to plan from the focused node, so selection steps can target what already has focus. The tree is delimited and labelled as untrusted screen data, and every `<` in it is escaped to `&lt;`, so it cannot form a closing tag. Over 12,000 characters (markers extra) the tree is truncated on line boundaries (each line clipped to 300 characters) with markers, keeping focused lines and their ancestors first (so a late focused node survives) and then leading lines. Without it (the default, and always for dry-run preview, which has no device) the user message is unchanged.
 
@@ -408,6 +408,8 @@ Diagnostics contain fixed allowlisted stage/failure-class text. The one bounded 
 ### Orchestrator
 
 Runs journeys segment by segment using a **subagent pattern** to keep context windows small and focused. Each segment is treated as a discrete task for a fresh agent instance, preventing the accumulation of history from unrelated segments.
+
+**Setup:** `run` first launches the app with `executeActions(LaunchApp)`. A failed launch returns a `JourneyResult` with no segments and `setupError` (`SETUP_FAILURE`, `Failed to launch app '<app>': <output>`); `passed` is false, `failedAt` is null and no segment runs. The CLI prints `FAILED: Setup failed: <message>`, writes the error as the journey result's `error` and continues with the next journey.
 
 **Action execution (two paths):**
 - Fast path: all actions map via `InteractionMapper`; the complete group is validated before `InteractionExecutor` performs its first action. Key presses and raw `KeyCode` presses keep the direct device path (`pressKey`); other interactions use `executeActions()`, with scroll-to-find reasoning for off-screen named targets. Scroll-to-find captures one hierarchy tree per attempt, using it for the visibility check and the next navigator prompt.

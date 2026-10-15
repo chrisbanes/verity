@@ -51,7 +51,7 @@ class AndroidTvInteractionMapperTest {
 
   @Test
   fun `maps media keys`() {
-    assertThat(mapper.map("press menu")).isEqualTo(Interaction.KeyPress("Remote Media Menu"))
+    assertThat(mapper.map("press menu")).isEqualTo(Interaction.KeyPress("Remote Menu"))
     assertThat(mapper.map("press play")).isEqualTo(Interaction.KeyPress("Remote Media Play Pause"))
     assertThat(mapper.map("press rewind")).isEqualTo(Interaction.KeyPress("Remote Media Rewind"))
   }

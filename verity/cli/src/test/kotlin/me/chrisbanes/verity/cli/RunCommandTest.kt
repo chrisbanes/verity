@@ -775,6 +775,37 @@ class RunCommandTest {
   }
 
   @Test
+  fun `setup launch failure is reported in output and artifacts and the suite continues`() {
+    val dir = createTempDirectory("verity-setup-failure").toFile()
+    try {
+      writeJourney(dir, "a.journey.yaml", "Missing app")
+      writeJourney(dir, "b.journey.yaml", "Later")
+      val outputDir = File(dir, "output")
+      val launchError = ArtifactError(ArtifactErrorKind.SETUP_FAILURE, "Failed to launch app 'com.example': not installed")
+      val command = runCommand(clock = fixedClock(), journeyRunner = { resolved, _ ->
+        if (resolved.journey.name == "Missing app") {
+          JourneyResult(resolved.journey.name, segments = emptyList(), setupError = launchError)
+        } else {
+          JourneyResult(resolved.journey.name, listOf(SegmentResult(index = 0, passed = true)))
+        }
+      }) { error("unused suite runner") }
+
+      val result = Verity().subcommands(command).test("--output-path ${outputDir.absolutePath} run ${dir.absolutePath}")
+
+      assertThat(result.statusCode).isEqualTo(4)
+      assertThat(result.output).contains("FAILED: Setup failed: Failed to launch app 'com.example': not installed")
+      assertThat(result.output).doesNotContain("Segment null")
+      val runDir = File(outputDir, "runs").listFiles()!!.single()
+      val failed = readJourney(File(runDir, "journeys/001-missing-app.json"))
+      assertThat(failed.passed).isEqualTo(false)
+      assertThat(failed.error).isEqualTo(launchError)
+      assertThat(readJourney(File(runDir, "journeys/002-later.json")).passed).isEqualTo(true)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `multiple journeys aggregate final pass fail outcome`() {
     val dir = createTempDirectory("verity-run-aggregate").toFile()
     try {

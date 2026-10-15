@@ -41,6 +41,15 @@ class NavigatorAgentTest {
     )
     assertThat(prompt).contains("Android TV")
     assertThat(prompt).contains("D-pad")
+    assertThat(prompt).contains("select it with keyPress Remote Dpad Center")
+    assertThat(prompt).contains("Do not use tap actions on TV")
+    assertThat(prompt).contains("""{"type":"longPressOnFocused"}""")
+  }
+
+  @Test
+  fun `TV select and long-press guidance is not given to mobile`() {
+    val prompt = NavigatorAgent.buildSystemPrompt(Platform.ANDROID_MOBILE, bundledContext = "", injectedContext = "")
+    assertThat(prompt).doesNotContain("Do not use tap actions on TV")
   }
 
   @Test

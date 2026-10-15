@@ -11,7 +11,7 @@
 | Select / Enter | `Remote Dpad Center` |
 | Back | `back` |
 | Home | `home` |
-| Menu | `Remote Media Menu` |
+| Menu | `Remote Menu` |
 | Play/Pause | `Remote Media Play Pause` |
 | Rewind | `Remote Media Rewind` |
 | Fast Forward | `Remote Media Fast Forward` |
