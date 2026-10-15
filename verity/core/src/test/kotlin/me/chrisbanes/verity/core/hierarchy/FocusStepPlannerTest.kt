@@ -60,15 +60,6 @@ class FocusStepPlannerTest {
     assertThat(FocusStepPlanner.stepsToTarget(tree, Direction.DOWN, bounds(label))).isEqualTo(2)
   }
 
-  @Test fun `labelled-only past-visible needs text on every item beyond focus`() {
-    val label = { top: Int -> HierarchyNode(attributes = mapOf("text" to "Title", "bounds" to "[10,${top + 10}][200,${top + 40}]")) }
-    val labelled = container(card(0, 0, focused = true), card(0, 100, children = listOf(label(100))), card(0, 200, children = listOf(label(200))))
-    assertThat(FocusStepPlanner.stepsPastVisible(labelled, Direction.DOWN, labelledOnly = true)).isEqualTo(2)
-    val oneBare = container(card(0, 0, focused = true), card(0, 100, children = listOf(label(100))), card(0, 200))
-    assertThat(FocusStepPlanner.stepsPastVisible(oneBare, Direction.DOWN, labelledOnly = true)).isNull()
-    assertThat(FocusStepPlanner.stepsPastVisible(oneBare, Direction.DOWN)).isEqualTo(2)
-  }
-
   @Test fun `no focus or no bounds gives no prediction`() {
     val unfocused = container(card(0, 0), card(0, 100))
     assertThat(FocusStepPlanner.stepsPastVisible(unfocused, Direction.DOWN)).isNull()

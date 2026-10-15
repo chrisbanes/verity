@@ -28,7 +28,6 @@ import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.model.VerdictTarget
-import me.chrisbanes.verity.core.parser.FocusConditionParser
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ConditionTier
@@ -396,7 +395,7 @@ class Orchestrator(
       validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
       while (completedBodies < loop.max) {
         evaluation.tree?.let { seen += observeFocus(it) }
-        val prediction = if (batching) predictPresses(loop.until, direction, evaluation) else null
+        val prediction = if (batching) predictPresses(direction, evaluation) else null
         val size = minOf(prediction?.presses ?: 1, loop.max - completedBodies)
         var pressed = 0
         try {
@@ -452,8 +451,11 @@ class Orchestrator(
   /** [target] is the on-screen target's node path, in [observeFocus] form, or null when off-screen. */
   private class BatchPrediction(val presses: Int, val target: String? = null)
 
-  /** Equal, or one path is an ancestor of the other (a focused card around a target label, say). */
-  private fun String.isRelatedPath(other: String): Boolean = this == other || other.startsWith(if (this == "/") this else "$this/") || startsWith(if (other == "/") other else "$other/")
+  /** Equal paths, or one is an ancestor of the other (a focused card around a target label, say). */
+  private fun String.isRelatedPath(other: String): Boolean {
+    fun String.dir() = if (endsWith("/")) this else "$this/"
+    return dir().startsWith(other.dir()) || other.dir().startsWith(dir())
+  }
 
   /** Preorder path of the first node with [bounds], in the child-index form [observeFocus] reports. */
   private fun HierarchyNode.pathOf(bounds: NodeBounds, path: String = "/"): String? {
@@ -462,47 +464,26 @@ class Orchestrator(
     return null
   }
 
-  /** Presses toward the unmet condition from the check's tree, or null to press once. */
-  private fun predictPresses(condition: String, direction: Direction, evaluation: ConditionEvaluation): BatchPrediction? {
+  /**
+   * Presses toward the unmet condition from the check's tree, or null to press once. Only the tree
+   * tier predicts: a focus-tier check needs no model, so checking after every press costs little and
+   * never lets focus pass a target the focus order reaches early.
+   */
+  private fun predictPresses(direction: Direction, evaluation: ConditionEvaluation): BatchPrediction? {
+    if (evaluation.tier != ConditionTier.TREE) return null
     val tree = evaluation.tree ?: return null
-    fun pastVisible(labelledOnly: Boolean = false) = FocusStepPlanner.stepsPastVisible(tree, direction, labelledOnly)?.let { BatchPrediction(it) }
-    fun toTarget(bounds: NodeBounds): BatchPrediction? {
-      val path = tree.pathOf(bounds) ?: return null
-      return FocusStepPlanner.stepsToTarget(tree, direction, bounds)?.let { BatchPrediction(it, path) }
+    val verdict = evaluation.verdict
+    val byTarget = when (val target = verdict.target) {
+      VerdictTarget.NotVisible -> FocusStepPlanner.stepsPastVisible(tree, direction)?.let { BatchPrediction(it) }
+
+      is VerdictTarget.Bounds -> tree.pathOf(target.bounds)
+        // A target around the current focus would count as reached on the first press.
+        ?.takeUnless { path -> observeFocus(tree).focusedNodes.any { it.path.isRelatedPath(path) } }
+        ?.let { path -> FocusStepPlanner.stepsToTarget(tree, direction, target.bounds)?.let { BatchPrediction(it, path) } }
+
+      null -> null
     }
-    return when (evaluation.tier) {
-      ConditionTier.FOCUS -> {
-        val text = FocusConditionParser.parse(condition) ?: return null
-        val matches = tree.nodesContainingText(text)
-        val bounds = matches.map { it.bounds() ?: return null }.distinct()
-        when (bounds.size) {
-          // Unlabelled cards (titles shown only on focus) could be the target, so require labels.
-          0 -> pastVisible(labelledOnly = true)
-
-          1 -> toTarget(bounds.single())
-
-          else -> null
-        }
-      }
-
-      ConditionTier.TREE -> {
-        val verdict = evaluation.verdict
-        val byTarget = when (val target = verdict.target) {
-          VerdictTarget.NotVisible -> pastVisible()
-          is VerdictTarget.Bounds -> toTarget(target.bounds)
-          null -> null
-        }
-        byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it) }
-      }
-
-      ConditionTier.LITERAL, ConditionTier.VISUAL -> null
-    }
-  }
-
-  /** Nodes whose own attributes contain [text], as [containsText] matches. */
-  private fun HierarchyNode.nodesContainingText(text: String): List<HierarchyNode> {
-    val own = if (attributes.values.any { it.contains(text, ignoreCase = true) }) listOf(this) else emptyList()
-    return own + children.flatMap { it.nodesContainingText(text) }
+    return byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it) }
   }
 
   private suspend fun evaluateAssertion(

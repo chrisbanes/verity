@@ -32,8 +32,6 @@ object FocusStepPlanner {
     "remote dpad right" to Direction.RIGHT,
   )
 
-  private val LABELS = listOf("text", "accessibilityText", "hintText", "content-desc")
-
   // shortcut: a fixed pixel tolerance groups a row's leading edges into one band; scale with density if TV trees misgroup.
   private const val BAND_TOLERANCE = 8
 
@@ -52,28 +50,22 @@ object FocusStepPlanner {
     return bands.count { 2 * it <= centre }.takeIf { it >= 1 }
   }
 
-  /**
-   * Every band beyond focus in the focused node's container. With [labelledOnly], null unless every
-   * item beyond focus carries text, so a missing label is evidence the target is not among them.
-   */
-  fun stepsPastVisible(tree: HierarchyNode, direction: Direction, labelledOnly: Boolean = false): Int? = plan(tree, direction, labelledOnly)?.second?.size?.takeIf { it >= 1 }
+  /** Every band beyond focus in the focused node's container. */
+  fun stepsPastVisible(tree: HierarchyNode, direction: Direction): Int? = plan(tree, direction)?.second?.size?.takeIf { it >= 1 }
 
   /** Focus's span along [direction], and the sorted leading edges of the bands beyond it. */
-  private fun plan(tree: HierarchyNode, direction: Direction, labelledOnly: Boolean = false): Pair<IntRange, List<Int>>? {
+  private fun plan(tree: HierarchyNode, direction: Direction): Pair<IntRange, List<Int>>? {
     val path = focusedPath(tree) ?: return null
     val focus = path.last().bounds() ?: return null
     val span = focus.along(direction)
     val cross = focus.across(direction)
     for (ancestor in path.asReversed().drop(1)) {
-      val nodes = candidates(ancestor).filter { node ->
-        val candidate = checkNotNull(node.bounds())
+      val beyond = candidates(ancestor).mapNotNull { it.bounds() }.filter { candidate ->
         val along = candidate.along(direction)
         val across = candidate.across(direction)
         along.first + along.last > 2 * span.last && across.first < cross.last && cross.first < across.last
       }
-      if (nodes.isEmpty()) continue
-      if (labelledOnly && !nodes.all(::hasLabel)) return null
-      val beyond = nodes.map { checkNotNull(it.bounds()) }
+      if (beyond.isEmpty()) continue
       val bands = mutableListOf<Int>()
       beyond.map { it.along(direction).first }.sorted().forEach { edge ->
         if (bands.isEmpty() || edge - bands.last() > BAND_TOLERANCE) bands += edge
@@ -94,8 +86,6 @@ object FocusStepPlanner {
     visit(root, emptyList())
     return best
   }
-
-  private fun hasLabel(node: HierarchyNode): Boolean = LABELS.any { !node.attributes[it].isNullOrBlank() } || node.children.any(::hasLabel)
 
   /** Focusable leaves: a candidate containing another candidate is dropped. */
   private fun candidates(node: HierarchyNode): List<HierarchyNode> {
