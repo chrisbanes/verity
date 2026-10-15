@@ -158,4 +158,24 @@ class VerityConfigTest {
     assertThat(resolveRequiredContext(cliRequireContext = false, config = VerityConfig()))
       .isEqualTo(false)
   }
+
+  @Test
+  fun `parses precheck section`() {
+    val config = VerityConfig.fromYaml(
+      """
+      precheck:
+        enabled: true
+        base-url: https://api.typesafe.ai
+        model: jev-latest
+        api-key-env: TYPESAFE_API_KEY
+        timeout: 2s
+        pass-at: 0.9
+        fail-at: 0.1
+      """.trimIndent(),
+    )
+    assertThat(config.precheck).isEqualTo(
+      VerityPrecheckConfig(true, "https://api.typesafe.ai", "jev-latest", "TYPESAFE_API_KEY", "2s", 0.9, 0.1),
+    )
+    assertThat(VerityConfig.fromYaml("provider: openai").precheck).isNull()
+  }
 }

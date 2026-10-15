@@ -12,6 +12,7 @@ data class VerityConfig(
   val device: VerityDeviceConfig? = null,
   val llm: VerityLlmConfig? = null,
   val assertions: VerityAssertionsConfig? = null,
+  val precheck: VerityPrecheckConfig? = null,
   val provider: String? = null,
   @SerialName("navigator-model") val navigatorModel: String? = null,
   @SerialName("inspector-model") val inspectorModel: String? = null,
