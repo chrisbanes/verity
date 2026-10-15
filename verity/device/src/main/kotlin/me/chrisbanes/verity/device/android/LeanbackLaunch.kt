@@ -29,7 +29,7 @@ internal suspend fun executeWithLeanbackLaunch(
   if (!packageName.matches(appId)) return FlowResult(false, "Invalid Android package name: '$appId'")
   // `resolve-activity --brief` prints a header line then `pkg/.Activity`, or "No activity found".
   suspend fun resolve(category: String) = withContext(Dispatchers.IO) {
-    executeShell("cmd package resolve-activity --brief -c android.intent.category.$category $appId")
+    executeShell("cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.$category $appId")
   }
   // Only an explicit "not found" takes the shell path; unrecognised output leaves Maestro's launch alone.
   if (!resolve("LAUNCHER").contains("No activity found")) return runMaestro(flow)
@@ -51,13 +51,15 @@ internal suspend fun executeWithLeanbackLaunch(
     }
     flushPending()?.let { return it }
     // Require affirmative output: `pm clear` prints "Success" and `am start -W` prints "Status: ok".
+    // `am force-stop` prints nothing and exits 0 even for protected packages, so only a reported error is detectable.
     val failure = withContext(Dispatchers.IO) {
-      executeShell("am force-stop $appId")
+      val stopped = executeShell("am force-stop $appId")
+      if (stopped.contains("Exception") || stopped.contains("Error")) return@withContext "am force-stop $appId failed: ${stopped.trim()}"
       if (action.clearState == true) {
         val cleared = executeShell("pm clear $appId")
         if (!cleared.contains("Success")) return@withContext "pm clear $appId failed: ${cleared.trim()}"
       }
-      val started = executeShell("am start -W -n '$leanback'")
+      val started = executeShell("am start -W -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER -n '$leanback'")
       if (!started.contains("Status: ok")) "am start -n $leanback failed: ${started.trim()}" else null
     }
     if (failure != null) return FlowResult(false, failure)

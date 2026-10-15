@@ -23,15 +23,17 @@ class LeanbackLaunchTest {
     private val leanback: String,
     private val start: String = "Starting: Intent { cmp=x }\nStatus: ok\nComplete",
     private val clear: String = "Success",
+    private val stop: String = "",
   ) {
     val commands = mutableListOf<String>()
     fun run(command: String): String {
       commands += command
       return when {
-        command.contains("category.LAUNCHER ") -> launcher
-        command.contains("category.LEANBACK_LAUNCHER ") -> leanback
         command.startsWith("am start") -> start
         command.startsWith("pm clear") -> clear
+        command.startsWith("am force-stop") -> stop
+        command.contains("category.LAUNCHER ") -> launcher
+        command.contains("category.LEANBACK_LAUNCHER ") -> leanback
         else -> ""
       }
     }
@@ -67,7 +69,7 @@ class LeanbackLaunchTest {
     assertThat(maestroFlows).isEmpty()
     assertThat(shell.mutating()).containsExactly(
       "am force-stop com.android.tv.settings",
-      "am start -W -n 'com.android.tv.settings/.MainSettings'",
+      "am start -W -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER -n 'com.android.tv.settings/.MainSettings'",
     )
   }
 
@@ -77,7 +79,7 @@ class LeanbackLaunchTest {
     assertThat(shell.mutating()).containsExactly(
       "am force-stop com.android.tv.settings",
       "pm clear com.android.tv.settings",
-      "am start -W -n 'com.android.tv.settings/.MainSettings'",
+      "am start -W -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER -n 'com.android.tv.settings/.MainSettings'",
     )
   }
 
@@ -133,7 +135,15 @@ class LeanbackLaunchTest {
   @Test fun nestedActivityComponentIsQuotedForTheShell() = runTest {
     val shell = FakeShell(notFound, "priority=0\ncom.example/.MainActivity\$TvActivity")
     assertThat(run(ActionFlow("com.example", listOf(Interaction.LaunchApp())), shell).success).isTrue()
-    assertThat(shell.commands.last()).isEqualTo("am start -W -n 'com.example/.MainActivity\$TvActivity'")
+    assertThat(shell.commands.last()).isEqualTo("am start -W -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER -n 'com.example/.MainActivity\$TvActivity'")
+  }
+
+  @Test fun reportedForceStopErrorStopsBeforeStart() = runTest {
+    val shell = FakeShell(notFound, settings, stop = "Exception: java.lang.SecurityException: Permission Denial")
+    val result = run(ActionFlow("com.android.tv.settings", listOf(Interaction.LaunchApp())), shell)
+    assertThat(result.success).isFalse()
+    assertThat(result.output).contains("am force-stop com.android.tv.settings failed")
+    assertThat(shell.commands.none { it.startsWith("am start") }).isTrue()
   }
 
   @Test fun unsafePackageNameNeverReachesShell() = runTest {
