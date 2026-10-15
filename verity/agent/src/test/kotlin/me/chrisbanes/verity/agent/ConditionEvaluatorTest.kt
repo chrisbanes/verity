@@ -3,6 +3,8 @@ package me.chrisbanes.verity.agent
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
+import assertk.assertions.isNull
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -191,6 +193,28 @@ class ConditionEvaluatorTest {
         assertThat(withContext(Dispatchers.IO) { Files.exists(session.screenshots.single()) }).isEqualTo(false)
       }
     }
+  }
+
+  @Test
+  fun `deterministic and tree tiers return the captured tree and only loop checks send hints`() = runTest {
+    val messages = mutableListOf<String>()
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, userMessage, _ ->
+        messages += userMessage
+        inspectionReply("""{"passed":false,"reasoning":"tree"}""")
+      },
+      evaluateVisualContent = { _, _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"visual"}""") },
+    )
+    val evaluator = ConditionEvaluator(StateSession(), inspector)
+    val captured = HierarchyNode(attributes = mapOf("text" to "Settings"))
+    assertThat(evaluator.evaluate("Settings").tree).isEqualTo(captured)
+    assertThat(evaluator.evaluate("Settings is focused").tree).isEqualTo(captured)
+    assertThat(evaluator.evaluate("page has a menu").tree).isEqualTo(captured)
+    assertThat(evaluator.evaluate("page has a menu", loopHints = true).tree).isEqualTo(captured)
+    assertThat(evaluator.evaluate("visually Settings", loopHints = true).tree).isNull()
+    assertThat(messages.size).isEqualTo(2)
+    assertThat(messages[0].contains(InspectorAgent.LOOP_HINTS)).isFalse()
+    assertThat(messages[1]).contains(InspectorAgent.LOOP_HINTS)
   }
 
   private class StateSession : DeviceSession {

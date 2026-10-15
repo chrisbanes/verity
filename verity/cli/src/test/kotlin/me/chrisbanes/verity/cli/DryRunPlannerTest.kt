@@ -211,6 +211,24 @@ class DryRunPlannerTest {
   }
 
   @Test
+  fun `only single D-pad loops on Android TV with nonvisual conditions report batching`() = runTest {
+    val planner = DryRunPlanner(navigatorFactory = { error("must not create navigator") })
+    fun journey(platform: Platform, body: String, until: String = "Settings is focused") = Journey("Batching", "example.app", platform, listOf(JourneyStep.Loop(body, until, 3)))
+    val batched = planner.plan(resolvedJourney(journey(Platform.ANDROID_TV, "Press D-pad down")))
+    assertThat(batched.segments.single().loop?.batching).isEqualTo(true)
+    assertThat(DryRunRenderer.renderJourney(batched)).contains("Batching: D-pad presses batched from the current hierarchy; checks after each batch")
+    for (unbatched in listOf(
+      journey(Platform.ANDROID_TV, "Press D-pad down; press D-pad right"),
+      journey(Platform.ANDROID_TV, "Press D-pad down", "visually Settings"),
+      journey(Platform.ANDROID_MOBILE, "Press back"),
+    )) {
+      val report = planner.plan(resolvedJourney(unbatched))
+      assertThat(report.segments.single().loop?.batching).isEqualTo(false)
+      assertThat(DryRunRenderer.renderJourney(report).contains("Batching:")).isEqualTo(false)
+    }
+  }
+
+  @Test
   fun `loop reports generated yaml when action does not map`() = runTest {
     val planner = DryRunPlanner(
       navigatorFactory = {

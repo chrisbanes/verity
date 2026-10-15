@@ -5,9 +5,17 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
+import me.chrisbanes.verity.core.hierarchy.FocusObservation
+import me.chrisbanes.verity.core.hierarchy.FocusStepPlanner
 import me.chrisbanes.verity.core.hierarchy.HierarchyFilter
+import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
+import me.chrisbanes.verity.core.hierarchy.NodeBounds
+import me.chrisbanes.verity.core.hierarchy.bounds
 import me.chrisbanes.verity.core.hierarchy.containsText
+import me.chrisbanes.verity.core.hierarchy.hasFocusChanged
+import me.chrisbanes.verity.core.hierarchy.observeFocus
+import me.chrisbanes.verity.core.interaction.Direction
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
@@ -19,6 +27,8 @@ import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.model.VerdictTarget
+import me.chrisbanes.verity.core.parser.FocusConditionParser
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ConditionTier
@@ -32,6 +42,7 @@ import me.chrisbanes.verity.core.timing.PhaseTimer
 import me.chrisbanes.verity.device.CaptureDeadlineExceededException
 import me.chrisbanes.verity.device.CaptureOperation
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.FocusChangeObserver
 import me.chrisbanes.verity.device.validateActionFlow
 
 /**
@@ -177,7 +188,7 @@ class Orchestrator(
         actions = loop.actionInstructions,
         generatedFlows = loopResult.generatedFlows,
         evidence = loopResult.evidence,
-        loop = LoopArtifact(loop.until, loopResult.iterations, checkNotNull(loopResult.tier), loopResult.conditionReasoning),
+        loop = LoopArtifact(loop.until, loopResult.iterations, checkNotNull(loopResult.tier), loopResult.conditionReasoning, loopResult.pressesPerCheck),
         error = if (loopResult.satisfied) {
           null
         } else {
@@ -347,10 +358,14 @@ class Orchestrator(
   ): LoopResult {
     val instructions = loop.actionInstructions
     val fastPathInteractions = InteractionMapper.forPlatform(platform).mapAll(instructions)
+    val visual = ConditionEvaluator.isVisual(loop.until)
+    val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeUnless { visual }
     val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot)
-    var evaluation = evaluator.evaluate(loop.until, memory.inspectionContext(ConditionEvaluator.isVisual(loop.until)))
+    suspend fun check() = evaluator.evaluate(loop.until, memory.inspectionContext(visual), loopHints = direction != null)
+    var evaluation = check()
     var completedBodies = 0
     val generatedFlows = mutableListOf<String>()
+    val pressesPerCheck = if (direction != null) mutableListOf<Int>() else null
 
     fun result(executionFailure: String? = null): LoopResult {
       val satisfied = executionFailure == null && evaluation.verdict.passed
@@ -367,10 +382,50 @@ class Orchestrator(
         tier = evaluation.tier,
         conditionReasoning = evaluation.verdict.reasoning,
         evidence = evaluation.evidence,
+        pressesPerCheck = pressesPerCheck?.toList()?.takeIf { it.isNotEmpty() },
       )
     }
 
     if (evaluation.verdict.passed) return result()
+    if (direction != null && pressesPerCheck != null && fastPathInteractions != null) {
+      val keyName = (fastPathInteractions.single() as Interaction.KeyPress).keyName
+      val focusObserver = FocusChangeObserver()
+      val seen = mutableListOf<FocusObservation>()
+      // Cleared on the first edge, wrap or wrong on-screen prediction; every later body is checked.
+      var batching = true
+      while (completedBodies < loop.max) {
+        evaluation.tree?.let { seen += observeFocus(it) }
+        val prediction = if (batching) predictPresses(loop.until, direction, evaluation) else null
+        val size = minOf(prediction?.presses ?: 1, loop.max - completedBodies)
+        var pressed = 0
+        try {
+          validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
+          var baseline: FocusObservation? = null
+          while (pressed < size) {
+            val after = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
+              session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }
+            }
+            pressed++
+            completedBodies++
+            // No change means an edge or a failed observation; returning to an earlier focus means a wrap.
+            if (after == null || seen.any { !hasFocusChanged(it, after) }) {
+              batching = false
+              break
+            }
+            seen += after
+            baseline = after
+          }
+        } catch (e: InteractionExecutionFailure) {
+          if (pressed > 0) pressesPerCheck += pressed
+          return result(e.message.orEmpty())
+        }
+        pressesPerCheck += pressed
+        evaluation = check()
+        if (evaluation.verdict.passed) return result()
+        if (prediction?.onScreen == true) batching = false
+      }
+      return result()
+    }
     repeat(loop.max) {
       try {
         val source = TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies)
@@ -390,6 +445,47 @@ class Orchestrator(
       if (evaluation.verdict.passed) return result()
     }
     return result()
+  }
+
+  private class BatchPrediction(val presses: Int, val onScreen: Boolean)
+
+  /** Presses toward the unmet condition from the check's tree, or null to press once. */
+  private fun predictPresses(condition: String, direction: Direction, evaluation: ConditionEvaluation): BatchPrediction? {
+    val tree = evaluation.tree ?: return null
+    fun pastVisible() = FocusStepPlanner.stepsPastVisible(tree, direction)?.let { BatchPrediction(it, onScreen = false) }
+    fun toTarget(bounds: NodeBounds) = FocusStepPlanner.stepsToTarget(tree, direction, bounds)?.let { BatchPrediction(it, onScreen = true) }
+    return when (evaluation.tier) {
+      ConditionTier.FOCUS -> {
+        val text = FocusConditionParser.parse(condition) ?: return null
+        val matches = tree.nodesContainingText(text)
+        val bounds = matches.map { it.bounds() ?: return null }.distinct()
+        when (bounds.size) {
+          0 -> pastVisible()
+          1 -> toTarget(bounds.single())
+          else -> null
+        }
+      }
+
+      ConditionTier.TREE -> {
+        val verdict = evaluation.verdict
+        val byTarget = when (val target = verdict.target) {
+          VerdictTarget.NotVisible -> pastVisible()
+          is VerdictTarget.Bounds -> target.bounds.takeIf { bounds -> tree.anyNode { it.bounds() == bounds } }?.let(::toTarget)
+          null -> null
+        }
+        byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it, onScreen = false) }
+      }
+
+      ConditionTier.LITERAL, ConditionTier.VISUAL -> null
+    }
+  }
+
+  private fun HierarchyNode.anyNode(predicate: (HierarchyNode) -> Boolean): Boolean = predicate(this) || children.any { it.anyNode(predicate) }
+
+  /** Nodes whose own attributes contain [text], as [containsText] matches. */
+  private fun HierarchyNode.nodesContainingText(text: String): List<HierarchyNode> {
+    val own = if (attributes.values.any { it.contains(text, ignoreCase = true) }) listOf(this) else emptyList()
+    return own + children.flatMap { it.nodesContainingText(text) }
   }
 
   private suspend fun evaluateAssertion(
