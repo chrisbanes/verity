@@ -53,10 +53,10 @@ class InspectorAgent(
 
     /** Appended only for checks inside a batchable D-pad loop, so every other prompt is unchanged. */
     const val LOOP_HINTS =
-      "This check repeats a D-pad press until the assertion passes. When passed is false, you may add either optional field:\n" +
-        "\"target\": the exact bounds string of the node that would satisfy the assertion, copied from its tree line (for example \"[0,600][320,700]\"), or \"notVisible\" when no node in the tree would satisfy it.\n" +
-        "\"estimatedIterations\": a positive integer of further presses needed, when the assertion is not about a node (for example a playback position). Underestimate rather than overestimate.\n" +
-        "Omit a field when unsure."
+      "This check repeats a D-pad press until the assertion passes. When passed is false, you may add one of these optional keys to the same JSON object:\n" +
+        "- \"target\": the exact bounds string of the node that would satisfy the assertion, copied from its tree line, for example {\"passed\": false, \"reasoning\": \"...\", \"target\": \"[0,600][320,700]\"}. When no node in the tree would satisfy it, use the string \"notVisible\": {\"passed\": false, \"reasoning\": \"...\", \"target\": \"notVisible\"}.\n" +
+        "- \"estimatedIterations\": a positive integer of further presses needed, only when the assertion is not about a node (for example a playback position). Underestimate rather than overestimate.\n" +
+        "Omit both when unsure."
 
     fun buildTreeMessage(hierarchy: String, assertion: String, loopHints: Boolean = false): String = buildString {
       appendLine("Accessibility tree:")

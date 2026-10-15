@@ -58,7 +58,7 @@ On Android TV, a loop whose body is exactly one mapped direction press (`Press D
 
 After each unmet check, the tree that check read predicts a batch size:
 
-- **Focus tier.** If no node contains the target text, the target is off-screen and the batch presses past the visible focusable items beyond focus, in the focused node's container, in the loop direction. If exactly one distinct node rect contains it, the batch presses to that rect. Several distinct rects give no prediction.
+- **Focus tier.** If no node contains the target text and every focusable item beyond focus carries text, the target is off-screen and the batch presses past those items, in the focused node's container, in the loop direction. An unlabelled item beyond focus (for example a card that shows its title only when focused) could be the target, so it gives no prediction. If exactly one distinct node rect contains it, the batch presses to that rect. Several distinct rects give no prediction.
 - **Tree tier.** The inspector may return the optional `target` and `estimatedIterations` fields (below). A `target` rect that matches a node gives a press count to it, `notVisible` presses past the visible items, and `estimatedIterations` is used only when no target geometry resolves.
 - **Literal and visual tiers** never predict.
 

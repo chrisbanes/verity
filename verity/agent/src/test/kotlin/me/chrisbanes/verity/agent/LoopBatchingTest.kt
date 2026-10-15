@@ -101,6 +101,16 @@ class LoopBatchingTest {
     assertThat(segment.loop?.iterations).isEqualTo(9)
   }
 
+  @Test fun `unlabelled cards beyond focus are not treated as off-screen`() = runTest {
+    // Titles appear only on the focused card, so a missing target may be any unlabelled card.
+    val session = session { presses ->
+      HierarchyNode(children = (0..9).map { i -> card(i, i, i == presses).let { if (i == presses) it else it.copy(children = emptyList()) } })
+    }
+    val segment = run(session, "Card 3 is focused", 20)
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(1, 1, 1))
+  }
+
   @Test fun `an under-counted batch falls back to single presses and still satisfies the loop`() = runTest {
     // The device has a focus stop after card 0 that the tree shows only while it is focused.
     val hidden = HierarchyNode(attributes = mapOf("resource-id" to "hidden"), states = setOf("focused"))

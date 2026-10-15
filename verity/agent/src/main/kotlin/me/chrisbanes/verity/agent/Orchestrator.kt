@@ -393,13 +393,13 @@ class Orchestrator(
       val seen = mutableListOf<FocusObservation>()
       // Cleared on the first edge, wrap or wrong on-screen prediction; every later body is checked.
       var batching = true
+      validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
       while (completedBodies < loop.max) {
         evaluation.tree?.let { seen += observeFocus(it) }
         val prediction = if (batching) predictPresses(loop.until, direction, evaluation) else null
         val size = minOf(prediction?.presses ?: 1, loop.max - completedBodies)
         var pressed = 0
         try {
-          validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
           var baseline: FocusObservation? = null
           while (pressed < size) {
             val after = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
@@ -452,7 +452,7 @@ class Orchestrator(
   /** Presses toward the unmet condition from the check's tree, or null to press once. */
   private fun predictPresses(condition: String, direction: Direction, evaluation: ConditionEvaluation): BatchPrediction? {
     val tree = evaluation.tree ?: return null
-    fun pastVisible() = FocusStepPlanner.stepsPastVisible(tree, direction)?.let { BatchPrediction(it, onScreen = false) }
+    fun pastVisible(labelledOnly: Boolean = false) = FocusStepPlanner.stepsPastVisible(tree, direction, labelledOnly)?.let { BatchPrediction(it, onScreen = false) }
     fun toTarget(bounds: NodeBounds) = FocusStepPlanner.stepsToTarget(tree, direction, bounds)?.let { BatchPrediction(it, onScreen = true) }
     return when (evaluation.tier) {
       ConditionTier.FOCUS -> {
@@ -460,8 +460,11 @@ class Orchestrator(
         val matches = tree.nodesContainingText(text)
         val bounds = matches.map { it.bounds() ?: return null }.distinct()
         when (bounds.size) {
-          0 -> pastVisible()
+          // Unlabelled cards (titles shown only on focus) could be the target, so require labels.
+          0 -> pastVisible(labelledOnly = true)
+
           1 -> toTarget(bounds.single())
+
           else -> null
         }
       }
