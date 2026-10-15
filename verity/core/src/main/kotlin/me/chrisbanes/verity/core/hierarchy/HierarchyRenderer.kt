@@ -29,11 +29,20 @@ object HierarchyRenderer {
         checkpoint()
         filter.allowedKeys == null || k in filter.allowedKeys
       }
+      .filter { (k, v) ->
+        !(filter.collapseLayoutOnly && k == "accessibilityText" && v == node.attributes["text"])
+      }
 
     val hasContent = filteredAttrs.isNotEmpty() || node.states.isNotEmpty()
 
+    val semantic = if (filter.collapseLayoutOnly) {
+      filteredAttrs.keys.any { it != "bounds" } || node.states.isNotEmpty()
+    } else {
+      hasContent
+    }
+
     // Collapse empty containers with 0 or 1 children
-    if (!hasContent && node.children.size <= 1) {
+    if (!semantic && node.children.size <= 1) {
       for (child in node.children) {
         renderNode(child, filter, depth, sb, checkpoint)
       }
