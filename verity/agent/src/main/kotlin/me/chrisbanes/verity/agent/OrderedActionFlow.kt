@@ -3,19 +3,23 @@ package me.chrisbanes.verity.agent
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
+import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FocusChangeObserver
 
 /**
- * Executes a validated [flow] in order. Raw keycode actions cannot be Maestro commands, so each
- * maximal run of other actions becomes its own Maestro sub-flow and each keycode is pressed directly
- * between them, settling afterwards like a key press. The first failed sub-flow stops the walk.
+ * Executes a validated [flow] in order. Raw keycode actions cannot be Maestro commands, and on
+ * Android TV direction key presses settle on focus change instead of a Maestro animation wait, so
+ * each maximal run of other actions becomes its own Maestro sub-flow and those keys are pressed
+ * directly between them, settling afterwards. A wait for animation right after a direct press is
+ * replaced by its settle. The first failed sub-flow stops the walk.
  */
 internal suspend fun DeviceSession.executeOrdered(
   flow: ActionFlow,
   focusObserver: FocusChangeObserver = FocusChangeObserver(),
 ): FlowResult {
-  if (flow.actions.none { it is Interaction.KeyCode }) return executeActions(flow)
+  fun Interaction.isDirect() = this is Interaction.KeyCode || (this is Interaction.KeyPress && platform == Platform.ANDROID_TV && isDirection())
+  if (flow.actions.none { it.isDirect() }) return executeActions(flow)
 
   var result = FlowResult(success = true)
   val run = mutableListOf<Interaction>()
@@ -25,13 +29,20 @@ internal suspend fun DeviceSession.executeOrdered(
     run.clear()
     return result.success
   }
+  var previousDirect = false
   for (action in flow.actions) {
-    if (action !is Interaction.KeyCode) {
-      run += action
+    if (!action.isDirect()) {
+      if (!(previousDirect && action is Interaction.WaitForAnimation)) run += action
+      previousDirect = false
       continue
     }
     if (!flush()) return result
-    pressAndSettle(focusObserver, action.isDirection()) { pressKey(action.keycode, action.longPress) }
+    when (action) {
+      is Interaction.KeyCode -> pressAndSettle(focusObserver, action.isDirection()) { pressKey(action.keycode, action.longPress) }
+      is Interaction.KeyPress -> pressAndSettle(focusObserver, direction = true) { pressKey(action.keyName) }
+      else -> error("Unexpected direct action: $action")
+    }
+    previousDirect = true
   }
   flush()
   return result

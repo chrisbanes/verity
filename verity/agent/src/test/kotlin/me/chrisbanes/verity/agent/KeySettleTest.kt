@@ -18,17 +18,17 @@ class KeySettleTest {
 
   private fun focused(id: String) = HierarchyNode(attributes = mapOf("resource-id" to id), states = setOf("focused"))
 
-  /** Focus is "a" until a key is pressed, then "b" when [changes], else stays "a". */
+  /** Focus moves with every key press when [changes], else stays put. */
   private fun session(
     platform: Platform = Platform.ANDROID_TV,
     changes: Boolean = true,
     baselineFails: Boolean = false,
   ): FakeDeviceSession {
     lateinit var fake: FakeDeviceSession
-    fun pressed() = fake.events.any { it.startsWith("name:") || it.startsWith("key:") }
+    fun presses() = fake.events.count { it.startsWith("name:") || it.startsWith("key:") }
     fake = FakeDeviceSession(platform, hierarchyProvider = {
-      if (baselineFails && !pressed()) error("capture failed")
-      focused(if (changes && pressed()) "b" else "a")
+      if (baselineFails && presses() == 0) error("capture failed")
+      focused(if (changes) "node-${presses()}" else "node-0")
     })
     return fake
   }
@@ -108,5 +108,40 @@ class KeySettleTest {
     val s = session()
     ordered(s, 66)
     assertThat(s.events).isEqualTo(listOf("flow", "key:66:false", "settle", "flow"))
+  }
+
+  private val wait = Interaction.WaitForAnimation()
+  private val center = Interaction.KeyPress("Remote Dpad Center")
+
+  private suspend fun TestScope.navigatorFlow(s: FakeDeviceSession) = s.executeOrdered(
+    ActionFlow("app", listOf(down, wait, down, wait, center, wait)),
+    observer(),
+  )
+
+  @Test fun `ordered named direction replaces following wait with focus settle`() = runTest {
+    val s = session()
+    navigatorFlow(s)
+    assertThat(s.events).isEqualTo(listOf("name:Remote Dpad Down", "name:Remote Dpad Down", "flow"))
+    assertThat(s.executedActionFlows.single().actions).isEqualTo(listOf(center, wait))
+  }
+
+  @Test fun `ordered named direction settles once when focus unchanged`() = runTest {
+    val s = session(changes = false)
+    navigatorFlow(s)
+    assertThat(s.events).isEqualTo(listOf("name:Remote Dpad Down", "settle", "name:Remote Dpad Down", "settle", "flow"))
+  }
+
+  @Test fun `ordered named direction stays in maestro off TV`() = runTest {
+    val s = session(Platform.ANDROID_MOBILE)
+    navigatorFlow(s)
+    assertThat(s.events).isEqualTo(listOf("flow"))
+    assertThat(s.executedActionFlows.single().actions).isEqualTo(listOf(down, wait, down, wait, center, wait))
+  }
+
+  @Test fun `ordered keeps wait that does not follow a direct press`() = runTest {
+    val s = session()
+    s.executeOrdered(ActionFlow("app", listOf(wait, down, center, wait)), observer())
+    assertThat(s.events).isEqualTo(listOf("flow", "name:Remote Dpad Down", "flow"))
+    assertThat(s.executedActionFlows.map { it.actions }).isEqualTo(listOf(listOf(wait), listOf(center, wait)))
   }
 }
