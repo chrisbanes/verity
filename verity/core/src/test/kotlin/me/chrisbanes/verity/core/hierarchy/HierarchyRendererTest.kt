@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.isEqualTo
+import assertk.assertions.isTrue
 import kotlin.test.Test
 
 class HierarchyRendererTest {
@@ -180,12 +181,12 @@ class HierarchyRendererTest {
     val boundsRegex = Regex("bounds=(\\[\\d+,\\d+]\\[\\d+,\\d+])")
     val contentBounds = content.flatMap { l -> boundsRegex.findAll(l).map { it.groupValues[1] } }.toSet()
     val promptBounds = prompt.flatMap { l -> boundsRegex.findAll(l).map { it.groupValues[1] } }.toSet()
-    assertThat(promptBounds.all { it in contentBounds }).isEqualTo(true)
-    assertThat(prompt.size < content.size).isEqualTo(true)
-    assertThat(prompt.any { it.contains("(focused)") }).isEqualTo(true)
-    assertThat(prompt.any { it.contains("(clickable)") }).isEqualTo(true)
+    assertThat(promptBounds.all { it in contentBounds }).isTrue()
+    assertThat(prompt.size < content.size).isTrue()
+    assertThat(prompt.any { it.contains("(focused)") }).isTrue()
+    assertThat(prompt.any { it.contains("(clickable)") }).isTrue()
     // Only accessibilityText dedup may change a kept line; here Row1 is the sole such line.
     val contentSet = content.map { it.replace(", accessibilityText=Row1", "") }.toSet()
-    assertThat(prompt.all { it in contentSet }).isEqualTo(true)
+    assertThat(prompt.all { it in contentSet }).isTrue()
   }
 }

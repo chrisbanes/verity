@@ -22,7 +22,7 @@ Execution splits an ordered list at its keycode actions and, on Android TV, at i
 
 The device-free compiler prepares the complete command list before any driver operation. Mapped groups also pass complete-list validation before their first direct key press. Preparation failures are safe local errors. Runtime failures keep the existing `FlowResult`, and cancellation propagates. Both Android and iOS retain their existing Maestro Orchestra and driver connections.
 
-Slow-path generation also receives the current content hierarchy, when it can be captured, so the model can see which node is focused; a capture failure only omits it.
+Slow-path generation also receives the current `PROMPT` hierarchy rendering, when it can be captured, so the model can see which node is focused; a capture failure only omits it.
 
 Generated actions exclude screenshots, assertions, scripts, nested flows, media, coordinates and arbitrary configuration. Those supplied-YAML capabilities remain at the public MCP boundary. Internal execution does not render, write or reparse YAML. It renders the selected list only when writing an optional generated-flow artifact or a dry-run preview; execution receives that same selected object.
 

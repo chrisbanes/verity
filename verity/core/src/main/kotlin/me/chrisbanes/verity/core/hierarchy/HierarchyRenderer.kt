@@ -35,11 +35,8 @@ object HierarchyRenderer {
 
     val hasContent = filteredAttrs.isNotEmpty() || node.states.isNotEmpty()
 
-    val semantic = if (filter.collapseLayoutOnly) {
-      filteredAttrs.keys.any { it != "bounds" } || node.states.isNotEmpty()
-    } else {
-      hasContent
-    }
+    val semantic = node.states.isNotEmpty() ||
+      filteredAttrs.keys.any { !(filter.collapseLayoutOnly && it == "bounds") }
 
     // Collapse empty containers with 0 or 1 children
     if (!semantic && node.children.size <= 1) {

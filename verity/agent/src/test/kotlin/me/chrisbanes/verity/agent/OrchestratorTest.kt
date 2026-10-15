@@ -1041,6 +1041,20 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `scroll-to-find prompts with the prompt rendering without bounds-only wrappers`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(wrappedHome, screen("Settings"))))
+    val prompts = mutableListOf<String>()
+    val orchestrator = scrollOrchestrator(session) {
+      prompts += it
+      modelReply("DOWN")
+    }
+
+    orchestrator.run(tapSettingsJourney())
+
+    assertThat(prompts.single().substringAfter("Current screen:\n")).isEqualTo("[text=Home, bounds=[10,10][100,50]]\n")
+  }
+
+  @Test
   fun `scroll-to-find that never gets a direction still honours the attempt cap then taps`() = runTest {
     val session = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"))))
     var navigatorCalls = 0
