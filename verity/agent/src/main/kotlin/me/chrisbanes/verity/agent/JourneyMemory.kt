@@ -44,6 +44,9 @@ internal class JourneyMemory(
   private var hasFirst = false
   private var hasLatest = false
 
+  /** True once any execution was recorded, so the device has changed since the setup launch. */
+  val hasExecuted: Boolean get() = trail.isNotEmpty() || droppedEntries > 0
+
   /** Runs [block] once, appending one entry with focus observed before and after the whole call. */
   suspend fun <T> recordExecution(
     source: TrailSource,
