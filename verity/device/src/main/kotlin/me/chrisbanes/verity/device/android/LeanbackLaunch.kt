@@ -53,10 +53,10 @@ internal suspend fun executeWithLeanbackLaunch(
     // Require affirmative output: `pm clear` prints "Success" and `am start -W` prints "Status: ok".
     // `am force-stop` prints nothing and exits 0 even for protected packages, so only a reported error is detectable.
     val failure = withContext(Dispatchers.IO) {
-      val stopped = executeShell("am force-stop $appId")
+      val stopped = executeShell("am force-stop --user current $appId")
       if (stopped.contains("Exception") || stopped.contains("Error")) return@withContext "am force-stop $appId failed: ${stopped.trim()}"
       if (action.clearState == true) {
-        // pm clear defaults to the system user; am start targets the current user.
+        // pm clear defaults to the system user (force-stop to all users); am start targets the current user.
         val cleared = executeShell("pm clear --user current $appId")
         if (!cleared.contains("Success")) return@withContext "pm clear $appId failed: ${cleared.trim()}"
       }
