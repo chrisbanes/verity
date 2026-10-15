@@ -49,15 +49,19 @@ class Orchestrator(
   private val timer: PhaseTimer = NoOpPhaseTimer,
 ) {
   suspend fun run(journey: Journey): JourneyResult {
-    // Launch the app before executing any segments.
+    // Launch the app before executing any segments; running them on the wrong screen proves nothing.
     val launch = timer.step("${journey.name} setup") {
       session.executeActions(ActionFlow(journey.app, listOf(Interaction.LaunchApp())))
+    }
+    if (!launch.success) {
+      val message = "Failed to launch app '${journey.app}': ${launch.output.trim().ifEmpty { "no details reported" }}"
+      return JourneyResult(journey.name, segments = emptyList(), setupError = ArtifactError(ArtifactErrorKind.SETUP_FAILURE, message))
     }
 
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
     // Run-local so nothing carries over between journeys, even on a reused Orchestrator.
-    val memory = JourneyMemory(session, launched = launch.success)
+    val memory = JourneyMemory(session, launched = true)
 
     try {
       for (segment in segments) {

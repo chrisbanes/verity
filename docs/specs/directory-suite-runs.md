@@ -14,7 +14,7 @@ The configured fallback can contain multiple journeys. The earlier configuration
 
 ## Execution and outcomes
 
-Journeys execute sequentially with one shared device session and LLM executor. Each journey launches its application before running its segments. A failed segment stops that journey; a returned failed journey result does not stop the next journey.
+Journeys execute sequentially with one shared device session and LLM executor. Each journey launches its application before running its segments. A failed launch fails that journey at setup without running any segment; console output reads `FAILED: Setup failed: <message>`. A failed segment stops that journey; a returned failed journey result does not stop the next journey.
 
 An execution exception stops the suite. The failure artifacts retain completed journey results and identify the journey that threw; later journeys are not reported as executed.
 

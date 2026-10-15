@@ -97,6 +97,31 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `failed setup launch fails the journey without running segments`() = runTest {
+    val session = FakeDeviceSession(launchResult = FlowResult(success = false, output = "launchApp failed: UNKNOWN\n"))
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { error("no segment should run") },
+      inspectorFactory = { error("no segment should run") },
+    )
+    val journey = Journey(
+      name = "launch-failure",
+      app = "com.example.app",
+      platform = Platform.ANDROID_MOBILE,
+      steps = listOf(JourneyStep.Action("press d-pad down")),
+    )
+
+    val result = orchestrator.run(journey)
+
+    assertThat(result.passed).isFalse()
+    assertThat(result.failedAt).isNull()
+    assertThat(result.segments).isEmpty()
+    assertThat(result.setupError?.kind).isEqualTo(ArtifactErrorKind.SETUP_FAILURE)
+    assertThat(result.setupError?.message).isEqualTo("Failed to launch app 'com.example.app': launchApp failed: UNKNOWN")
+    assertThat(session.executedActionFlows).containsExactly(ActionFlow("com.example.app", listOf(Interaction.LaunchApp())))
+  }
+
+  @Test
   fun `run preserves inspector reasoning for tree assertions`() = runTest {
     val session = FakeDeviceSession()
     val orchestrator = Orchestrator(
@@ -496,8 +521,8 @@ class OrchestratorTest {
     assertThat(session.executedActionFlows.last()).isSameInstanceAs(selected)
   }
 
-  private suspend fun runGenerated(vararg replies: String, setupSucceeds: Boolean = true): FakeDeviceSession {
-    val session = FakeDeviceSession(screens = ArrayDeque(List(20) { screen("Home") }), results = ArrayDeque(listOf(setupSucceeds)))
+  private suspend fun runGenerated(vararg replies: String): FakeDeviceSession {
+    val session = FakeDeviceSession(screens = ArrayDeque(List(20) { screen("Home") }))
     val queue = ArrayDeque(replies.toList())
     Orchestrator(
       session = session,
@@ -534,12 +559,6 @@ class OrchestratorTest {
     assertThat(clearing.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp(clearState = true)))
     val alone = runGenerated("""{"actions":[{"type":"launchApp"}]}""")
     assertThat(alone.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()))
-  }
-
-  @Test
-  fun `relaunch runs when the setup launch failed`() = runTest {
-    val session = runGenerated("""{"actions":[{"type":"launchApp"}]}""", setupSucceeds = false)
-    assertThat(session.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp()))
   }
 
   @Test
@@ -1593,8 +1612,7 @@ class OrchestratorTest {
     private val screens: ArrayDeque<HierarchyNode> = ArrayDeque(),
     private val onExecuteActions: (String) -> Unit = {},
     private val onCaptureScreenshot: (Path) -> Unit = {},
-    /** Successive executeActions outcomes; success once exhausted. */
-    private val results: ArrayDeque<Boolean> = ArrayDeque(),
+    private val launchResult: FlowResult = FlowResult(success = true),
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val renderedActionFlows = mutableListOf<String>()
@@ -1607,7 +1625,7 @@ class OrchestratorTest {
       val yaml = ActionFlowYamlRenderer.render(flow)
       onExecuteActions(yaml)
       renderedActionFlows += yaml
-      return FlowResult(success = results.removeFirstOrNull() ?: true)
+      return if (flow.actions == listOf(Interaction.LaunchApp())) launchResult else FlowResult(success = true)
     }
     override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) = Unit
