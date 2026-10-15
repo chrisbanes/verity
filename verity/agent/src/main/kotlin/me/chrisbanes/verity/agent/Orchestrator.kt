@@ -327,8 +327,9 @@ class Orchestrator(
     }
     // Setup just launched the app, so a leading plain relaunch would only restart it.
     val first = selected.actions.firstOrNull()
-    val toRun = if (memory.freshlyLaunched && first is Interaction.LaunchApp && first.clearState != true) selected.copy(actions = selected.actions.drop(1)) else selected
-    // Nothing ran, so nothing is recorded and the launch stays fresh.
+    // The setup launch stands in for one generated launch only, so a repeated loop body still relaunches.
+    val toRun = if (first is Interaction.LaunchApp && first.clearState != true && memory.claimFreshLaunch()) selected.copy(actions = selected.actions.drop(1)) else selected
+    // Nothing ran, so nothing is recorded.
     if (toRun.actions.isEmpty()) return SlowPathResult(FlowResult(success = true), reference)
     // One flow entry even when raw keycodes split it; focus is observed only around the whole flow.
     val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeOrdered(toRun) }

@@ -45,9 +45,10 @@ internal class JourneyMemory(
   private var hasFirst = false
   private var hasLatest = false
 
-  /** True while the setup launch succeeded and no execution has been recorded since. */
-  var freshlyLaunched: Boolean = launched
-    private set
+  private var freshlyLaunched = launched
+
+  /** True at most once: when the setup launch succeeded and nothing has executed or claimed it since. */
+  fun claimFreshLaunch(): Boolean = freshlyLaunched.also { freshlyLaunched = false }
 
   /** Runs [block] once, appending one entry with focus observed before and after the whole call. */
   suspend fun <T> recordExecution(
