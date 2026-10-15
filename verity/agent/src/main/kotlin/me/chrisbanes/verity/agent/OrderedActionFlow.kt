@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.agent
 
+import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
@@ -30,16 +31,19 @@ internal suspend fun DeviceSession.executeOrdered(
     return result.success
   }
   var previousDirect = false
+  // Focus after the last direct press; only valid while no Maestro sub-flow ran since.
+  var focus: FocusObservation? = null
   for (action in flow.actions) {
     if (!action.isDirect()) {
       if (!(previousDirect && action is Interaction.WaitForAnimation)) run += action
       previousDirect = false
       continue
     }
+    if (run.isNotEmpty()) focus = null
     if (!flush()) return result
-    when (action) {
-      is Interaction.KeyCode -> pressAndSettle(focusObserver, action.isDirection()) { pressKey(action.keycode, action.longPress) }
-      is Interaction.KeyPress -> pressAndSettle(focusObserver, direction = true) { pressKey(action.keyName) }
+    focus = when (action) {
+      is Interaction.KeyCode -> pressAndSettle(focusObserver, action.isDirection(), focus) { pressKey(action.keycode, action.longPress) }
+      is Interaction.KeyPress -> pressAndSettle(focusObserver, direction = true, focus) { pressKey(action.keyName) }
       else -> error("Unexpected direct action: $action")
     }
     previousDirect = true

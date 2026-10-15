@@ -18,6 +18,8 @@ class KeySettleTest {
 
   private fun focused(id: String) = HierarchyNode(attributes = mapOf("resource-id" to id), states = setOf("focused"))
 
+  private var captures = 0
+
   /** Focus moves with every key press when [changes], else stays put. */
   private fun session(
     platform: Platform = Platform.ANDROID_TV,
@@ -27,6 +29,7 @@ class KeySettleTest {
     lateinit var fake: FakeDeviceSession
     fun presses() = fake.events.count { it.startsWith("name:") || it.startsWith("key:") }
     fake = FakeDeviceSession(platform, hierarchyProvider = {
+      captures++
       if (baselineFails && presses() == 0) error("capture failed")
       focused(if (changes) "node-${presses()}" else "node-0")
     })
@@ -143,5 +146,19 @@ class KeySettleTest {
     s.executeOrdered(ActionFlow("app", listOf(wait, down, center, wait)), observer())
     assertThat(s.events).isEqualTo(listOf("flow", "name:Remote Dpad Down", "flow"))
     assertThat(s.executedActionFlows.map { it.actions }).isEqualTo(listOf(listOf(wait), listOf(center, wait)))
+  }
+
+  @Test fun `consecutive direct presses reuse the previous focus as baseline`() = runTest {
+    val s = session()
+    navigatorFlow(s)
+    // One baseline plus one change observation per press.
+    assertThat(captures).isEqualTo(3)
+  }
+
+  @Test fun `a maestro sub flow between presses forces a fresh baseline`() = runTest {
+    val s = session()
+    s.executeOrdered(ActionFlow("app", listOf(down, center, down)), observer())
+    assertThat(s.events).isEqualTo(listOf("name:Remote Dpad Down", "flow", "name:Remote Dpad Down"))
+    assertThat(captures).isEqualTo(4)
   }
 }
