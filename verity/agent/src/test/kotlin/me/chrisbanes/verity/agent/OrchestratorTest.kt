@@ -496,8 +496,8 @@ class OrchestratorTest {
     assertThat(session.executedActionFlows.last()).isSameInstanceAs(selected)
   }
 
-  private suspend fun runGenerated(vararg replies: String): FakeDeviceSession {
-    val session = FakeDeviceSession(screens = ArrayDeque(List(20) { screen("Home") }))
+  private suspend fun runGenerated(vararg replies: String, setupSucceeds: Boolean = true): FakeDeviceSession {
+    val session = FakeDeviceSession(screens = ArrayDeque(List(20) { screen("Home") }), results = ArrayDeque(listOf(setupSucceeds)))
     val queue = ArrayDeque(replies.toList())
     Orchestrator(
       session = session,
@@ -534,6 +534,18 @@ class OrchestratorTest {
     assertThat(clearing.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp(clearState = true)))
     val alone = runGenerated("""{"actions":[{"type":"launchApp"}]}""")
     assertThat(alone.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()))
+  }
+
+  @Test
+  fun `relaunch runs when the setup launch failed`() = runTest {
+    val session = runGenerated("""{"actions":[{"type":"launchApp"}]}""", setupSucceeds = false)
+    assertThat(session.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.LaunchApp()))
+  }
+
+  @Test
+  fun `a skipped launch only flow keeps the setup launch fresh`() = runTest {
+    val session = runGenerated("""{"actions":[{"type":"launchApp"}]}""", """{"actions":[{"type":"launchApp"},{"type":"tapOnText","text":"A"}]}""")
+    assertThat(session.executedActionFlows.map { it.actions }).containsExactly(listOf(Interaction.LaunchApp()), listOf(Interaction.TapOnText("A")))
   }
 
   /** The fake only supports unbounded capture; the navigator hierarchy uses the bounded overload. */
@@ -1581,6 +1593,8 @@ class OrchestratorTest {
     private val screens: ArrayDeque<HierarchyNode> = ArrayDeque(),
     private val onExecuteActions: (String) -> Unit = {},
     private val onCaptureScreenshot: (Path) -> Unit = {},
+    /** Successive executeActions outcomes; success once exhausted. */
+    private val results: ArrayDeque<Boolean> = ArrayDeque(),
   ) : DeviceSession {
     override val platform: Platform = Platform.ANDROID_MOBILE
     val renderedActionFlows = mutableListOf<String>()
@@ -1593,7 +1607,7 @@ class OrchestratorTest {
       val yaml = ActionFlowYamlRenderer.render(flow)
       onExecuteActions(yaml)
       renderedActionFlows += yaml
-      return FlowResult(success = true)
+      return FlowResult(success = results.removeFirstOrNull() ?: true)
     }
     override suspend fun executeFlow(yaml: String): FlowResult = error("Internal YAML execution forbidden")
     override suspend fun pressKey(keyName: String) = Unit

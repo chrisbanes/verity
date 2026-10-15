@@ -50,14 +50,14 @@ class Orchestrator(
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments.
-    timer.step("${journey.name} setup") {
+    val launch = timer.step("${journey.name} setup") {
       session.executeActions(ActionFlow(journey.app, listOf(Interaction.LaunchApp())))
     }
 
     val segments = JourneySegmenter.segment(journey.steps)
     val results = mutableListOf<SegmentResult>()
     // Run-local so nothing carries over between journeys, even on a reused Orchestrator.
-    val memory = JourneyMemory(session)
+    val memory = JourneyMemory(session, launched = launch.success)
 
     try {
       for (segment in segments) {
@@ -323,11 +323,11 @@ class Orchestrator(
     }
     // Setup just launched the app, so a leading plain relaunch would only restart it.
     val first = selected.actions.firstOrNull()
-    val toRun = if (!memory.hasExecuted && first is Interaction.LaunchApp && first.clearState != true) selected.copy(actions = selected.actions.drop(1)) else selected
+    val toRun = if (memory.freshlyLaunched && first is Interaction.LaunchApp && first.clearState != true) selected.copy(actions = selected.actions.drop(1)) else selected
+    // Nothing ran, so nothing is recorded and the launch stays fresh.
+    if (toRun.actions.isEmpty()) return SlowPathResult(FlowResult(success = true), reference)
     // One flow entry even when raw keycodes split it; focus is observed only around the whole flow.
-    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) {
-      if (toRun.actions.isEmpty()) FlowResult(success = true) else session.executeOrdered(toRun)
-    }
+    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeOrdered(toRun) }
     return SlowPathResult(flowResult, reference)
   }
 
