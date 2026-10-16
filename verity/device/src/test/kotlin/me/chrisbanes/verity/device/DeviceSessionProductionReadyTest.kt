@@ -39,6 +39,7 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.InvalidActionFlowException
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.android.AndroidDeviceSession
+import me.chrisbanes.verity.device.android.AnimationState
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 
 class DeviceSessionProductionReadyTest {
@@ -92,6 +93,42 @@ class DeviceSessionProductionReadyTest {
       session.pressKey(key.description)
       assertThat(commands.last()).isEqualTo("input keyevent $code")
     }
+  }
+
+  @Test
+  fun `Android animation operations each issue one batched shell command`() = runTest {
+    val commands = mutableListOf<String>()
+    val output = "1.0\n0.5\nnull\n"
+    val session = AndroidDeviceSession(Maestro(RecordingDriver()), Platform.ANDROID_TV) {
+      commands += it
+      output
+    }
+
+    val state = session.getAnimationState()
+    assertThat(state).isEqualTo(AnimationState("1.0", "0.5", AnimationState.UNSET))
+    session.disableAnimations()
+    session.restoreAnimationState(state)
+
+    assertThat(commands).isEqualTo(
+      listOf(
+        "settings get global window_animation_scale; settings get global transition_animation_scale; " +
+          "settings get global animator_duration_scale",
+        "settings put global window_animation_scale 0; settings put global transition_animation_scale 0; " +
+          "settings put global animator_duration_scale 0",
+        "settings put global window_animation_scale 1.0; settings put global transition_animation_scale 0.5; " +
+          "settings delete global animator_duration_scale",
+      ),
+    )
+  }
+
+  @Test
+  fun `Android animation state rejects malformed get output`() = runTest {
+    for (output in listOf("", "1.0\n1.0\n", "1.0\n1.0\n1.0\n1.0\n")) {
+      val session = AndroidDeviceSession(Maestro(RecordingDriver()), Platform.ANDROID_TV) { output }
+      assertFailure { session.getAnimationState() }.messageContains("Expected 3 animation scale values")
+    }
+    val garbled = AndroidDeviceSession(Maestro(RecordingDriver()), Platform.ANDROID_TV) { "1.0\nabc\n1.0\n" }
+    assertFailure { garbled.getAnimationState() }.messageContains("Invalid transition animation scale")
   }
 
   @Test
