@@ -45,8 +45,8 @@ class DryRunPlannerTest {
     )
     val report = planner.plan(resolvedJourney(journey))
     assertThat(report.segments.map { it.index }).isEqualTo(listOf(0, 1, 2, 3, 4))
-    assertThat(report.segments[1].wait).isEqualTo(DryRunWaitReport("Home", 20))
-    assertThat(report.segments[3].wait).isEqualTo(DryRunWaitReport("visually spinner disappears", 3))
+    assertThat(report.segments[1].wait).isEqualTo(DryRunWaitReport("Home", 20, "literal, then tree"))
+    assertThat(report.segments[3].wait).isEqualTo(DryRunWaitReport("visually spinner disappears", 3, "visual"))
     for (index in listOf(1, 3)) {
       assertThat(report.segments[index].actions).isNull()
       assertThat(report.segments[index].loop).isNull()
@@ -211,6 +211,29 @@ class DryRunPlannerTest {
   }
 
   @Test
+  fun `wait and loop conditions report the tiers a run would take`() = runTest {
+    fun journey(until: String) = Journey("Tiers", "example.app", Platform.ANDROID_TV, listOf(JourneyStep.Wait(until), JourneyStep.Loop("Press D-pad down", until, 3)))
+    val expected = mapOf(
+      "\"spotlight-item-\"" to "literal-only",
+      "'spotlight-item-'" to "literal-only",
+      "visually a spinner" to "visual",
+      "Settings is focused" to "focus",
+      "Ready" to "literal, then tree",
+    )
+    for (precheck in listOf(false, true)) {
+      val planner = DryRunPlanner(navigatorFactory = { error("must not create navigator") }, precheck = precheck)
+      for ((until, tier) in expected) {
+        val label = if (precheck && tier == "literal, then tree") "literal, then precheck, then tree" else tier
+        val report = planner.plan(resolvedJourney(journey(until)))
+        assertThat(report.segments.mapNotNull { it.wait?.tier ?: it.loop?.tier }).isEqualTo(listOf(label, label))
+        assertThat(DryRunRenderer.renderJourney(report)).contains("Tier: $label")
+      }
+    }
+    val literal = DryRunPlanner(navigatorFactory = { error("must not create navigator") }).plan(resolvedJourney(journey("\"spotlight-item-\"")))
+    assertThat(literal.segments.last().loop?.batching).isEqualTo(false)
+  }
+
+  @Test
   fun `only single D-pad loops on Android TV with tree-tier conditions report batching`() = runTest {
     val planner = DryRunPlanner(navigatorFactory = { error("must not create navigator") })
     fun journey(platform: Platform, body: String, until: String = "the settings menu is open") = Journey("Batching", "example.app", platform, listOf(JourneyStep.Loop(body, until, 3)))
@@ -313,6 +336,7 @@ class DryRunPlannerTest {
             max = 2,
             kind = DryRunExecutionKind.SLOW_PATH,
             yaml = "appId: com.example.app\n---\n- scroll",
+            tier = "literal, then tree",
           ),
         ),
       ),
@@ -359,6 +383,7 @@ class DryRunPlannerTest {
 
       Loop: navigate to logout until Logout, max 2
       Kind: SLOW_PATH
+      Tier: literal, then tree
       Generated Loop YAML:
       ```yaml
       appId: com.example.app
