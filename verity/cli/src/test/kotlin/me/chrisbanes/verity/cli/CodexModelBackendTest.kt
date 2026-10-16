@@ -6,6 +6,7 @@ import assertk.assertions.isFalse
 import assertk.assertions.isLessThan
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -135,7 +136,7 @@ class CodexModelBackendTest {
           CodexModelBackend.prepare(
             executable = { Path.of("injected-jvm-fake") },
             host = "Mac OS X",
-            environment = emptyMap(),
+            environment = mapOf("CODEX_HOME" to fake.sourceHome.toString()),
             launch = { command, directory, environment ->
               if (++launches == 4) {
                 fake.failCleanup = true
@@ -308,6 +309,24 @@ class CodexModelBackendTest {
         assertThat(frames.count { it["method"] == JsonPrimitive("thread/unsubscribe") }).isEqualTo(4)
         assertThat(frames.filter { it["method"] != null }.map { it.getValue("id") }.distinct().size).isEqualTo(12)
         assertThat(fake.children.size).isEqualTo(4)
+      }
+    }
+  }
+
+  @Test
+  fun `loaded instruction sources fail role validation with isolation before any turn`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture { fake, backend ->
+        // The source home's AGENTS.md fixture exists; the owned home must keep it out.
+        backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low", SelectedRoleModel.Codex("gpt-6-luna") to "low"))
+        assertThat(backend.execute(request()).finishReason).isEqualTo("stop")
+        assertThat(Files.exists(fake.sourceHome.resolve("AGENTS.md"))).isTrue()
+      }
+      fixture("model-instructions-loaded") { fake, backend ->
+        assertThat(assertFailsWith<CodexFailure> { backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low")) }.kind).isEqualTo(CodexFailureKind.ISOLATION)
+        val frames = fake.capturedFrames()
+        assertThat(frames.count { it["method"] == JsonPrimitive("thread/start") }).isEqualTo(1)
+        assertThat(frames.count { it["method"] == JsonPrimitive("turn/start") }).isEqualTo(0)
       }
     }
   }

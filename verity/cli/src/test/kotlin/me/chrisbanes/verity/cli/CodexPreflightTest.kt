@@ -72,6 +72,8 @@ class CodexPreflightTest {
       for ((scenario, effort, model, code) in listOf(
         listOf("model-signed-out", null, null, "codex.auth"),
         listOf("model-api-account", null, null, "codex.auth"),
+        listOf("source-auth-missing", null, null, "codex.auth"),
+        listOf("model-instructions-loaded", null, null, "codex.isolation"),
         listOf("model-no-modality", null, null, "codex.modality"),
         listOf("model-success", "LOW", null, "codex.effort"),
         listOf("model-success", null, "unknown", "codex.model"),
@@ -93,6 +95,7 @@ class CodexPreflightTest {
           assertThat(result.report.errors.map { it.code }).isEqualTo(listOf(code))
           assertThat(result.backend).isEqualTo(null)
           assertThat(result.report.renderPlainText().contains("sk-secret")).isEqualTo(false)
+          if (code == "codex.auth") assertThat(result.report.renderPlainText().contains("cli_auth_credentials_store = \"file\"")).isTrue()
         } finally {
           withContext(NonCancellable) {
             fake.verifyCleanup()
