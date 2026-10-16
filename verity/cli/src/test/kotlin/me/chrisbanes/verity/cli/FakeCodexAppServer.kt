@@ -658,6 +658,7 @@ internal object FakeCodexAppServer {
       "model-bound-foreign-raw-completed" -> boundEvent("rawResponse/completed", foreign, turnId)
       "model-bound-raw-completed-foreign-turn" -> boundEvent("rawResponse/completed", threadId, "foreign-turn")
       "model-bound-raw-completed-missing-turn" -> boundEvent("rawResponse/completed", threadId)
+      "model-bound-moderation-foreign-turn" -> boundEvent("turn/moderationMetadata", threadId, "foreign-turn")
       "model-bound-mcp-status" -> boundEvent("mcpServer/startupStatus/updated", threadId)
       "model-interrupt-raw-completed" -> itemEvent("item/started", threadId, turnId, "commandExecution")
       else -> boundEvent("thread/settings/updated", threadId)
@@ -780,6 +781,7 @@ internal object FakeCodexAppServer {
       if (scenario == "model-final-priority") itemEvent("item/completed", threadId, turnId, "agentMessage", "legacy-after-final", null)
       if (scenario == "model-latest-final") itemEvent("item/completed", threadId, turnId, "agentMessage", "latest-final")
     }
+    boundEvent("turn/moderationMetadata", threadId, turnId)
     boundEvent("warning", threadId)
     boundEvent("rawResponse/completed", threadId, turnId)
     connectionEvent("account/rateLimits/updated", buildJsonObject { put("rateLimits", JsonObject(emptyMap())) })

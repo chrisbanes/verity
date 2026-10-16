@@ -381,7 +381,7 @@ internal class CodexModelBackend private constructor(
           // Usage-only completion marker, unlike rawResponseItem/completed whose items are inspected.
           "rawResponse/completed" -> if (params["turnId"] != JsonPrimitive(turnId ?: reject())) reject()
 
-          "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated" -> {
+          "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated", "turn/moderationMetadata" -> {
             if (params["turnId"] != JsonPrimitive(turnId ?: reject())) reject()
           }
 
@@ -546,7 +546,7 @@ internal class CodexModelBackend private constructor(
 
         "rawResponse/completed" -> if (turnId == null || params["turnId"] != JsonPrimitive(turnId)) throw CodexFailure(CodexFailureKind.CLEANUP)
 
-        "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated" -> {
+        "item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta", "thread/tokenUsage/updated", "turn/moderationMetadata" -> {
           if (params["turnId"] != JsonPrimitive(turnId)) throw CodexFailure(CodexFailureKind.CLEANUP)
         }
 
