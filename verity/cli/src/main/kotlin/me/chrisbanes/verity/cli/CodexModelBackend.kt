@@ -247,6 +247,8 @@ internal class CodexModelBackend private constructor(
       if (candidateThreadId in acquiredThreadIds) reject()
       mapOf("model" to model, "modelProvider" to "openai", "cwd" to workingDirectory.toString(), "approvalPolicy" to "never", "approvalsReviewer" to "user").forEach { (key, expected) -> if (start[key] != JsonPrimitive(expected)) reject() }
       if (start["runtimeWorkspaceRoots"] != JsonArray(emptyList())) reject()
+      // A loaded instruction file (for example the user-level AGENTS.md) fails isolation before any turn.
+      if (start["instructionSources"] != JsonArray(emptyList())) reject(CodexFailureKind.ISOLATION)
       (echoFields.responseArrays + setOf("selectedCapabilityRoots", "dynamicTools", "environments").filter { start.containsKey(it) }).forEach { if (start[it] != JsonArray(emptyList())) reject() }
       val sandbox = start["sandbox"] as? JsonObject ?: reject()
       if (sandbox["type"] != JsonPrimitive("readOnly") || sandbox["networkAccess"] != JsonPrimitive(false)) reject()
@@ -310,9 +312,9 @@ internal class CodexModelBackend private constructor(
 
     private fun string(value: JsonObject, key: String): String = (value[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it.isNotBlank() } ?: reject()
 
-    private fun reject(): Nothing {
+    private fun reject(kind: CodexFailureKind = CodexFailureKind.PROTOCOL): Nothing {
       rejected = true
-      throw CodexFailure(CodexFailureKind.PROTOCOL)
+      throw CodexFailure(kind)
     }
 
     private fun verifyThread(thread: JsonObject) {
@@ -575,7 +577,12 @@ internal class CodexModelBackend private constructor(
         return withTimeout(startupMillis) {
           if (host != "Mac OS X") throw CodexFailure(CodexFailureKind.HOST)
           val binary = executable() ?: throw CodexFailure(CodexFailureKind.INSTALLATION)
-          val childEnvironment = environment - removedEnvironment
+          // Codex always loads CODEX_HOME/AGENTS.md, so children run from an owned home holding only a link to the user's credential file (#199).
+          val sourceHome = Path.of(environment["CODEX_HOME"]?.takeIf { it.isNotEmpty() } ?: environment["HOME"]?.takeIf { it.isNotEmpty() }?.let { "$it/.codex" } ?: throw CodexFailure(CodexFailureKind.AUTH)).toAbsolutePath()
+          val codexHome = resources.directory()
+          withContext(Dispatchers.IO) { Files.createSymbolicLink(codexHome.resolve("auth.json"), sourceHome.resolve("auth.json")) }
+          val sqliteHome = environment["CODEX_SQLITE_HOME"]?.takeIf { it.isNotEmpty() } ?: sourceHome.toString()
+          val childEnvironment = environment - removedEnvironment + mapOf("CODEX_HOME" to codexHome.toString(), "CODEX_SQLITE_HOME" to sqliteHome)
           val versionDirectory = resources.directory()
           val versionProcess = resources.launch(listOf(binary.toString(), "--version"), versionDirectory, childEnvironment, launch)
           val versionOutput = resources.scope.async { CodexAppServerClient.readFrame(versionProcess.inputStream) }.await()

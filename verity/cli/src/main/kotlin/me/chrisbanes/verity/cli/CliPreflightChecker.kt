@@ -251,7 +251,7 @@ class CliPreflightChecker internal constructor(
       CodexFailureKind.INSTALLATION -> "Install Codex CLI and make codex available on PATH."
       CodexFailureKind.VERSION -> "Install Codex CLI 0.159.0 or newer with the required app-server protocol."
       CodexFailureKind.HOST -> "Use the qualified macOS host."
-      CodexFailureKind.AUTH -> "Sign in to Codex using ChatGPT before running Verity."
+      CodexFailureKind.AUTH -> "Sign in to Codex using ChatGPT with the default file credential store (`cli_auth_credentials_store = \"file\"`) before running Verity."
       CodexFailureKind.MODEL -> "Choose an exact model ID present in the Codex catalog."
       CodexFailureKind.MODALITY -> "Choose a model with verified text input and image input for the inspector."
       CodexFailureKind.EFFORT -> "Choose an effort supported by the selected Codex model or leave it unset."

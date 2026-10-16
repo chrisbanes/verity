@@ -148,6 +148,7 @@ internal data class CodexIsolation(val names: Map<String, Set<String>> = emptyMa
       val response = responseSchema["properties"]?.jsonObject
       val definitions = responseSchema["definitions"]?.jsonObject ?: throw CodexFailure(CodexFailureKind.PROTOCOL)
       if (!hasType(response?.get("runtimeWorkspaceRoots"), "array") || !hasType(response?.get("model"), "string") || !hasType(response?.get("modelProvider"), "string") || !reference(response?.get("cwd"), "AbsolutePathBuf") || !hasType(definitions["AbsolutePathBuf"], "string") || !reference(response?.get("approvalPolicy"), "AskForApproval") || !reference(response?.get("thread"), "Thread")) throw CodexFailure(CodexFailureKind.PROTOCOL)
+      if (!hasType(response?.get("instructionSources"), "array")) throw CodexFailure(CodexFailureKind.PROTOCOL)
       val approvalVariants = definitions["AskForApproval"]?.jsonObject?.get("oneOf")?.jsonArray
       if (approvalVariants?.any { variant -> hasType(variant, "string") && JsonPrimitive("never") in variant.jsonObject["enum"]!!.jsonArray } != true) throw CodexFailure(CodexFailureKind.PROTOCOL)
       if (response?.get("sandbox")?.jsonObject?.get("allOf")?.jsonArray?.singleOrNull()?.let { reference(it, "SandboxPolicy") } != true) throw CodexFailure(CodexFailureKind.PROTOCOL)

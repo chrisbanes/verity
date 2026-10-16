@@ -4,12 +4,16 @@ import assertk.assertThat
 import assertk.assertions.isEqualTo
 import assertk.assertions.isFalse
 import assertk.assertions.isLessThan
+import assertk.assertions.isNotEqualTo
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.isTrue
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -45,11 +49,7 @@ class CodexLifecycleTest {
         try {
           assertThat(fake.children.size).isEqualTo(4)
           assertThat(fake.children.take(3).all { !it.process.isAlive }).isTrue()
-          fake.children.forEach { child ->
-            assertThat(child.environment.keys.intersect(REMOVED_ENVIRONMENT).isEmpty()).isTrue()
-            assertThat(child.environment["CODEX_HOME"]).isEqualTo("/unused-codex-owned-home")
-            assertThat(child.environment["CODEX_SQLITE_HOME"]).isEqualTo("/unused-codex-owned-database")
-          }
+          assertOwnedHome(fake, sqliteHome = "/unused-codex-owned-database")
           val observations = backend.client.request("config/read").getValue("observations").jsonObject
           assertThat(observations["pid"]).isEqualTo(JsonPrimitive(fake.children.last().process.pid()))
           assertThat(observations["emptyCwd"]).isEqualTo(JsonPrimitive(true))
@@ -68,6 +68,56 @@ class CodexLifecycleTest {
         backend.close()
         fake.verifyCleanup()
       }
+    }
+  }
+
+  @Test
+  fun `children share an owned home linking only the source credential and pin the database home`() = runTest {
+    withContext(Dispatchers.Default) {
+      for ((viaHome, sqliteHomeSet) in listOf(false to false, true to true, true to false)) {
+        val fake = FakeCodexLauncher(sqliteHomeSet = sqliteHomeSet, viaHome = viaHome)
+        val backend = fake.prepare()
+        try {
+          assertOwnedHome(fake, sqliteHome = if (sqliteHomeSet) "/unused-codex-owned-database" else fake.sourceHome.toString())
+        } finally {
+          backend.close()
+        }
+        fake.verifyCleanup()
+      }
+    }
+  }
+
+  @Test
+  fun `missing source credential or home fails auth`() = runTest {
+    withContext(Dispatchers.Default) {
+      val fake = FakeCodexLauncher("source-auth-missing")
+      val backend = fake.prepare()
+      try {
+        assertThat(assertFailsWith<CodexFailure> { backend.validateRoles(listOf(SelectedRoleModel.Codex("gpt-6-luna") to "low")) }.kind).isEqualTo(CodexFailureKind.AUTH)
+      } finally {
+        backend.close()
+      }
+      fake.verifyCleanup()
+      val unresolved = FakeCodexLauncher()
+      val failure = assertFailsWith<CodexFailure> { CodexModelBackend.prepare(executable = { Path.of("injected-jvm-fake") }, launch = unresolved::launch, host = "Mac OS X", environment = mapOf("CODEX_HOME" to "", "HOME" to "")) }
+      assertThat(failure.kind).isEqualTo(CodexFailureKind.AUTH)
+      assertThat(unresolved.children.size).isEqualTo(0)
+    }
+  }
+
+  private fun assertOwnedHome(fake: FakeCodexLauncher, sqliteHome: String) {
+    assertThat(fake.children.size).isEqualTo(4)
+    val home = Path.of(fake.children.first().environment.getValue("CODEX_HOME"))
+    assertThat(home.fileName.toString().startsWith("verity-codex-")).isTrue()
+    assertThat(home).isNotEqualTo(fake.sourceHome)
+    assertThat(PosixFilePermissions.toString(Files.getPosixFilePermissions(home, LinkOption.NOFOLLOW_LINKS))).isEqualTo("rwx------")
+    // Codex adds runtime state later, so only the first launch sees what Verity created.
+    assertThat(fake.children.first().homeEntries).isEqualTo(listOf("auth.json"))
+    fake.children.forEach { child ->
+      assertThat(child.environment.keys.intersect(REMOVED_ENVIRONMENT).isEmpty()).isTrue()
+      assertThat(child.environment["CODEX_HOME"]).isEqualTo(home.toString())
+      assertThat(child.authTarget).isEqualTo(fake.sourceHome.resolve("auth.json"))
+      assertThat(child.environment["CODEX_SQLITE_HOME"]).isEqualTo(sqliteHome)
     }
   }
 
