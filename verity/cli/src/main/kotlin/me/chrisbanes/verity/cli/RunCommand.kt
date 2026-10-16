@@ -7,9 +7,12 @@ import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.arguments.optional
+import com.github.ajalt.clikt.parameters.options.convert
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
+import com.github.ajalt.clikt.parameters.options.optionalValue
 import java.io.File
+import java.net.URI
 import java.time.Clock
 import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
@@ -111,6 +114,8 @@ class RunCommand(
     },
   private val sessionFactory: suspend (Platform, String?, Boolean) -> DeviceSession = DeviceSessionFactory::connect,
   private val clientFactory: (VerityProvider, String) -> LLMClient = { provider, apiKey -> provider.createClient(apiKey) },
+  private val environment: (String) -> String? = System::getenv,
+  private val precheckFactory: (ResolvedPrecheck, ModelTraceSink?, PhaseTimer) -> SystemOnePrecheck = { config, trace, timer -> SystemOnePrecheck(config, trace, timer) },
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -127,6 +132,18 @@ class RunCommand(
     "--timing",
     help = "Print per-step model and device durations after the run",
   ).flag()
+  private val precheck: Boolean? by option(
+    "--precheck",
+    help = "Ask a System One classifier before the inspector for loop and wait conditions; sends the accessibility tree to its server",
+  ).convert { it.toBooleanStrict() }
+    // Only an attached value (`--precheck=false`) is read, so the journey argument isn't consumed.
+    .optionalValue(true, acceptsUnattachedValue = false)
+  private val precheckModel by option("--precheck-model", help = "System One model for --precheck")
+  private val precheckBaseUrl by option("--precheck-base-url", help = "System One server for --precheck; the configured API key is not sent to it")
+
+  // Set once per run before any device work; null when the pre-check is off.
+  private var precheckConfig: ResolvedPrecheck? = null
+  private var precheckClient: SystemOnePrecheck? = null
 
   // Only a real run records; the default no-op keeps ordinary runs identical.
   private val recorder: RecordingPhaseTimer? by lazy { if (timing) RecordingPhaseTimer() else null }
@@ -207,6 +224,15 @@ class RunCommand(
       }
     } catch (e: IllegalArgumentException) {
       throw CliktError(e.message ?: "Invalid project configuration", statusCode = EXIT_SETUP)
+    }
+    precheckConfig = if (dryRun) {
+      null
+    } else {
+      try {
+        resolvePrecheck(config.precheck, PrecheckCliOptions(precheck, precheckModel, precheckBaseUrl), environment)
+      } catch (e: IllegalArgumentException) {
+        throw CliktError(e.message ?: "Invalid pre-check configuration", statusCode = EXIT_SETUP)
+      }
     }
     val metadata = resolved.toRunArtifactMetadata()
     try {
@@ -336,6 +362,7 @@ class RunCommand(
     } finally {
       // Also on failure: a slow failing run is the one worth measuring.
       recorder?.let { echo(it.report().render()) }
+      if (recorder != null) precheckClient?.let { echo(it.stats.render()) }
     }
   }
 
@@ -613,6 +640,7 @@ class RunCommand(
     inspectorEffort = metadata?.inspectorEffort,
     openaiAuth = metadata?.openaiAuth,
     modelBackend = metadata?.modelBackend,
+    precheck = precheckClient?.stats?.snapshot(),
   )
 
   private fun ResolvedJourneyResult.toArtifactResult(): JourneyArtifactResult = JourneyArtifactResult(
@@ -694,6 +722,7 @@ class RunCommand(
     echo("Total: ${suiteResult.results.size}")
     echo("Passed: ${suiteResult.passedCount}")
     echo("Failed: ${suiteResult.failedCount}")
+    precheckClient?.let { echo(it.stats.render()) }
   }
 
   private suspend fun runSuiteWithDevice(
@@ -747,6 +776,9 @@ class RunCommand(
       echo("Provider: ${provider.name}")
       echo("Navigator model: ${navigatorModel.id}")
       echo("Inspector model: ${inspectorModel.id}")
+      val client = precheckConfig?.let { precheckFactory(it, preflight.trace, timer) }
+      precheckClient = client
+      precheckConfig?.let { echo("Pre-check: ${it.model} at ${URI(it.baseUrl).authority}") }
       projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
       val session = sessionFactory(platform, preflight.deviceId ?: resolved.deviceId, resolved.disableAnimations).let { if (timing) TimingDeviceSession(it, timer) else it }
@@ -772,6 +804,7 @@ class RunCommand(
               context = projectContext.text,
               artifactRecorder = artifactRecorder,
               timer = timer,
+              precheck = client,
             )
             orchestrator.run(resolved.journey)
           }.copy(metadata = resolved.toRunArtifactMetadata()).also { completedResults = it.results }
