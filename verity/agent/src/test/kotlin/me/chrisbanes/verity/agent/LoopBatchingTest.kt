@@ -102,6 +102,21 @@ class LoopBatchingTest {
     assertThat(segment.loop?.pressesPerCheck).isNull()
   }
 
+  @Test fun `literal-only conditions check after every press without a model`() = runTest {
+    // Each press reveals one more card, so Card 6 first appears after four presses.
+    val session = session { presses -> list(0..(presses + 2), presses) }
+    val segment = run(session, "\"Card 6\"", 20)
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.loop?.iterations).isEqualTo(4)
+    assertThat(segment.loop?.pressesPerCheck).isNull()
+    assertThat(segment.reasoning).contains("Text 'Card 6' found")
+    val far = linear(last = 3)
+    val exhausted = run(far, "'Card 9'", 4)
+    assertThat(exhausted.passed).isFalse()
+    assertThat(exhausted.loop?.iterations).isEqualTo(4)
+    assertThat(exhausted.loop?.pressesPerCheck).isNull()
+  }
+
   @Test fun `off-screen target batches past the visible cards and plans again from each new tree`() = runTest {
     // Four cards are visible, and the list scrolls to keep one card above focus.
     val session = session { presses ->

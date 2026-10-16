@@ -50,7 +50,7 @@ Legacy top-level `provider`, `navigator-model`, `inspector-model`, `navigator-ef
 
 ## Pre-check
 
-An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are `visually`, literal or focus conditions. `run --dry-run` and MCP never resolve or call it.
+An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are `visually`, literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `run --dry-run` and MCP never resolve or call it; dry run reads only the enabled flag to label condition tiers.
 
 | Key | Default | Notes |
 | --- | --- | --- |

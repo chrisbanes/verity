@@ -28,6 +28,7 @@ import me.chrisbanes.verity.core.model.JourneySegment
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.model.VerdictTarget
+import me.chrisbanes.verity.core.parser.LiteralConditionParser
 import me.chrisbanes.verity.core.result.ArtifactError
 import me.chrisbanes.verity.core.result.ArtifactErrorKind
 import me.chrisbanes.verity.core.result.ConditionTier
@@ -374,7 +375,7 @@ class Orchestrator(
     fun result(executionFailure: String? = null): LoopResult {
       val satisfied = executionFailure == null && evaluation.verdict.passed
       val reasoning = executionFailure ?: if (evaluation.tier == ConditionTier.LITERAL && satisfied) {
-        "Text '${loop.until}' found after $completedBodies iterations"
+        "Text '${LiteralConditionParser.parse(loop.until) ?: loop.until}' found after $completedBodies iterations"
       } else {
         "Condition '${loop.until}' ${if (satisfied) "satisfied" else "not satisfied"} after $completedBodies iterations: ${evaluation.verdict.reasoning}"
       }

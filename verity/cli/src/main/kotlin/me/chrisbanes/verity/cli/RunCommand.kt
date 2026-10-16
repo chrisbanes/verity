@@ -407,6 +407,7 @@ class RunCommand(
     try {
       val planner = DryRunPlanner(
         context = projectContext.text,
+        precheck = precheckEnabled(config.precheck, PrecheckCliOptions(precheck)),
         // DryRunPlanner memoizes the navigator, so the backend is acquired at most once.
         navigatorFactory = {
           createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform, { trace = it }) { backend = it }
