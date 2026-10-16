@@ -5,6 +5,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import java.nio.file.Files
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -16,12 +17,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.preflight.LocalProcessRunner
+import me.chrisbanes.verity.device.preflight.ProcessRunner
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Tag
@@ -38,27 +42,16 @@ class IosBoundedConditionCaptureSmoke {
     fun boot() {
       lifecycle = runBlocking { DeviceLifecycle.discoverOrBootIos() }
       session = runBlocking { lifecycle.connect() }
-      runBlocking { withContext(Dispatchers.IO) { recordIdentity() } }
+      runBlocking { recordIdentity() }
     }
 
-    private fun recordIdentity() {
-      val process = ProcessBuilder("xcrun", "simctl", "list", "devices", "booted", "--json").redirectErrorStream(true).start()
-      try {
-        check(process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) { "Owned identity query timed out" }
-        check(process.exitValue() == 0)
-        val devices = Json.parseToJsonElement(process.inputStream.bufferedReader().readText()).jsonObject["devices"]!!.jsonObject
-        val model = System.getenv("VERITY_SMOKE_IOS_MODEL")
-        val runtime = System.getenv("VERITY_SMOKE_IOS_RUNTIME")
-        val requested = System.getProperty("verity.smoke.ios.udid")
-        val selected = selectConditionCaptureIosTarget(devices, requested, model, runtime)
-        println("IosBoundedConditionCaptureSmoke device_identity=${selected["udid"]!!.jsonPrimitive.content} platform=${session.platform}")
-      } finally {
-        if (process.isAlive) {
-          process.destroy()
-          if (!process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly()
-          check(process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)) { "Owned identity query did not exit" }
-        }
-      }
+    private suspend fun recordIdentity() {
+      val devices = queryIosConditionCaptureDevices()
+      val model = System.getenv("VERITY_SMOKE_IOS_MODEL")
+      val runtime = System.getenv("VERITY_SMOKE_IOS_RUNTIME")
+      val requested = System.getProperty("verity.smoke.ios.udid")
+      val selected = selectConditionCaptureIosTarget(devices, requested, model, runtime)
+      println("IosBoundedConditionCaptureSmoke device_identity=${selected["udid"]!!.jsonPrimitive.content} platform=${session.platform}")
     }
 
     @AfterAll @JvmStatic
@@ -140,6 +133,21 @@ class IosBoundedConditionCaptureSmoke {
       }
     }
   }
+}
+
+internal suspend fun queryIosConditionCaptureDevices(runner: ProcessRunner = LocalProcessRunner): JsonObject {
+  repeat(3) { attempt ->
+    val result = withTimeoutOrNull(15.seconds) {
+      runner.run(listOf("xcrun", "simctl", "list", "devices", "booted", "--json"))
+    }
+    if (result != null) {
+      check(result.exitCode == 0) { "Owned identity query failed (${result.exitCode}): ${result.output}" }
+      return Json.parseToJsonElement(result.output).jsonObject["devices"]!!.jsonObject
+    }
+    System.err.println("Owned identity query attempt ${attempt + 1}/3 timed out")
+    if (attempt < 2) delay(1.seconds)
+  }
+  error("Owned identity query timed out after 3 attempts")
 }
 
 internal fun selectConditionCaptureIosTarget(devices: JsonObject, requested: String?, model: String?, runtime: String?): JsonObject {

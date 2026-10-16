@@ -711,7 +711,15 @@ internal class PackagedChild(val process: Process, val stdout: File, val stderr:
       }
     }
     check(!process.isAlive && descendants.none { it.isAlive }) { "Owned process tree remains alive" }
-    if (scratch != null && scratch.exists()) check(scratch.deleteRecursively()) { "Owned temporary payload cleanup failed" }
+    if (scratch != null && scratch.exists()) {
+      // Keep XCTest diagnostics after joining writers, without retaining extracted driver payloads.
+      for (log in checkNotNull(scratch.listFiles()).filter { it.isFile && it.name.startsWith("xctest_runner_") && it.extension == "log" }) {
+        val logs = File(stdout.parentFile, "${stdout.nameWithoutExtension}-xctest")
+        check(logs.isDirectory || logs.mkdirs()) { "Could not create retained XCTest log directory" }
+        log.copyTo(File(logs, log.name), overwrite = true)
+      }
+      check(scratch.deleteRecursively()) { "Owned temporary payload cleanup failed" }
+    }
   }
 }
 
@@ -1242,6 +1250,23 @@ class PackagedQualificationLifetimeTest {
 
 /** Failure and delayed-response cleanup run offline, before CI device qualification. */
 class PackagedChildLifecycleTest {
+  @Test
+  fun `cleanup retains XCTest logs and deletes temporary driver payloads`() = fixture { child ->
+    withContext(Dispatchers.IO) {
+      val scratch = File(child.stdout.parentFile, "scratch").apply { mkdirs() }
+      val log = File(scratch, "xctest_runner_2026-10-16_090000.log").apply { writeText("driver startup diagnostic") }
+      File(scratch, "driver-payload").writeText("temporary payload")
+      val owned = PackagedChild(child.process, child.stdout, child.stderr, scratch)
+      owned.stop()
+      owned.stop()
+      val retained = File(child.stdout.parentFile, "${child.stdout.nameWithoutExtension}-xctest")
+      assertThat(retained.listFiles()!!.map { it.name }).isEqualTo(listOf(log.name))
+      assertThat(File(retained, log.name).readText()).isEqualTo("driver startup diagnostic")
+      assertThat(scratch.exists()).isFalse()
+      assertThat(owned.aliveOwnedCount()).isEqualTo(0)
+    }
+  }
+
   @Test
   fun `assertion failure while owned child is active still joins cleanup`() = fixture { child ->
     assertFailsWith<IllegalStateException> {

@@ -56,23 +56,31 @@ satisfy the required checks. Pushes to `main` always run them. The
 `reactivecircus/android-emulator-runner`. The `smoke-ios` job uses `macos-latest`
 and `futureware-tech/simulator-action` to select an available iOS simulator,
 erase it and start booting it first, then waits for boot just before the tests
-and shuts it down after the job. No simulator model or runtime version is pinned.
+and shuts it down after the job. After boot, a best-effort settling check waits
+up to 60 seconds for the selected simulator's background CPU usage to stay below
+20% for three samples, two seconds apart. It logs a warning and continues on
+timeout. No simulator model or runtime version is pinned.
 
 Gradle commands run directly in the workflow. Android tests use the emulator
 action's `ANDROID_SERIAL`; iOS tests receive the simulator action's UUID through
 `IOS_SIMULATOR_UDID`. Packaged and ordinary tagged smoke tests run in one Gradle
 invocation, packaged first. They are not forced to rerun, so a build cache hit
 can stand in for a device run; its `reports/packaged/` qualification reports are
-then absent. Native tests are excluded from the default offline `check`.
+then absent. The tagged iOS identity query uses the cancellable, file-backed
+process runner with up to three 15-second attempts, retrying only query timeouts;
+target mismatches still fail. Native tests are excluded from the default offline
+`check`.
 
 Linux Android tests exercise the Linux and universal JARs and their shrunk
 counterparts. On pushes to `main`, macOS iOS tests exercise the macOS and
 universal JARs and their shrunk counterparts; pull requests run only the shrunk
 macOS JAR, the archive releases ship for that host. Normal CI does not test
 macOS-specific Android interoperability. There is no shared Android-to-iOS runner or handoff,
-and no bootstrap observer or supplementary health diagnostics. The packaged
-harness retains its own process cleanup, caller cancellation and functional test
-reports.
+and no bootstrap observer. CI retains XCTest runner logs from tagged iOS tests
+under `build/tmp/ios-smoke/` and from each packaged child under its variant's
+`reports/packaged/` directory. Packaged cleanup joins child processes, copies only
+XCTest logs out of their scratch directories, and deletes temporary payloads.
+The packaged harness retains its caller cancellation and functional test reports.
 
 `:verity:cli:hostJars` builds universal, macOS ARM64 and Linux x86-64 archives.
 `verifyHostJars` checks their resource inventories and packaged ABI;

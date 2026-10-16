@@ -316,12 +316,18 @@ Historical observations use different inputs and are not subtraction baselines:
 
 The `smoke-android` job tests the Linux and universal JARs and their shrunk
 counterparts against an action-managed API 34 Android emulator. The independent
-`smoke-ios` job tests the macOS and universal JARs and their shrunk counterparts
-against an available, erased iOS simulator on `macos-latest`. The actions
+`smoke-ios` job tests the shrunk macOS JAR on pull requests and all four
+macOS-compatible archives on pushes to `main`, against an available, erased
+iOS simulator on `macos-latest`. The actions
 handle boot and shutdown, and their selected device IDs are passed directly to
 Gradle. No macOS Android job runs in normal CI, so macOS-specific
 Android interoperability is outside that CI coverage. The supported host matrix
 is unchanged. The packaged harness still owns and joins its child processes.
+Before iOS tests, a best-effort settling check allows up to 60 seconds for
+background CPU usage to fall; a timeout warns and continues. The iOS artifact
+retains XCTest runner logs from tagged tests and each packaged child. Packaged
+cleanup copies those logs after joining its processes and then deletes the
+remaining temporary payloads. Driver connection retry behavior is unchanged.
 
 ## Historical qualification and limits
 
