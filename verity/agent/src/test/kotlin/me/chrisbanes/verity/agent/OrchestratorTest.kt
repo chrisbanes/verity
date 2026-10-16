@@ -1674,7 +1674,18 @@ class OrchestratorTest {
 
   @Test
   fun `visual loop keeps the animation wait after each key press`() = runTest {
-    val fake = selectSession(text("Item 0"), listOf(text("Item 1")))
+    for ((body, key) in listOf("Press select" to "Remote Dpad Center", "Press D-pad down" to "Remote Dpad Down")) {
+      visualLoopKeepsAnimationWait(body, key)
+    }
+  }
+
+  private suspend fun visualLoopKeepsAnimationWait(body: String, key: String) {
+    // Focus moves on every press, so a direction press would otherwise end its settle on the focus change.
+    lateinit var fake: me.chrisbanes.verity.device.FakeDeviceSession
+    fake = me.chrisbanes.verity.device.FakeDeviceSession(Platform.ANDROID_TV, hierarchyProvider = {
+      fake.events += "capture"
+      HierarchyNode(attributes = mapOf("resource-id" to "node-${fake.pressedKeys.size}"), states = setOf("focused"))
+    })
     val session = object : DeviceSession by fake {
       override suspend fun captureScreenshot(output: Path) {
         Files.write(output, byteArrayOf(1))
@@ -1684,11 +1695,11 @@ class OrchestratorTest {
       evaluateTreeContent = { _, _, _ -> error("unexpected tree") },
       evaluateVisualContent = { _, _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not yet"}""") },
     )
-    val journey = Journey("visual", APP_ID, Platform.ANDROID_TV, steps = listOf(JourneyStep.Loop("Press select", "visually the item is done", 2)))
+    val journey = Journey("visual", APP_ID, Platform.ANDROID_TV, steps = listOf(JourneyStep.Loop(body, "visually the item is done", 2)))
 
     loopOrchestrator(session, inspector).run(journey)
 
-    val presses = fake.events.withIndex().filter { it.value == "name:Remote Dpad Center" }
+    val presses = fake.events.withIndex().filter { it.value == "name:$key" }
     assertThat(presses.size).isEqualTo(2)
     assertThat(presses.map { fake.events[it.index + 1] }).containsExactly("settle", "settle")
   }

@@ -100,9 +100,15 @@ class KeySettleTest {
   }
 
   @Test fun `visual settles keep the animation wait without capturing`() = runTest {
-    val s = session()
-    assertThat(run(s, center, visual = true)).isNull()
-    assertThat(s.events).isEqualTo(listOf("name:Remote Dpad Center", "settle"))
+    for (key in listOf(center, down)) {
+      val s = session()
+      assertThat(run(s, key, visual = true)).isNull()
+      assertThat(s.events).isEqualTo(listOf("name:${key.keyName}", "settle"))
+    }
+    val keycode = session()
+    run(keycode, Interaction.KeyCode(20), visual = true)
+    assertThat(keycode.events).isEqualTo(listOf("key:20:false", "settle"))
+    // The direction presses would change focus, but a visual settle never observes it.
     assertThat(captures).isEqualTo(0)
   }
 

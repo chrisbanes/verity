@@ -23,7 +23,7 @@ internal data class KeySettleResult(val focus: FocusObservation?, val tree: Hier
 
 /**
  * Runs [press] exactly once, then settles. For a [direction] press on Android TV, a focus change
- * replaces the animation wait. Otherwise on Android TV, unless [visual] needs pixel stability, the
+ * replaces the animation wait unless [visual]. Otherwise on Android TV, unless [visual] needs pixel stability, the
  * press settles when two consecutive post-press hierarchies are structurally equal; a budget expiry
  * proceeds without a wait, and a capture failure falls back to the animation wait. Other platforms
  * keep the animation wait. A [baseline] from the previous press's settle skips the baseline capture.
@@ -37,8 +37,11 @@ internal suspend fun DeviceSession.pressAndSettle(
   press: suspend () -> Unit,
 ): KeySettleResult {
   val before = when {
-    !direction || platform != Platform.ANDROID_TV -> null
+    // A visual settle needs pixel stability, so even a focus change keeps the animation wait.
+    !direction || visual || platform != Platform.ANDROID_TV -> null
+
     baseline != null -> baseline
+
     else -> (focusObserver.capture(this, FOCUS_BUDGET) as? FocusCaptureResult.Captured)?.observation
   }
   press()
