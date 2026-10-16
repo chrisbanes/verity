@@ -170,6 +170,13 @@ class KeySettleTest {
     assertThat(s.events).isEqualTo(listOf("flow", "key:66:false", "flow"))
   }
 
+  @Test fun `ordered visual direct presses keep the animation wait`() = runTest {
+    val s = session()
+    s.executeOrdered(ActionFlow("app", listOf(Interaction.KeyCode(20), down)), observer(), visual = true)
+    assertThat(s.events).isEqualTo(listOf("key:20:false", "settle", "name:Remote Dpad Down", "settle"))
+    assertThat(captures).isEqualTo(0)
+  }
+
   @Test fun `ordered stable settle supplies the next press's focus baseline`() = runTest {
     val s = session()
     s.executeOrdered(ActionFlow("app", listOf(Interaction.KeyCode(127), down)), observer())

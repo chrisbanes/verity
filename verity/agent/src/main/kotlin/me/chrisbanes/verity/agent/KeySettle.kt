@@ -22,11 +22,12 @@ internal fun Interaction.KeyCode.isDirection() = !longPress && keycode in DIRECT
 internal data class KeySettleResult(val focus: FocusObservation?, val tree: HierarchyNode?)
 
 /**
- * Runs [press] exactly once, then settles. For a [direction] press on Android TV, a focus change
- * replaces the animation wait unless [visual]. Otherwise on Android TV, unless [visual] needs pixel stability, the
- * press settles when two consecutive post-press hierarchies are structurally equal; a budget expiry
- * proceeds without a wait, and a capture failure falls back to the animation wait. Other platforms
- * keep the animation wait. A [baseline] from the previous press's settle skips the baseline capture.
+ * Runs [press] exactly once, then settles. A [visual] settle needs pixel stability, so it always
+ * keeps the animation wait and never observes focus. Otherwise, for a [direction] press on Android
+ * TV, a focus change replaces the animation wait. Any other Android TV press settles when two
+ * consecutive post-press hierarchies are structurally equal; a budget expiry proceeds without a
+ * wait, and a capture failure falls back to the animation wait. Other platforms keep the animation
+ * wait. A [baseline] from the previous press's settle skips the baseline capture.
  * shortcut: a press that changes nothing costs the focus budget plus at least 2 captures.
  */
 internal suspend fun DeviceSession.pressAndSettle(
@@ -37,11 +38,8 @@ internal suspend fun DeviceSession.pressAndSettle(
   press: suspend () -> Unit,
 ): KeySettleResult {
   val before = when {
-    // A visual settle needs pixel stability, so even a focus change keeps the animation wait.
     !direction || visual || platform != Platform.ANDROID_TV -> null
-
     baseline != null -> baseline
-
     else -> (focusObserver.capture(this, FOCUS_BUDGET) as? FocusCaptureResult.Captured)?.observation
   }
   press()
