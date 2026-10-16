@@ -33,11 +33,15 @@ class ConditionEvaluator(
   /** Opt-in fast classifier consulted for tree-tier conditions before the inspector; null leaves every path unchanged. */
   private val precheck: ConditionPrecheck? = null,
 ) {
-  /** [loopHints] asks a tree-tier inspector for the optional batching fields; see [InspectorAgent.LOOP_HINTS]. */
-  suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext(), loopHints: Boolean = false): ConditionEvaluation {
+  /**
+   * [loopHints] asks a tree-tier inspector for the optional batching fields; see [InspectorAgent.LOOP_HINTS].
+   * A [tree] already settled after the preceding action answers the non-visual tiers instead of a fresh capture.
+   */
+  suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext(), loopHints: Boolean = false, tree: HierarchyNode? = null): ConditionEvaluation {
     require(condition.isNotBlank()) { "Condition must not be blank" }
     val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot)
-    return evaluateOn(condition, context, inspection, session::captureHierarchyTree, loopHints) {}
+    val captureTree: suspend () -> HierarchyNode = if (tree != null) ({ tree }) else session::captureHierarchyTree
+    return evaluateOn(condition, context, inspection, captureTree, loopHints) {}
   }
 
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {

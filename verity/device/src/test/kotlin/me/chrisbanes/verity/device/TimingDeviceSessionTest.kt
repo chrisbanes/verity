@@ -9,6 +9,7 @@ import assertk.assertions.isTrue
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.ActionFlow
@@ -73,6 +74,13 @@ class TimingDeviceSessionTest {
       "executeActions" to 1,
     )
     assertThat(phases.first()).isEqualTo(PhaseTiming(PhaseKind.DEVICE, "pressKey", 2, 20.milliseconds))
+  }
+
+  @Test
+  fun recordsStabilitySettleAsItsOwnPhase() = runTest {
+    timer.step("s") { session.awaitStableHierarchy(2.seconds) }
+    val phases = timer.report().steps.single().phases
+    assertThat(phases.map { Triple(it.kind, it.name, it.count) }).containsExactly(Triple(PhaseKind.DEVICE, "awaitStableHierarchy", 1))
   }
 
   @Test

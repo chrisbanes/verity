@@ -177,6 +177,23 @@ class LoopBatchingTest {
     assertThat(session.pressedKeys.size).isEqualTo(5)
   }
 
+  @Test fun `an edge press's settled tree answers the following check without a capture`() = runTest {
+    val session = linear(last = 1)
+    var checkCaptures = 0
+    // Condition checks use the unbounded capture; settles and trail captures are bounded.
+    val device = object : DeviceSession by session {
+      override suspend fun captureHierarchyTree(): HierarchyNode = session.captureHierarchyTree().also { checkCaptures++ }
+    }
+    val navigator = NavigatorAgent("unused") { _, _ -> modelReply(error("unexpected navigator")) }
+    val inspector = Inspector { """{"passed":false,"reasoning":"no"}""" }
+    val journey = Journey("batch", "app", Platform.ANDROID_TV, listOf(JourneyStep.Loop("Press D-pad down", "the playback is near the end", 2)))
+    val segment = Orchestrator(device, { navigator }, { inspector.agent }).run(journey).segments.single()
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(1, 1))
+    assertThat(inspector.messages.size).isEqualTo(3)
+    // The first check and the one after the focus-changing press capture; the edge press's check reuses its settle.
+    assertThat(checkCaptures).isEqualTo(2)
+  }
+
   @Test fun `a wrap back to an earlier focus stops the batch`() = runTest {
     val session = session { presses -> list(0..3, presses % 4) }
     val inspector = Inspector { """{"passed":false,"reasoning":"no","estimatedIterations":6}""" }

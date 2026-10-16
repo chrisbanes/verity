@@ -218,6 +218,39 @@ class ConditionEvaluatorTest {
   }
 
   @Test
+  fun `a supplied settled tree answers every nonvisual tier without capturing`() = runTest {
+    val session = object : DeviceSession by StateSession() {
+      override suspend fun captureHierarchyTree(): HierarchyNode = error("unexpected capture")
+    }
+    var visualChecks = 0
+    var precheckState = ""
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> error("unexpected tree inspection") },
+      evaluateVisualContent = { _, _, _, _ ->
+        visualChecks++
+        inspectionReply("""{"passed":true,"reasoning":"visual"}""")
+      },
+    )
+    val precheck = ConditionPrecheck { state, _, _ ->
+      precheckState = state
+      PrecheckVerdict(passed = true, probability = 0.99, model = "m", host = "h")
+    }
+    val evaluator = ConditionEvaluator(session, inspector, precheck = precheck)
+    val settled = HierarchyNode(attributes = mapOf("text" to "Done"))
+    val literal = evaluator.evaluate("Done", tree = settled)
+    assertThat(literal.tier).isEqualTo(ConditionTier.LITERAL)
+    assertThat(literal.verdict.passed).isEqualTo(true)
+    assertThat(literal.tree).isEqualTo(settled)
+    val prechecked = evaluator.evaluate("the queue is finished", loopHints = true, tree = settled)
+    assertThat(prechecked.tier).isEqualTo(ConditionTier.PRECHECK)
+    assertThat(prechecked.tree).isEqualTo(settled)
+    assertThat(precheckState).contains(HierarchyRenderer.render(settled, HierarchyFilter.PROMPT))
+    val visual = evaluator.evaluate("visually Done", tree = settled)
+    assertThat(visual.tier).isEqualTo(ConditionTier.VISUAL)
+    assertThat(visualChecks).isEqualTo(1)
+  }
+
+  @Test
   fun `tree tier sends and saves the prompt rendering without bounds-only wrappers`() = runTest {
     val wrapped = HierarchyNode(
       attributes = mapOf("bounds" to "[0,0][1000,500]"),

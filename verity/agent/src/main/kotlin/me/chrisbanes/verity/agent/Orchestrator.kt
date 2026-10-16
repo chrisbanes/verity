@@ -236,12 +236,15 @@ class Orchestrator(
     navigator: NavigatorAgent,
     memory: JourneyMemory,
     source: TrailSource,
-  ) {
+    visual: Boolean = false,
+  ): HierarchyNode? {
     validateActionFlow(ActionFlow(appId, interactions), session)
+    var settled: HierarchyNode? = null
     // Mapping is one interaction per instruction, so the two lists align.
     interactions.forEachIndexed { index, interaction ->
-      executeWithScrollToFind(interaction, instructions[index], appId, navigator, memory, source)
+      settled = executeWithScrollToFind(interaction, instructions[index], appId, navigator, memory, source, visual)
     }
+    return settled
   }
 
   private suspend fun executeWithScrollToFind(
@@ -251,11 +254,12 @@ class Orchestrator(
     navigator: NavigatorAgent,
     memory: JourneyMemory,
     source: TrailSource,
-  ) {
+    visual: Boolean,
+  ): HierarchyNode? {
     val executor = InteractionExecutor(session, appId)
 
-    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution<Unit>(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction)) {
-      executor.execute(executed)
+    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction)) {
+      executor.execute(executed, visual)
     }
 
     // For interactions that don't target a named element, just execute directly
@@ -266,17 +270,15 @@ class Orchestrator(
 
       is Interaction.LongPressOnText -> interaction.text
 
-      else -> {
-        record(interaction)
-        return
-      }
+      // Only this branch returns the settled tree: a scroll-to-find path never hands back a pre-scroll tree.
+      else -> return record(interaction)
     }
 
     // Check if target is already on screen
     var tree = session.captureHierarchyTree()
     if (tree.containsText(targetText)) {
       record(interaction)
-      return
+      return null
     }
 
     // Scroll-to-find loop (max 5 attempts); the post-scroll capture answers both the visibility check and the next prompt.
@@ -289,12 +291,13 @@ class Orchestrator(
       tree = session.captureHierarchyTree()
       if (tree.containsText(targetText)) {
         record(interaction)
-        return
+        return null
       }
     }
 
     // Fall through: execute anyway (Maestro may find it via its own matching)
     record(interaction)
+    return null
   }
 
   private suspend fun executeSlowPath(
@@ -306,6 +309,7 @@ class Orchestrator(
     label: String,
     memory: JourneyMemory,
     source: TrailSource,
+    visual: Boolean = false,
   ): SlowPathResult {
     val hierarchy = try {
       // Capture and render share one budget; render checkpoints observe caller cancellation and expiry.
@@ -343,7 +347,7 @@ class Orchestrator(
     // Nothing ran, so nothing is recorded.
     if (toRun.actions.isEmpty()) return SlowPathResult(FlowResult(success = true), reference)
     // One flow entry even when raw keycodes split it; focus is observed only around the whole flow.
-    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeOrdered(toRun) }
+    val flowResult = memory.recordExecution(source, TrailGranularity.FLOW, instructions, outcome = { it.success }) { session.executeOrdered(toRun, visual = visual) }
     return SlowPathResult(flowResult, reference)
   }
 
@@ -361,7 +365,7 @@ class Orchestrator(
     val visual = ConditionEvaluator.isVisual(loop.until)
     val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeIf { ConditionEvaluator.canBatchPresses(loop.until) }
     val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck)
-    suspend fun check() = evaluator.evaluate(loop.until, memory.inspectionContext(visual), loopHints = direction != null)
+    suspend fun check(tree: HierarchyNode? = null) = evaluator.evaluate(loop.until, memory.inspectionContext(visual), loopHints = direction != null, tree = tree)
     var evaluation = check()
     var completedBodies = 0
     val generatedFlows = mutableListOf<String>()
@@ -400,12 +404,16 @@ class Orchestrator(
         val prediction = if (batching) predictPresses(direction, evaluation) else null
         val size = minOf(prediction?.presses ?: 1, loop.max - completedBodies)
         var pressed = 0
+        // The last press's stable settle tree, which answers the following check.
+        var settled: HierarchyNode? = null
         try {
           var baseline: FocusObservation? = null
           while (pressed < size) {
-            val after = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
+            val result = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
               session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }
             }
+            settled = result.tree
+            val after = result.focus
             pressed++
             completedBodies++
             // No change means an edge or a failed observation; returning to an earlier focus means a wrap.
@@ -423,28 +431,30 @@ class Orchestrator(
           return result(e.message.orEmpty())
         }
         pressesPerCheck += pressed
-        evaluation = check()
+        evaluation = check(settled)
         if (evaluation.verdict.passed) return result()
         if (prediction?.target != null) batching = false
       }
       return result()
     }
     repeat(loop.max) {
-      try {
+      // A slow-path body's settles are not reused: its flow may end in a Maestro sub-flow.
+      val settled = try {
         val source = TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies)
         if (fastPathInteractions != null) {
-          executeFastPath(instructions, fastPathInteractions, appId, navigator, memory, source)
+          executeFastPath(instructions, fastPathInteractions, appId, navigator, memory, source, visual)
         } else {
           val label = "loop-${completedBodies.toString().padStart(3, '0')}"
-          val slowPathResult = executeSlowPath(instructions, appId, platform, navigator, segmentIndex, label, memory, source)
+          val slowPathResult = executeSlowPath(instructions, appId, platform, navigator, segmentIndex, label, memory, source, visual)
           slowPathResult.reference?.let(generatedFlows::add)
           if (!slowPathResult.flowResult.success) throw InteractionExecutionFailure(slowPathResult.flowResult)
+          null
         }
       } catch (e: InteractionExecutionFailure) {
         return result(e.message.orEmpty())
       }
       completedBodies++
-      evaluation = evaluator.evaluate(loop.until, memory.inspectionContext(ConditionEvaluator.isVisual(loop.until)))
+      evaluation = check(settled)
       if (evaluation.verdict.passed) return result()
     }
     return result()
