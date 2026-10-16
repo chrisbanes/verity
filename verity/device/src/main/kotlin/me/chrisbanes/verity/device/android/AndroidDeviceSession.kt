@@ -157,28 +157,24 @@ class AndroidDeviceSession(
   suspend fun ensureAwake() = ensureAwake(executeShell)
 
   suspend fun getAnimationState(): AnimationState = withContext(Dispatchers.IO) {
-    AnimationState(
-      windowScale = executeShell("settings get global window_animation_scale").trim(),
-      transitionScale = executeShell("settings get global transition_animation_scale").trim(),
-      animatorScale = executeShell("settings get global animator_duration_scale").trim(),
-    )
+    val output = executeShell(ANIMATION_SETTINGS.joinToString("; ") { "settings get global $it" })
+    val values = output.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    check(values.size == ANIMATION_SETTINGS.size) {
+      "Expected ${ANIMATION_SETTINGS.size} animation scale values but got ${values.size}: $output"
+    }
+    AnimationState(windowScale = values[0], transitionScale = values[1], animatorScale = values[2])
   }
 
   suspend fun disableAnimations(): Unit = withContext(Dispatchers.IO) {
-    executeShell("settings put global window_animation_scale 0")
-    executeShell("settings put global transition_animation_scale 0")
-    executeShell("settings put global animator_duration_scale 0")
+    executeShell(ANIMATION_SETTINGS.joinToString("; ") { "settings put global $it 0" })
   }
 
   suspend fun restoreAnimationState(state: AnimationState): Unit = withContext(Dispatchers.IO) {
-    restoreScale("window_animation_scale", state.windowScale)
-    restoreScale("transition_animation_scale", state.transitionScale)
-    restoreScale("animator_duration_scale", state.animatorScale)
-  }
-
-  private fun restoreScale(setting: String, value: String) {
+    val values = listOf(state.windowScale, state.transitionScale, state.animatorScale)
     executeShell(
-      if (value == AnimationState.UNSET) "settings delete global $setting" else "settings put global $setting $value",
+      ANIMATION_SETTINGS.zip(values).joinToString("; ") { (setting, value) ->
+        if (value == AnimationState.UNSET) "settings delete global $setting" else "settings put global $setting $value"
+      },
     )
   }
 
@@ -222,3 +218,9 @@ data class AnimationState(
     }
   }
 }
+
+private val ANIMATION_SETTINGS = listOf(
+  "window_animation_scale",
+  "transition_animation_scale",
+  "animator_duration_scale",
+)
