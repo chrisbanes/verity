@@ -3,6 +3,7 @@ package me.chrisbanes.verity.agent
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -17,6 +18,7 @@ import me.chrisbanes.verity.core.parser.FocusConditionParser
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
+import me.chrisbanes.verity.core.result.PrecheckArtifact
 import me.chrisbanes.verity.device.DeviceSession
 
 /** Exactly one check: no actions, polling, delay or accumulated journey state. */
@@ -28,6 +30,8 @@ class ConditionEvaluator(
   private val temporaryScreenshot: suspend (suspend (Path) -> InspectionVerdict) -> InspectionVerdict = ::withTemporaryScreenshot,
   private val verifyScreenshot: suspend (Path) -> Unit = ::requireScreenshot,
   private val onInspectedScreenshot: suspend (Path) -> Unit = {},
+  /** Opt-in fast classifier consulted for tree-tier conditions before the inspector; null leaves every path unchanged. */
+  private val precheck: ConditionPrecheck? = null,
 ) {
   /** [loopHints] asks a tree-tier inspector for the optional batching fields; see [InspectorAgent.LOOP_HINTS]. */
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext(), loopHints: Boolean = false): ConditionEvaluation {
@@ -63,6 +67,8 @@ class ConditionEvaluator(
       return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint), tree)
     }
     val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.PROMPT, checkpoint)
+    // A loop that wants batching hints needs the inspector's verdict for an unmet check, so only a pass may be taken early.
+    precheck?.let { inspection.precheck(it, hierarchy, condition, context, acceptFail = !loopHints) }?.let { return it.copy(tree = tree) }
     val evaluation = inspection.inspectTree(hierarchy, condition, context, loopHints)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence, tree)
   }
@@ -99,6 +105,8 @@ data class ConditionEvaluation(
   val evidence: List<EvidenceArtifact> = emptyList(),
   /** The tree this check read; null for the visual tier. */
   val tree: HierarchyNode? = null,
+  /** Set only for [ConditionTier.PRECHECK]. */
+  val precheck: PrecheckArtifact? = null,
 )
 
 internal data class InspectionEvaluation(
@@ -125,6 +133,32 @@ internal class ScreenInspection(
 
   suspend fun inspectTree(hierarchy: String, description: String, context: InspectionContext, loopHints: Boolean = false): InspectionEvaluation {
     deadline?.checkpoint()
+    val evidence = saveHierarchyEvidence(hierarchy)
+    deadline?.checkpoint()
+    return InspectionEvaluation(inspector.evaluateTree(hierarchy, description, context, deadline?.onModelFailure, loopHints), evidence)
+  }
+
+  /** A confident pre-check verdict, or null to fall back to the inspector. Never throws except for cancellation and the deadline. */
+  suspend fun precheck(precheck: ConditionPrecheck, hierarchy: String, description: String, context: InspectionContext, acceptFail: Boolean): ConditionEvaluation? {
+    deadline?.checkpoint()
+    val verdict = try {
+      precheck.check(precheckState(hierarchy, context), description, acceptFail)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (_: Exception) {
+      null
+    }
+    deadline?.checkpoint()
+    if (verdict == null) return null
+    return ConditionEvaluation(
+      InspectionVerdict(verdict.passed, String.format(Locale.ROOT, "Pre-check probability %.2f (%s)", verdict.probability, verdict.model)),
+      ConditionTier.PRECHECK,
+      saveHierarchyEvidence(hierarchy),
+      precheck = PrecheckArtifact(verdict.probability, verdict.model, verdict.host),
+    )
+  }
+
+  private suspend fun saveHierarchyEvidence(hierarchy: String): List<EvidenceArtifact> {
     val reference = try {
       artifactRecorder.saveHierarchy(segmentIndex, hierarchy)
     } catch (e: CancellationException) {
@@ -132,11 +166,7 @@ internal class ScreenInspection(
     } catch (_: Exception) {
       null
     }
-    deadline?.checkpoint()
-    return InspectionEvaluation(
-      inspector.evaluateTree(hierarchy, description, context, deadline?.onModelFailure, loopHints),
-      reference?.let { listOf(EvidenceArtifact(EvidenceType.HIERARCHY, it)) } ?: emptyList(),
-    )
+    return reference?.let { listOf(EvidenceArtifact(EvidenceType.HIERARCHY, it)) } ?: emptyList()
   }
 
   suspend fun visual(description: String, context: InspectionContext = InspectionContext()): InspectionEvaluation {

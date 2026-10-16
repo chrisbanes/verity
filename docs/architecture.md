@@ -133,6 +133,8 @@ Maestro SDK uses gRPC with Netty 4.1; Ktor uses Netty 4.2. Resolved by:
 
 The CLI owns loading and resolving `verity/config.yaml`. Shared resolution applies CLI input first, project defaults second, and built-in defaults last; structured LLM settings preserve compatibility with legacy top-level keys. The resolved configuration supplies defaults to `run`, `list`, and the CLI command that starts MCP. Navigator and inspector reasoning-effort settings resolve independently from CLI flags, nested `llm` keys, legacy top-level keys, then unset. Their exact raw strings remain unchanged; normal run preflight validates explicit values for the selected provider, model and backend before device work.
 
+An optional `precheck` section enables a System One classifier for prose loop and wait conditions; it is off by default and resolved only for real runs (see below and the [spec](specs/project-configuration.md#pre-check)).
+
 See the [project-configuration spec](specs/project-configuration.md) for the schema, precedence, and assertion strategy, and the [preflight spec](specs/preflight-checks.md) for the supported effort/backend rows and rejection boundary. Runtime project-context loading is separate from the repository's domain glossary; its required/optional behavior is defined in the [project-context spec](specs/project-context.md).
 
 ---
@@ -331,7 +333,7 @@ The accessibility tree renders to indented text with configurable attribute filt
 |--------|-------------|----------|
 | `FOCUS` | text, resource-id, selected | Navigation assertions |
 | `CONTENT` | text, accessibilityText, resource-id, bounds | Content verification (default) |
-| `PROMPT` | same keys as `CONTENT` | Model prompts: inspector tree tier, tree assertions, navigator |
+| `PROMPT` | same keys as `CONTENT` | Model prompts: inspector tree tier, pre-check, tree assertions, navigator |
 | `ALL` | everything (minus empty/defaults) | Debugging |
 
 Empty strings, false booleans, and `enabled=true` are stripped. Empty container nodes with one or fewer children are collapsed.
@@ -410,7 +412,7 @@ Diagnostics contain fixed allowlisted stage/failure-class text. The one bounded 
 
 ### ConditionEvaluator
 
-`evaluate(condition, context)` performs exactly one action-free check. A leading `visually` word is stripped and forces a current screenshot; other conditions use complete-condition literal matching, a recognised deterministic focus form, then PROMPT hierarchy inspection. False recognised focus never falls back to an inspector. Assertions and conditions share current-state capture, optional evidence persistence and temporary screenshot cleanup. The evaluator has no polling, delay or history accumulation, allowing callers to own broader deadlines.
+`evaluate(condition, context)` performs exactly one action-free check. A leading `visually` word is stripped and forces a current screenshot; other conditions use complete-condition literal matching, a recognised deterministic focus form, then PROMPT hierarchy inspection. False recognised focus never falls back to an inspector. When a `ConditionPrecheck` is supplied (the CLI does so only with `--precheck` or `precheck.enabled`), `ScreenInspection.precheck` asks it first, with `precheckState(hierarchy, context)`, the same rendering and reference text the inspector would get minus the assertion line. A confident verdict becomes tier `precheck` with a `PrecheckArtifact` and the same hierarchy evidence; null, an error or uncertainty runs the inspector unchanged. A loop that requests batching hints passes `acceptFail = false`, so only a pass is taken early. `SystemOnePrecheck` (CLI module, JDK `HttpClient`, no new dependency) implements it: it posts a single `noul` question to `/v1/systemone`, applies the `pass-at`/`fail-at` thresholds, counts accepted, uncertain and error outcomes in `PrecheckStats`, and never throws except for cancellation. Config validation lives in `resolvePrecheck`. Assertions and conditions share current-state capture, optional evidence persistence and temporary screenshot cleanup. The evaluator has no polling, delay or history accumulation, allowing callers to own broader deadlines.
 
 ### ConditionWaiter
 
@@ -570,11 +572,16 @@ verity mcp [--transport <t>]   Start MCP server (stdio or http)
 --dry-run                Render mapped or generated actions as YAML without device access
 --model-trace <file>     Append a sensitive trace of model requests, replies and backend frames
 --timing                 Print per-step model and device durations after the run
+--precheck[=false]       Enable or disable the opt-in System One pre-check for loop and wait conditions
+--precheck-model <id>    Pre-check model (default jev-latest for TypeSafe)
+--precheck-base-url <u>  Pre-check server; the configured API key is not sent to it
 ```
 
 `--model-trace` is opened during local preflight, before Codex preparation and session creation. `TracingModelRequestBackend` records every request and its reply or redacted failure, whatever the backend. `CodexModelBackend.prepare(trace = …)` passes the same `ModelTraceSink` to `CodexAppServerClient`, which adds sent and received app-server frames and stderr. API providers add nothing below the request layer. The trace captures prompts, hierarchy dumps, image paths and model replies, so it is sensitive. It is never written into run artifacts. See the [preflight spec](specs/preflight-checks.md#model-trace) for the file contract.
 
 `--timing` is a boolean with no file. A `RecordingPhaseTimer` (`core.timing`, injected clock for tests) is created only when it is set; otherwise `NoOpPhaseTimer` is used and output is unchanged. `Orchestrator` records the app launch as `<journey> setup` and each segment as `<journey> segment <index>` steps. Within a step, `TimedModelRequestBackend` (inside `TracingModelRequestBackend`) records each request as a `MODEL_REQUEST` phase named by prompt, `CodexModelBackend.RequestSession` records `thread/start`, `turn/start`, `turn/await` (generation) and `thread/unsubscribe` as `MODEL_DETAIL` phases, and `TimingDeviceSession` records every `DeviceSession` call as a `DEVICE` phase. Step model and device totals sum only `MODEL_REQUEST` and `DEVICE` phases, so detail phases are not double counted. The report is printed to stdout after the suite result, also when the run fails. It is never written to run artifacts or the model trace, and `--dry-run` ignores it. Individual Maestro commands inside `executeActions` are not timed separately.
+
+The pre-check (see [project configuration](specs/project-configuration.md#pre-check)) is resolved by `RunCommand` only for non-dry runs, right after project configuration, and an invalid section exits `3` before any device work. One `SystemOnePrecheck` serves the run, is passed to `Orchestrator`, and records each request as a `MODEL_REQUEST` phase named `precheck` and, with `--model-trace`, as `P<n>` lines on the same sink. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N` after the suite result and after the `--timing` report, and the summary's optional `precheck` object carries the counts.
 
 `--platform` takes the platform wire names (the same as `device.platform` and journey `platform`), not enum constant names.
 

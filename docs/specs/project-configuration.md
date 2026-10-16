@@ -26,6 +26,16 @@ assertions:
   strategy: infer
 
 require-context: true
+
+# Optional and off by default; see "Pre-check" below.
+precheck:
+  enabled: true
+  base-url: https://api.typesafe.ai
+  model: jev-latest
+  api-key-env: TYPESAFE_API_KEY
+  timeout: 2s
+  pass-at: 0.9
+  fail-at: 0.1
 ```
 
 `llm.navigator-model` and `llm.inspector-model` optionally select supported model IDs for the provider. Omitted models use provider defaults.
@@ -38,11 +48,45 @@ Legacy top-level `provider`, `navigator-model`, `inspector-model`, `navigator-ef
 
 `--require-context` only enables required context. It is combined with `require-context: true`, so making context optional requires changing that configuration value. `--no-animations` enables animation disabling; supplying `--no-animations=false` overrides an enabled config default.
 
+## Pre-check
+
+An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are `visually`, literal or focus conditions. `run --dry-run` and MCP never resolve or call it.
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `enabled` | `false` | `--precheck` (or `--precheck=false`) overrides it |
+| `base-url` | `https://api.typesafe.ai` | Trailing `/` trimmed. `--precheck-base-url` overrides it |
+| `model` | `jev-latest` for TypeSafe | Required for any other server. `--precheck-model` overrides it |
+| `api-key-env` | `TYPESAFE_API_KEY` for TypeSafe | Name of the environment variable holding the key. No default for other servers, so no key is sent to them |
+| `timeout` | `2s` | A positive Kotlin duration such as `500ms` or `2s` |
+| `pass-at` | `0.9` | A probability at or above this passes the condition |
+| `fail-at` | `0.1` | A probability at or below this fails it |
+
+Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. The request is `POST <base-url>/v1/systemone` with a single `noul` question; only the accessibility tree and journey memory text are sent, never screenshots.
+
+A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`, or a request the JDK rejects locally) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts, as zeros when the run failed before the first request (for example in setup). A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback and is traced as `outcome=failed-discarded`.
+
+Validation failures are setup failures: exit `3` before a run directory, preflight or device session exists, with a message starting `precheck.`. They are:
+
+- `base-url` is not `https`, or is `http` for anything but `localhost`, `127.0.0.1` or `[::1]`, has no host, or includes credentials, a query or a fragment;
+- `model` is missing for a server other than TypeSafe;
+- `timeout` is unparseable or not positive;
+- `pass-at` is not greater than `fail-at`;
+- the variable named by `api-key-env` is unset, blank or contains a control or non-Latin-1 character.
+
+Thresholds outside `[0, 1]` are accepted. `pass-at: 2` with `fail-at: -1` is a shadow mode: every check is traced and then falls back to the inspector, which produces paired pre-check and inspector answers from one run.
+
+**Key safety.** The key is read only from the variable named by `api-key-env`, and only when the effective `base-url` comes from config or the default. It is sent only as `Authorization: Bearer ...`. `--precheck-base-url` drops it and skips the environment lookup, so a flag cannot redirect a key to another host. Redirects are not followed. The key never appears in an exception, warning, trace line, artifact or stdout, and `ResolvedPrecheck.toString()` redacts it.
+
+**Data handling.** Enabling the pre-check sends the rendered accessibility tree and bounded journey-memory text to the configured server on each prose loop or wait check, in addition to what the inspector already receives. TypeSafe states that it does not train on customer data and offers zero data retention for enterprise customers; check its current terms. A local server keeps the data on the machine.
+
+**Compatibility and tuning.** The `pass-at`/`fail-at` defaults were calibrated for Jev against the `PROMPT` rendering of the Android TV hierarchy, which is what the pre-check sends since the `PROMPT` profile landed (see [architecture](../architecture.md#hierarchy-rendering)); the calibration traces are recorded in the pull request for [issue #194](https://github.com/chrisbanes/verity/issues/194). Rendering changes can shift probabilities, so re-check after one. Clef and Kev expose the same API by their own claim, but are untested with Verity. A different model needs its own thresholds.
+
 ## Command behavior
 
 | Command | Defaults it consumes |
 | --- | --- |
-| `run` | Journey fallback, context, output, device, provider/models, navigator/inspector effort, animations, assertion strategy, and required context |
+| `run` | Journey fallback, context, output, device, provider/models, navigator/inspector effort, animations, assertion strategy, required context, and the pre-check |
 | `list` | Journey directory, overridden by `list --path` or the shared `--journeys-path` option |
 | `mcp` | Journey/context directories, required context, and session platform/device/animation defaults |
 

@@ -24,6 +24,8 @@ A check uses the same tiers as [loop conditions](loop-conditions.md#one-current-
 | Other prose | Inspector verdict over the current PROMPT hierarchy | The condition describes relationships in accessibility state |
 | Leading `visually` | Inspector verdict over a current screenshot | The condition concerns appearance that accessibility text cannot establish |
 
+With the opt-in [pre-check](project-configuration.md#pre-check) enabled, prose conditions first go to the classifier. A confident pass or fail decides the poll with tier `precheck` and no inspector request; an uncertain answer or any error falls through to the inspector. The request runs inside the wait's deadline: it is checked before and after, and the overall expiry cancels an in-flight request. Hierarchy evidence is saved exactly as for an inspected check, under the poll's `wait-NNN` path.
+
 For nonvisual waits, one bounded hierarchy capture supplies the literal, focus and tree checks for that poll. `visually` bypasses those checks and requires a screenshot. Tree and visual inspection use the configured inspector and can incur provider costs. No navigator request is generated for a wait.
 
 The CLI gives each inspector-backed check the journey's bounded earlier verdicts and execution trail, and earlier screenshots for `visually` waits, as reference rather than proof. This context is built once when the wait starts and stays unchanged for every poll; see [journey memory](journey-memory.md).
@@ -46,7 +48,8 @@ A wait segment has `executionMode: "wait"`, no action or generated-flow entries,
 
 - `condition` and configured `timeoutSeconds`;
 - actual `elapsedMs` and the number of completed `checks`;
-- optional `tier` and `reasoning` from the last completed evaluation.
+- optional `tier` and `reasoning` from the last completed evaluation;
+- optional `precheck` (`probability`, `model`, `host`), present only when the pre-check decided that evaluation, in which case `tier` is `precheck`.
 
 A timeout before the first completed check has no tier or evaluation evidence. The segment's main reasoning identifies timeout; `wait.reasoning` retains the last completed condition reasoning. Production evidence paths contain a separate `wait-NNN` check identifier, so an unfinished later poll cannot replace evidence from an earlier completed check. Nonwait segments omit `wait`, and the suite's `formatVersion` remains 1. See [run artifacts](run-artifacts.md) for required-write precedence and model-failure exit 5.
 

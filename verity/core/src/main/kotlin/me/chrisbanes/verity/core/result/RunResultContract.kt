@@ -45,6 +45,8 @@ data class LoopArtifact(
   val reasoning: String,
   /** Bodies completed before each check after the first, for batched D-pad loops only; sums to [iterations]. */
   val pressesPerCheck: List<Int>? = null,
+  /** Present only when the pre-check decided the final condition check. */
+  val precheck: PrecheckArtifact? = null,
 )
 
 @Serializable
@@ -55,6 +57,8 @@ data class WaitArtifact(
   val checks: Int,
   val tier: ConditionTier? = null,
   val reasoning: String = "",
+  /** Present only when the pre-check decided the final condition check. */
+  val precheck: PrecheckArtifact? = null,
 )
 
 @Serializable
@@ -161,6 +165,8 @@ data class SuiteArtifactSummary(
   val inspectorEffort: EffortArtifactSetting? = null,
   @SerialName("openai_auth") val openaiAuth: String? = null,
   @SerialName("model_backend") val modelBackend: String? = null,
+  /** Present only when the pre-check was enabled for the run. */
+  val precheck: PrecheckSummaryArtifact? = null,
 )
 
 @Serializable
@@ -218,6 +224,10 @@ enum class ConditionTier {
 
   @SerialName("visual")
   VISUAL,
+
+  /** Decided by the opt-in pre-check classifier instead of the inspector; see [PrecheckArtifact]. */
+  @SerialName("precheck")
+  PRECHECK,
 }
 
 @Serializable
