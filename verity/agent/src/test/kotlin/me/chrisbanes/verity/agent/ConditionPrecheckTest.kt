@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.agent
 
+import assertk.all
 import assertk.assertThat
 import assertk.assertions.contains
 import assertk.assertions.isEmpty
@@ -10,7 +11,7 @@ import assertk.assertions.isNotEmpty
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import assertk.assertions.isTrue
-import assertk.assertions.startsWith
+import assertk.assertions.prop
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.time.Duration.Companion.seconds
@@ -27,23 +28,12 @@ import me.chrisbanes.verity.core.result.PrecheckArtifact
 import me.chrisbanes.verity.device.FakeDeviceSession
 
 class ConditionPrecheckTest {
-  @Test
-  fun `state is the accessibility tree alone without reference text`() {
-    assertThat(precheckState("H", InspectionContext())).isEqualTo("Accessibility tree:\nH")
-  }
-
-  @Test
-  fun `state appends reference text when present`() {
-    assertThat(precheckState("H", InspectionContext(referenceText = "R")))
-      .isEqualTo("Accessibility tree:\nH\n\nReference context (earlier observations, not proof of the current condition):\nR")
-  }
-
   private class Fake(private val reply: suspend (acceptFail: Boolean) -> PrecheckVerdict?) : ConditionPrecheck {
-    val states = mutableListOf<String>()
+    val states = mutableListOf<PrecheckState>()
     val conditions = mutableListOf<String>()
     val acceptFail = mutableListOf<Boolean>()
 
-    override suspend fun check(state: String, condition: String, acceptFail: Boolean): PrecheckVerdict? {
+    override suspend fun check(state: PrecheckState, condition: String, acceptFail: Boolean): PrecheckVerdict? {
       states += state
       conditions += condition
       this.acceptFail += acceptFail
@@ -84,7 +74,7 @@ class ConditionPrecheckTest {
     val fake = Fake { verdict(true) }
     val inspector = Inspector()
 
-    val result = evaluator(fake, inspector).evaluate("the page is ready")
+    val result = evaluator(fake, inspector).evaluate("the page is ready", InspectionContext(referenceText = "R"))
 
     assertThat(result.tier).isEqualTo(ConditionTier.PRECHECK)
     assertThat(result.verdict.passed).isTrue()
@@ -92,7 +82,11 @@ class ConditionPrecheckTest {
     assertThat(result.precheck).isEqualTo(PrecheckArtifact(0.97, "jev-latest", "api.typesafe.ai"))
     assertThat(result.tree).isNotNull()
     assertThat(inspector.calls).isEqualTo(0)
-    assertThat(fake.states.single()).startsWith("Accessibility tree:")
+    assertThat(fake.states.single()).all {
+      prop(PrecheckState::platform).isEqualTo(Platform.ANDROID_MOBILE)
+      prop(PrecheckState::hierarchy).contains("Home")
+      prop(PrecheckState::referenceText).isEqualTo("R")
+    }
     assertThat(fake.conditions.single()).isEqualTo("the page is ready")
   }
 

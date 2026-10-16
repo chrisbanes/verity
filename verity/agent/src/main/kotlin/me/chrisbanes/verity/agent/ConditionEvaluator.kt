@@ -146,7 +146,7 @@ internal class ScreenInspection(
   suspend fun precheck(precheck: ConditionPrecheck, hierarchy: String, description: String, context: InspectionContext, acceptFail: Boolean): ConditionEvaluation? {
     deadline?.checkpoint()
     val verdict = try {
-      precheck.check(precheckState(hierarchy, context), description, acceptFail)
+      precheck.check(PrecheckState(session.platform, hierarchy, context.referenceText), description, acceptFail)
     } catch (e: CancellationException) {
       throw e
     } catch (_: Exception) {

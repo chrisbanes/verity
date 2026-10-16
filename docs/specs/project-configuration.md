@@ -78,9 +78,33 @@ Thresholds outside `[0, 1]` are accepted. `pass-at: 2` with `fail-at: -1` is a s
 
 **Key safety.** The key is read only from the variable named by `api-key-env`, and only when the effective `base-url` comes from config or the default. It is sent only as `Authorization: Bearer ...`. `--precheck-base-url` drops it and skips the environment lookup, so a flag cannot redirect a key to another host. Redirects are not followed. The key never appears in an exception, warning, trace line, artifact or stdout, and `ResolvedPrecheck.toString()` redacts it.
 
+**Request.** Each check posts one `noul` question to `<base-url>/v1/systemone`:
+
+```json
+{
+  "model": "jev-latest",
+  "state": {
+    "accessibility_tree": "<PROMPT hierarchy>",
+    "earlier_observations": "<journey memory>"
+  },
+  "questions": {
+    "condition": {
+      "type": "noul",
+      "instructions": "Using the current accessibility tree of an Android TV app, does the screen satisfy this condition? Earlier observations are reference only, not proof. Condition: <condition>",
+      "criteria": {
+        "true": "The current screen satisfies the condition.",
+        "false": "The current screen does not satisfy the condition."
+      }
+    }
+  }
+}
+```
+
+The condition is sent verbatim. The platform is `Android TV`, `Android` or `iOS`. `earlier_observations` is left out when the journey has no memory yet. Only `answers.condition.noul` is read. The `P<n> state` trace line records the `state` object as sent.
+
 **Data handling.** Enabling the pre-check sends the rendered accessibility tree and bounded journey-memory text to the configured server on each prose loop or wait check, in addition to what the inspector already receives. TypeSafe states that it does not train on customer data and offers zero data retention for enterprise customers; check its current terms. A local server keeps the data on the machine.
 
-**Compatibility and tuning.** The `pass-at`/`fail-at` defaults were calibrated for Jev against the `PROMPT` rendering of the Android TV hierarchy, which is what the pre-check sends since the `PROMPT` profile landed (see [architecture](../architecture.md#hierarchy-rendering)); the calibration traces are recorded in the pull request for [issue #194](https://github.com/chrisbanes/verity/issues/194). Rendering changes can shift probabilities, so re-check after one. Clef and Kev expose the same API by their own claim, but are untested with Verity. A different model needs its own thresholds.
+**Compatibility and tuning.** The `pass-at`/`fail-at` defaults were calibrated for Jev against the `PROMPT` rendering of the Android TV hierarchy, which is what the pre-check sends since the `PROMPT` profile landed (see [architecture](../architecture.md#hierarchy-rendering)); the calibration traces are recorded in the pull request for [issue #194](https://github.com/chrisbanes/verity/issues/194). The request shape above was chosen by an A/B on one shadow-mode trailer journey run ([issue #204](https://github.com/chrisbanes/verity/issues/204), replay script in [`research/precheck-request-shape`](../../research/precheck-request-shape/replay.py)). At the same 0.9/0.1 thresholds it accepted 30 of 64 checks, up from 21 with a bare condition and string state, with no disagreements with the inspector. Rendering changes can shift probabilities, so re-check after one. Clef and Kev expose the same API by their own claim, but are untested with Verity. A different model needs its own thresholds.
 
 ## Command behavior
 

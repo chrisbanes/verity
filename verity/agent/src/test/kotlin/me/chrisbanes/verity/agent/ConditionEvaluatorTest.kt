@@ -223,7 +223,7 @@ class ConditionEvaluatorTest {
       override suspend fun captureHierarchyTree(): HierarchyNode = error("unexpected capture")
     }
     var visualChecks = 0
-    var precheckState = ""
+    var precheckState: PrecheckState? = null
     val inspector = InspectorAgent(
       evaluateTreeContent = { _, _, _ -> error("unexpected tree inspection") },
       evaluateVisualContent = { _, _, _, _ ->
@@ -244,7 +244,7 @@ class ConditionEvaluatorTest {
     val prechecked = evaluator.evaluate("the queue is finished", loopHints = true, tree = settled)
     assertThat(prechecked.tier).isEqualTo(ConditionTier.PRECHECK)
     assertThat(prechecked.tree).isEqualTo(settled)
-    assertThat(precheckState).contains(HierarchyRenderer.render(settled, HierarchyFilter.PROMPT))
+    assertThat(precheckState?.hierarchy).isEqualTo(HierarchyRenderer.render(settled, HierarchyFilter.PROMPT))
     val visual = evaluator.evaluate("visually Done", tree = settled)
     assertThat(visual.tier).isEqualTo(ConditionTier.VISUAL)
     assertThat(visualChecks).isEqualTo(1)

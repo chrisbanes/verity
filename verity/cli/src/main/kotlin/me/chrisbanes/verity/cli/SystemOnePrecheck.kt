@@ -16,13 +16,16 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
 import me.chrisbanes.verity.agent.ConditionPrecheck
+import me.chrisbanes.verity.agent.PrecheckState
 import me.chrisbanes.verity.agent.PrecheckVerdict
+import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.result.PrecheckSummaryArtifact
 import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
 import me.chrisbanes.verity.core.timing.PhaseKind
@@ -70,13 +73,18 @@ class SystemOnePrecheck(
 
   private class Failure(val kind: String) : Exception(kind)
 
-  override suspend fun check(state: String, condition: String, acceptFail: Boolean): PrecheckVerdict? {
+  override suspend fun check(state: PrecheckState, condition: String, acceptFail: Boolean): PrecheckVerdict? {
     val id = "P${ids.incrementAndGet()}"
-    trace("$id start prompt=precheck model=${config.model} host=$host", "$id question $condition", "$id state $state")
+    val request = SystemOneRequest(
+      config.model,
+      SystemOneState(state.hierarchy, state.referenceText.ifEmpty { null }),
+      mapOf("condition" to NoulQuestion("noul", instructions(state.platform, condition), NOUL_CRITERIA)),
+    )
+    trace("$id start prompt=precheck model=${config.model} host=$host", "$id question $condition", "$id state ${Json.encodeToString(SystemOneState.serializer(), request.state)}")
     val started = TimeSource.Monotonic.markNow()
     fun elapsed() = "duration=${started.elapsedNow().inWholeMilliseconds}ms"
     try {
-      val (probability, model) = timer.phase(PhaseKind.MODEL_REQUEST, "precheck") { query(state, condition) }
+      val (probability, model) = timer.phase(PhaseKind.MODEL_REQUEST, "precheck") { query(request) }
       val passed = probability >= config.passAt
       val outcome = when {
         passed -> "passed"
@@ -102,17 +110,17 @@ class SystemOnePrecheck(
     }
   }
 
-  private suspend fun query(state: String, condition: String): Pair<Double, String> {
-    val body = Json.encodeToString(SystemOneRequest.serializer(), SystemOneRequest(config.model, state, mapOf("condition" to NoulQuestion("noul", condition))))
+  private suspend fun query(request: SystemOneRequest): Pair<Double, String> {
+    val body = Json.encodeToString(SystemOneRequest.serializer(), request)
     val response = try {
       // Built inside the guard: the JDK rejects a malformed header value with a message that would quote the key.
-      val request = HttpRequest.newBuilder(uri)
+      val httpRequest = HttpRequest.newBuilder(uri)
         .timeout(config.timeout.toJavaDuration())
         .header("Content-Type", "application/json")
         .apply { config.apiKey?.let { header("Authorization", "Bearer $it") } }
         .POST(HttpRequest.BodyPublishers.ofString(body))
         .build()
-      withTimeoutOrNull(config.timeout) { send(request) } ?: throw Failure("timeout")
+      withTimeoutOrNull(config.timeout) { send(httpRequest) } ?: throw Failure("timeout")
     } catch (e: CancellationException) {
       throw e
     } catch (e: Failure) {
@@ -143,10 +151,20 @@ class SystemOnePrecheck(
   }
 
   @Serializable
-  private class SystemOneRequest(val model: String, val state: String, val questions: Map<String, NoulQuestion>)
+  private class SystemOneRequest(val model: String, val state: SystemOneState, val questions: Map<String, NoulQuestion>)
+
+  /** The default [Json] omits a null [earlierObservations], so a journey without memory sends only the tree. */
+  @Serializable
+  private class SystemOneState(
+    @SerialName("accessibility_tree") val accessibilityTree: String,
+    @SerialName("earlier_observations") val earlierObservations: String? = null,
+  )
 
   @Serializable
-  private class NoulQuestion(val type: String, val instructions: String)
+  private class NoulQuestion(val type: String, val instructions: String, val criteria: NoulCriteria)
+
+  @Serializable
+  private class NoulCriteria(@SerialName("true") val yes: String, @SerialName("false") val no: String)
 
   @Serializable
   private class SystemOneResponse(val model: String? = null, val answers: Map<String, NoulAnswer> = emptyMap())
@@ -156,6 +174,19 @@ class SystemOnePrecheck(
 
   private companion object {
     val lenientJson = Json { ignoreUnknownKeys = true }
+
+    // Jev reads instructions literally, so the request frames the question and its evidence (issue #204 A/B: research/precheck-request-shape).
+    val NOUL_CRITERIA = NoulCriteria(yes = "The current screen satisfies the condition.", no = "The current screen does not satisfy the condition.")
+
+    fun instructions(platform: Platform, condition: String): String {
+      val app = when (platform) {
+        Platform.ANDROID_TV -> "Android TV"
+        Platform.ANDROID_MOBILE -> "Android"
+        Platform.IOS -> "iOS"
+      }
+      return "Using the current accessibility tree of an $app app, does the screen satisfy this condition? " +
+        "Earlier observations are reference only, not proof. Condition: $condition"
+    }
 
     // Redirects stay off so the bearer key is never forwarded to another host.
     fun defaultSend(config: ResolvedPrecheck): suspend (HttpRequest) -> HttpResponse<String> {
