@@ -295,6 +295,28 @@ class RunResultContractTest {
   }
 
   @Test
+  fun `precheck metadata is omitted when absent and round trips when present`() {
+    val artifact = PrecheckArtifact(0.97, "jev-latest", "api.typesafe.ai")
+    assertThat(json.encodeToString(ConditionTier.serializer(), ConditionTier.PRECHECK)).isEqualTo("\"precheck\"")
+
+    val loop = LoopArtifact("Home", 2, ConditionTier.TREE, "r")
+    assertThat(json.encodeToString(LoopArtifact.serializer(), loop)).doesNotContain("precheck")
+    val decided = loop.copy(tier = ConditionTier.PRECHECK, precheck = artifact)
+    assertThat(json.decodeFromString(LoopArtifact.serializer(), json.encodeToString(LoopArtifact.serializer(), decided))).isEqualTo(decided)
+
+    val wait = WaitArtifact("Home", 5, 100, 1, ConditionTier.TREE, "r")
+    assertThat(json.encodeToString(WaitArtifact.serializer(), wait)).doesNotContain("precheck")
+    val waitDecided = wait.copy(tier = ConditionTier.PRECHECK, precheck = artifact)
+    assertThat(json.decodeFromString(WaitArtifact.serializer(), json.encodeToString(WaitArtifact.serializer(), waitDecided))).isEqualTo(waitDecided)
+
+    val summary = SuiteArtifactSummary(formatVersion = 1, timestamp = "t", inputPath = "j", status = ArtifactStatus.PASSED, total = 0, passed = 0, failed = 0)
+    assertThat(json.encodeToString(summary)).doesNotContain("precheck")
+    val counted = summary.copy(precheck = PrecheckSummaryArtifact(3, 1, 0))
+    assertThat(json.encodeToString(counted)).contains("\"precheck\":{\"accepted\":3,\"uncertainFallbacks\":1,\"errorFallbacks\":0}")
+    assertThat(json.decodeFromString<SuiteArtifactSummary>(json.encodeToString(counted))).isEqualTo(counted)
+  }
+
+  @Test
   fun `model failure has a stable distinct wire value`() {
     assertThat(json.encodeToString(ArtifactErrorKind.serializer(), ArtifactErrorKind.MODEL_FAILURE)).isEqualTo("\"model_failure\"")
     assertThat(json.decodeFromString(ArtifactErrorKind.serializer(), "\"model_failure\"")).isEqualTo(ArtifactErrorKind.MODEL_FAILURE)

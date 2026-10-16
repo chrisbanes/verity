@@ -78,7 +78,7 @@ class SystemOnePrecheckTest {
   fun `confident pass posts the system one request and counts it accepted`() = withServer { f ->
     val client = SystemOnePrecheck(config(f))
 
-    val verdict = client.check("S", "C")
+    val verdict = client.check("S", "C", acceptFail = true)
 
     assertThat(verdict).isEqualTo(PrecheckVerdict(true, 0.95, "jev-1.13.0", "127.0.0.1:${f.port}"))
     val (line, _, body) = f.requests.single()
@@ -92,7 +92,17 @@ class SystemOnePrecheckTest {
   @Test
   fun `confident fail returns a failed verdict`() = withServer { f ->
     f.respond = { 200 to ok(0.05) }
-    assertThat(SystemOnePrecheck(config(f)).check("S", "C")!!.passed).isEqualTo(false)
+    assertThat(SystemOnePrecheck(config(f)).check("S", "C", acceptFail = true)!!.passed).isEqualTo(false)
+  }
+
+  @Test
+  fun `a confident fail the caller cannot use counts as an uncertain fallback`() = withServer { f ->
+    f.respond = { 200 to ok(0.05) }
+    val client = SystemOnePrecheck(config(f))
+
+    assertThat(client.check("S", "C", acceptFail = false)).isNull()
+    assertThat(client.stats.accepted).isEqualTo(0)
+    assertThat(client.stats.uncertainFallbacks).isEqualTo(1)
   }
 
   @Test
@@ -101,7 +111,7 @@ class SystemOnePrecheckTest {
     val warnings = mutableListOf<String>()
     val client = SystemOnePrecheck(config(f), warn = { warnings += it })
 
-    assertThat(client.check("S", "C")).isNull()
+    assertThat(client.check("S", "C", acceptFail = true)).isNull()
     assertThat(client.stats.uncertainFallbacks).isEqualTo(1)
     assertThat(client.stats.errorFallbacks).isEqualTo(0)
     assertThat(warnings).hasSize(0)
@@ -121,7 +131,7 @@ class SystemOnePrecheckTest {
     )
     responses.forEach { response ->
       f.respond = { response }
-      assertThat(client.check("TREE-TEXT", "C")).isNull()
+      assertThat(client.check("TREE-TEXT", "C", acceptFail = true)).isNull()
     }
 
     assertThat(client.stats.errorFallbacks).isEqualTo(responses.size)
@@ -145,7 +155,7 @@ class SystemOnePrecheckTest {
     val client = SystemOnePrecheck(config(f), warn = { warnings += it })
 
     val started = TimeSource.Monotonic.markNow()
-    assertThat(client.check("S", "C")).isNull()
+    assertThat(client.check("S", "C", acceptFail = true)).isNull()
 
     assertThat(started.elapsedNow().inWholeMilliseconds).isLessThan(1500)
     assertThat(client.stats.errorFallbacks).isEqualTo(1)
@@ -154,8 +164,8 @@ class SystemOnePrecheckTest {
 
   @Test
   fun `bearer key is sent only when configured`() = withServer { f ->
-    SystemOnePrecheck(config(f, apiKey = "k1")).check("S", "C")
-    SystemOnePrecheck(config(f, apiKey = null)).check("S", "C")
+    SystemOnePrecheck(config(f, apiKey = "k1")).check("S", "C", acceptFail = true)
+    SystemOnePrecheck(config(f, apiKey = null)).check("S", "C", acceptFail = true)
 
     assertThat(f.requests.map { it.second }).isEqualTo(listOf("Bearer k1", null))
   }
@@ -166,9 +176,9 @@ class SystemOnePrecheckTest {
     val timer = RecordingPhaseTimer()
     val client = SystemOnePrecheck(config(f), trace = { _, text -> lines += text }, timer = timer)
 
-    client.check("S", "C")
+    client.check("S", "C", acceptFail = true)
     f.respond = { 500 to "boom" }
-    client.check("S", "C")
+    client.check("S", "C", acceptFail = true)
 
     assertThat(lines.size).isEqualTo(8)
     assertThat(lines[0]).isEqualTo("P1 start prompt=precheck model=jev-latest host=127.0.0.1:${f.port}")
@@ -196,7 +206,7 @@ class SystemOnePrecheckTest {
     }
     val client = SystemOnePrecheck(config(f).copy(timeout = 10_000.milliseconds))
     coroutineScope {
-      val call = async { client.check("S", "C") }
+      val call = async { client.check("S", "C", acceptFail = true) }
       withContext(Dispatchers.IO) { entered.await(5, TimeUnit.SECONDS) }
       call.cancelAndJoin()
       assertThat(runCatching { call.await() }.exceptionOrNull()).isNotNull().isInstanceOf<CancellationException>()

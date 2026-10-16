@@ -6,6 +6,7 @@ import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.JourneyTrailArtifact
 import me.chrisbanes.verity.core.result.LoopArtifact
+import me.chrisbanes.verity.core.result.PrecheckArtifact
 import me.chrisbanes.verity.core.result.SegmentExecutionMode
 import me.chrisbanes.verity.core.result.WaitArtifact
 
@@ -44,4 +45,5 @@ data class LoopResult(
   val conditionReasoning: String = "",
   val evidence: List<EvidenceArtifact> = emptyList(),
   val pressesPerCheck: List<Int>? = null,
+  val precheck: PrecheckArtifact? = null,
 )

@@ -71,7 +71,7 @@ class SystemOnePrecheck(
 
   private class Failure(val kind: String) : Exception(kind)
 
-  override suspend fun check(state: String, condition: String): PrecheckVerdict? {
+  override suspend fun check(state: String, condition: String, acceptFail: Boolean): PrecheckVerdict? {
     val id = "P${ids.incrementAndGet()}"
     trace("$id start prompt=precheck model=${config.model} host=$host", "$id question $condition", "$id state $state")
     val started = TimeSource.Monotonic.markNow()
@@ -85,7 +85,8 @@ class SystemOnePrecheck(
         else -> "uncertain"
       }
       trace("$id response ${elapsed()} model=$model noul=$probability outcome=$outcome")
-      if (outcome == "uncertain") {
+      // A discarded failure is no decision, so it must not count as accepted.
+      if (outcome == "uncertain" || (outcome == "failed" && !acceptFail)) {
         stats.uncertain()
         return null
       }

@@ -57,6 +57,7 @@ class Orchestrator(
   private val artifactRecorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
   private val nowNanos: () -> Long = System::nanoTime,
   private val timer: PhaseTimer = NoOpPhaseTimer,
+  private val precheck: ConditionPrecheck? = null,
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments; running them on the wrong screen proves nothing.
@@ -112,7 +113,7 @@ class Orchestrator(
     memory: JourneyMemory,
   ): SegmentResult {
     segment.wait?.let { wait ->
-      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index, onInspectedScreenshot = memory::recordScreenshot)
+      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck)
       // Every poll sees the wait's starting references, even though polls keep recording newer screenshots.
       val result = memory.withFrozenContext(ConditionEvaluator.isVisual(wait.until)) { context ->
         ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds, context)
@@ -130,7 +131,7 @@ class Orchestrator(
         reasoning = reasoning,
         executionMode = SegmentExecutionMode.WAIT,
         evidence = evaluation?.evidence.orEmpty(),
-        wait = WaitArtifact(wait.until, wait.timeoutSeconds, result.elapsedMs, result.checks, evaluation?.tier, evaluation?.verdict?.reasoning.orEmpty()),
+        wait = WaitArtifact(wait.until, wait.timeoutSeconds, result.elapsedMs, result.checks, evaluation?.tier, evaluation?.verdict?.reasoning.orEmpty(), evaluation?.precheck),
         error = if (result.satisfied) null else ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, reasoning),
       )
     }
@@ -187,7 +188,7 @@ class Orchestrator(
         actions = loop.actionInstructions,
         generatedFlows = loopResult.generatedFlows,
         evidence = loopResult.evidence,
-        loop = LoopArtifact(loop.until, loopResult.iterations, checkNotNull(loopResult.tier), loopResult.conditionReasoning, loopResult.pressesPerCheck),
+        loop = LoopArtifact(loop.until, loopResult.iterations, checkNotNull(loopResult.tier), loopResult.conditionReasoning, loopResult.pressesPerCheck, loopResult.precheck),
         error = if (loopResult.satisfied) {
           null
         } else {
@@ -359,7 +360,7 @@ class Orchestrator(
     val fastPathInteractions = InteractionMapper.forPlatform(platform).mapAll(instructions)
     val visual = ConditionEvaluator.isVisual(loop.until)
     val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeIf { ConditionEvaluator.canBatchPresses(loop.until) }
-    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot)
+    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck)
     suspend fun check() = evaluator.evaluate(loop.until, memory.inspectionContext(visual), loopHints = direction != null)
     var evaluation = check()
     var completedBodies = 0
@@ -382,6 +383,7 @@ class Orchestrator(
         conditionReasoning = evaluation.verdict.reasoning,
         evidence = evaluation.evidence,
         pressesPerCheck = pressesPerCheck?.toList()?.takeIf { it.isNotEmpty() },
+        precheck = evaluation.precheck,
       )
     }
 
