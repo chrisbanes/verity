@@ -36,6 +36,8 @@ Other phrasing, such as `Navigate down`, is unmapped. If any instruction in a bo
 
 A case-insensitive leading word `visually` selects screenshot inspection. The prefix is removed before inspection, and a current screenshot is required. Text, focus and tree checks cannot satisfy this condition. Use this for appearance that accessibility text cannot establish, such as colour or a rendered image. Screenshot inspection uses the configured inspector model.
 
+A condition wholly wrapped in matching quotes, such as `"spotlight-item-"` or `'spotlight-item-'`, is *literal-only*. After trimming, it must have at least two characters, start and end with the same `"` or `'`, and not contain that quote character in between, so `"a" and "b"` and `"Continue Watching" is focused` are not literal-only. Each check searches the hierarchy for the trimmed text inside the quotes, with the same case-insensitive substring match as the `literal` tier. A match passes and a miss fails, both with tier `literal`. A literal-only condition never takes the focus, `precheck` or `tree` tiers and never requests a model. A blank quoted condition (`""`) is rejected while parsing, like a blank condition.
+
 For other conditions, evaluation proceeds in this order:
 
 | Tier | Check | Result |
@@ -49,7 +51,7 @@ The focus grammar recognises exactly `<target> is focused`, `<target> has focus`
 
 The pre-check never changes the literal, focus or visual tiers, and it never fails a check: a timeout, error or uncertain probability falls back to the `tree` tier unchanged. It saves the same hierarchy evidence as the inspector. In a batched D-pad loop only a confident pass is accepted, because an unmet check needs the inspector's batching hints; a confident fail falls back to the inspector.
 
-Choose a literal condition for visible text, a recognised focus form for navigation focus, tree inspection for relationships described by the accessibility hierarchy, and `visually` for appearance. Inspector tiers can incur provider costs; deterministic tiers do not request a model.
+Choose a literal condition for visible text (quote it to keep it off the model tiers while the screen loads), a recognised focus form for navigation focus, tree inspection for relationships described by the accessibility hierarchy, and `visually` for appearance. Inspector tiers can incur provider costs; deterministic tiers do not request a model.
 
 ## Body boundaries and failure
 
@@ -57,7 +59,7 @@ The orchestrator checks immediately, then executes up to the permitted number of
 
 ### Batched D-pad loops
 
-On Android TV, a loop whose body is exactly one mapped direction press (`Press D-pad up|down|left|right`) and whose condition is neither `visually` nor a focus form (`is focused`, `has focus`, `focus is on`) may press several times before one check. Every other loop, including multi-instruction bodies, `Press select`, keycodes, generated bodies and other platforms, checks after every body. Waits, assertions and MCP `run_loop` never batch.
+On Android TV, a loop whose body is exactly one mapped direction press (`Press D-pad up|down|left|right`) and whose condition is neither `visually`, literal-only nor a focus form (`is focused`, `has focus`, `focus is on`) may press several times before one check. Every other loop, including multi-instruction bodies, `Press select`, keycodes, generated bodies and other platforms, checks after every body. Waits, assertions and MCP `run_loop` never batch.
 
 After each unmet check, the tree that check read predicts a batch size:
 

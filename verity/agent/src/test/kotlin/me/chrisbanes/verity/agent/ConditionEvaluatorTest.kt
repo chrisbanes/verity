@@ -94,6 +94,47 @@ class ConditionEvaluatorTest {
   }
 
   @Test
+  fun `quoted conditions take only the literal tier and never ask a model`() = runTest {
+    val session = StateSession()
+    var precheckCalls = 0
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> error("unexpected tree inspection") },
+      evaluateVisualContent = { _, _, _, _ -> error("unexpected visual inspection") },
+    )
+    val evaluator = ConditionEvaluator(session, inspector, precheck = { _, _, _ ->
+      precheckCalls++
+      null
+    })
+    for (condition in listOf("\"settings\"", "'Settings'")) {
+      val found = evaluator.evaluate(condition)
+      assertThat(found.tier).isEqualTo(ConditionTier.LITERAL)
+      assertThat(found.verdict.passed).isEqualTo(true)
+    }
+    for (loopHints in listOf(false, true)) {
+      val missing = evaluator.evaluate("\"Account\"", loopHints = loopHints)
+      assertThat(missing.tier).isEqualTo(ConditionTier.LITERAL)
+      assertThat(missing.verdict.passed).isEqualTo(false)
+      assertThat(missing.verdict.reasoning).contains("Account")
+    }
+    assertThat(precheckCalls).isEqualTo(0)
+    assertFailsWith<IllegalArgumentException> { evaluator.evaluate("\" \"") }
+    assertThat(session.treeCaptures).isEqualTo(4)
+  }
+
+  @Test
+  fun `literal-only classification matches the quote boundary and blocks batching`() {
+    for (condition in listOf("\"spotlight-item-\"", "'spotlight-item-'")) {
+      assertThat(ConditionEvaluator.kind(condition)).isEqualTo(ConditionKind.LITERAL_ONLY)
+      assertThat(ConditionEvaluator.canBatchPresses(condition)).isFalse()
+    }
+    assertThat(ConditionEvaluator.kind("spotlight-item-")).isEqualTo(ConditionKind.PROSE)
+    assertThat(ConditionEvaluator.kind("\"a\" and \"b\"")).isEqualTo(ConditionKind.PROSE)
+    assertThat(ConditionEvaluator.kind("\"Continue Watching\" is focused")).isEqualTo(ConditionKind.FOCUS)
+    assertThat(ConditionEvaluator.kind("visually \"x\"")).isEqualTo(ConditionKind.VISUAL)
+    assertThat(ConditionEvaluator.canBatchPresses("spotlight-item-")).isEqualTo(true)
+  }
+
+  @Test
   fun `visual prefix requires current screenshot and bypasses every deterministic tier`() = runTest {
     withContext(Dispatchers.Default) {
       val session = StateSession().apply { focused = true }

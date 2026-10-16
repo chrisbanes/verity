@@ -34,6 +34,7 @@ object DryRunRenderer {
         appendLine()
         appendLine("Loop: ${loop.action} until ${loop.until}, max ${loop.max}")
         appendLine("Kind: ${loop.kind}")
+        appendLine("Tier: ${loop.tier}")
         if (loop.interactions.size == 1) {
           appendLine("Interaction: ${loop.interactions.single()}")
         } else if (loop.interactions.isNotEmpty()) {
@@ -49,6 +50,7 @@ object DryRunRenderer {
       segment.wait?.let { wait ->
         appendLine()
         appendLine("Wait until ${wait.condition}, up to ${wait.timeoutSeconds} seconds")
+        appendLine("Tier: ${wait.tier}")
       }
       segment.assertion?.let { assertion ->
         appendLine()

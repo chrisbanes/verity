@@ -15,6 +15,7 @@ import me.chrisbanes.verity.core.hierarchy.HierarchyRenderer
 import me.chrisbanes.verity.core.hierarchy.containsText
 import me.chrisbanes.verity.core.model.InspectionVerdict
 import me.chrisbanes.verity.core.parser.FocusConditionParser
+import me.chrisbanes.verity.core.parser.LiteralConditionParser
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
@@ -51,7 +52,7 @@ class ConditionEvaluator(
     return evaluateOn(condition, context, inspection, { session.captureHierarchyTree(deadline.remaining()) }, loopHints = false, deadline::checkpoint)
   }
 
-  /** One hierarchy capture answers the literal, focus and tree tiers. */
+  /** One hierarchy capture answers the literal, focus and tree tiers; a quoted condition never leaves the literal tier. */
   private suspend fun evaluateOn(
     condition: String,
     context: InspectionContext,
@@ -64,9 +65,11 @@ class ConditionEvaluator(
       val evaluation = inspection.visual(description, context)
       return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
     }
+    val literalOnly = LiteralConditionParser.parse(condition)
     val tree = captureTree()
     checkpoint()
-    if (tree.containsText(condition, checkpoint = checkpoint)) return literalEvaluation(condition, tree)
+    if (literalOnly != null) return literalEvaluation(literalOnly, tree.containsText(literalOnly, checkpoint = checkpoint), tree)
+    if (tree.containsText(condition, checkpoint = checkpoint)) return literalEvaluation(condition, passed = true, tree)
     FocusConditionParser.parse(condition)?.let { target ->
       return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint), tree)
     }
@@ -77,7 +80,11 @@ class ConditionEvaluator(
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence, tree)
   }
 
-  private fun literalEvaluation(text: String, tree: HierarchyNode) = ConditionEvaluation(InspectionVerdict(true, "Text '$text' is visible"), ConditionTier.LITERAL, tree = tree)
+  private fun literalEvaluation(text: String, passed: Boolean, tree: HierarchyNode) = ConditionEvaluation(
+    InspectionVerdict(passed, if (passed) "Text '$text' is visible" else "Text '$text' is not visible"),
+    ConditionTier.LITERAL,
+    tree = tree,
+  )
 
   private fun focusEvaluation(target: String, passed: Boolean, tree: HierarchyNode) = ConditionEvaluation(
     InspectionVerdict(passed, if (passed) "Text '$target' is focused" else "Text '$target' is not focused"),
@@ -98,10 +105,21 @@ class ConditionEvaluator(
     /** Whether [condition] is evaluated against a screenshot rather than the tree. */
     fun isVisual(condition: String): Boolean = VISUAL_PREFIX.containsMatchIn(condition.trim())
 
-    /** Whether a loop may batch presses for [condition]: only tree-tier checks predict, so focus forms and `visually` never do. */
-    fun canBatchPresses(condition: String): Boolean = !isVisual(condition) && FocusConditionParser.parse(condition) == null
+    /** Which form [evaluate] treats [condition] as, in its branch order. */
+    fun kind(condition: String): ConditionKind = when {
+      isVisual(condition) -> ConditionKind.VISUAL
+      LiteralConditionParser.parse(condition) != null -> ConditionKind.LITERAL_ONLY
+      FocusConditionParser.parse(condition) != null -> ConditionKind.FOCUS
+      else -> ConditionKind.PROSE
+    }
+
+    /** Whether a loop may batch presses for [condition]: only tree-tier checks predict, so only prose conditions do. */
+    fun canBatchPresses(condition: String): Boolean = kind(condition) == ConditionKind.PROSE
   }
 }
+
+/** How a condition is checked: [LITERAL_ONLY] is a wholly quoted condition, and only [PROSE] can reach a model through the tree tier. */
+enum class ConditionKind { VISUAL, LITERAL_ONLY, FOCUS, PROSE }
 
 data class ConditionEvaluation(
   val verdict: InspectionVerdict,

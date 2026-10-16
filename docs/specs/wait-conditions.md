@@ -7,6 +7,7 @@ steps:
   - Tap Settings
   - "Wait until Settings"
   - "Wait until Account is focused up to 3 seconds"
+  - Wait until "spotlight-item-" up to 120 seconds
   - "Wait until visually the loading spinner is gone up to 10 seconds."
   - "[?tree] The account page contains a profile section"
 ```
@@ -20,9 +21,12 @@ A check uses the same tiers as [loop conditions](loop-conditions.md#one-current-
 | Condition | Evaluation | Use when |
 | --- | --- | --- |
 | Complete literal text | Case-insensitive substring search in the current hierarchy | Visible text establishes the condition without a model call |
+| Wholly quoted text (`"spotlight-item-"`) | Literal-only: the same search for the text inside the quotes, retried every poll; a miss fails that poll on the `literal` tier | The text or resource ID is expected to appear, and a model can add nothing while the screen loads |
 | `<target> is focused`, `<target> has focus`, `focus is on <target>` | Deterministic focus relationship | Navigation focus establishes the condition; false focus does not call the inspector |
 | Other prose | Inspector verdict over the current PROMPT hierarchy | The condition describes relationships in accessibility state |
 | Leading `visually` | Inspector verdict over a current screenshot | The condition concerns appearance that accessibility text cannot establish |
+
+A literal-only wait polls until the text appears (tier `literal`) or the deadline expires, and makes no inspector or pre-check request either way. The quote boundary and blank-quote rejection are defined in [loop conditions](loop-conditions.md#one-current-state-check).
 
 With the opt-in [pre-check](project-configuration.md#pre-check) enabled, prose conditions first go to the classifier. A confident pass or fail decides the poll with tier `precheck` and no inspector request; an uncertain answer or any error falls through to the inspector. The request runs inside the wait's deadline: it is checked before and after, and the overall expiry cancels an in-flight request. Hierarchy evidence is saved exactly as for an inspected check, under the poll's `wait-NNN` path.
 
@@ -55,7 +59,7 @@ A timeout before the first completed check has no tier or evaluation evidence. T
 
 ## Preview and MCP boundary
 
-`verity run --dry-run` displays `Wait until <condition>, up to N seconds` in console and saved Markdown. It does not capture or evaluate the condition. YAML input, normal CLI execution, directory suites, preview and JSON artifacts retain the same parsed condition and limit.
+`verity run --dry-run` displays `Wait until <condition>, up to N seconds` and the condition's `Tier:` (see [dry run](dry-run.md#generated-content)) in console and saved Markdown. It does not capture or evaluate the condition. YAML input, normal CLI execution, directory suites, preview and JSON artifacts retain the same parsed condition and limit.
 
 MCP `load_journey` parses and displays waits through the shared core parser. Semantic wait execution belongs to the CLI agent module; neither stdio nor HTTP adds a wait tool. The repository's MCP run/debug workflows must report a wait as requiring CLI execution rather than translate it into action YAML, reuse the literal key-loop shortcut, or claim the CLI deadline contract. Authoring can save a reviewed wait while marking it unverified until CLI execution.
 

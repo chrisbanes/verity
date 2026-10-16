@@ -93,6 +93,28 @@ class ConditionWaiterTest {
     assertThat(session.peak).isEqualTo(1)
   }
 
+  @Test fun `literal-only waits poll the literal tier and never ask a model`() = runTest {
+    for (matchOn in listOf(3, null)) {
+      val session = Session()
+      var polls = 0
+      session.tree = { HierarchyNode(mapOf("resource-id" to if (++polls == matchOn) "spotlight-item-4" else "loading")) }
+      var precheckCalls = 0
+      val evaluator = ConditionEvaluator(
+        session,
+        InspectorAgent({ _, _, _ -> error("unexpected inspector") }, { _, _, _, _ -> error("unexpected inspector") }),
+        precheck = { _, _, _ ->
+          precheckCalls++
+          null
+        },
+      )
+      val result = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }.await("\"spotlight-item-\"", 5.seconds)
+      assertThat(result.satisfied).isEqualTo(matchOn != null)
+      assertThat(result.checks).isEqualTo(matchOn ?: 5)
+      assertThat(result.lastEvaluation?.tier).isEqualTo(ConditionTier.LITERAL)
+      assertThat(precheckCalls).isEqualTo(0)
+    }
+  }
+
   @Test fun `negative focus never asks model and expiry during delay retains last completed result`() = runTest {
     val session = Session()
     val evaluator = evaluator(session, rejectInspector = true)

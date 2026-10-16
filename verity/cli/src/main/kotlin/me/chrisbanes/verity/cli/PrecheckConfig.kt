@@ -39,6 +39,9 @@ private const val TYPESAFE_DEFAULT_MODEL = "jev-latest"
 private const val TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY"
 private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "[::1]")
 
+/** Whether the pre-check is on, without validating the rest of its configuration. */
+fun precheckEnabled(config: VerityPrecheckConfig?, cli: PrecheckCliOptions): Boolean = cli.enabled ?: config?.enabled ?: false
+
 /**
  * Resolves the opt-in pre-check from CLI flags, then config, then defaults; null when disabled.
  * Failures are [IllegalArgumentException]s starting `precheck.` that never include an environment value.
@@ -49,7 +52,7 @@ fun resolvePrecheck(
   cli: PrecheckCliOptions,
   env: (String) -> String? = System::getenv,
 ): ResolvedPrecheck? {
-  if (!(cli.enabled ?: config?.enabled ?: false)) return null
+  if (!precheckEnabled(config, cli)) return null
 
   val baseUrl = (cli.baseUrl ?: config?.baseUrl ?: TYPESAFE_BASE_URL).trimEnd('/')
   validateBaseUrl(baseUrl)
