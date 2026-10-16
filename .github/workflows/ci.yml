@@ -32,6 +32,9 @@ jobs:
         with:
           gradle-home-cache-excludes: ${{ env.ORG_GRADLE_PROJECT_remoteBuildCacheUrl != '' && env.ORG_GRADLE_PROJECT_remoteBuildCacheUsername != '' && env.ORG_GRADLE_PROJECT_remoteBuildCachePassword != '' && 'caches/build-cache-1' || '' }}
 
+      - name: Test CI scripts
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
       - name: Build
         run: ./gradlew build --no-scan '-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=1g'
 
@@ -181,6 +184,12 @@ jobs:
           done
           exit 1
 
+      - name: Wait for iOS simulator to settle
+        timeout-minutes: 2
+        env:
+          UDID: ${{ steps.simulator.outputs.udid }}
+        run: python3 .github/scripts/wait_for_ios_settle.py "$UDID"
+
       - name: iOS smoke tests
         env:
           # A cold first driver start on a freshly erased simulator can exceed 300 s; stay under the harness's 600 s connect timeout.
@@ -199,4 +208,5 @@ jobs:
             verity/smoke-tests/build/test-results/test/*.xml
             verity/smoke-tests/build/test-results/packagedIosTest/*.xml
             verity/smoke-tests/build/reports/packaged/
+            verity/smoke-tests/build/tmp/ios-smoke/xctest_runner_*.log
           if-no-files-found: error

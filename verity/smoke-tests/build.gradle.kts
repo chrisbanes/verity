@@ -41,6 +41,14 @@ tasks.test {
   // Device smoke tests require -Pinclude.tags=android or -Pinclude.tags=ios.
   // Without tags, only untagged tests (e.g. JourneyLoadTest) run.
   val includeTags = providers.gradleProperty("include.tags")
+  val iosTestTemp = layout.buildDirectory.dir("tmp/ios-smoke")
+  if (includeTags.orNull?.split(',')?.contains("ios") == true) {
+    doFirst {
+      val directory = iosTestTemp.get().asFile
+      check(directory.isDirectory || directory.mkdirs()) { "Could not create iOS test temporary directory" }
+      systemProperty("java.io.tmpdir", directory.absolutePath)
+    }
+  }
   // Simulator selection affects the test result, but the runner's ephemeral UDID does not.
   inputs.property("iosSimulatorModel", providers.environmentVariable("VERITY_SMOKE_IOS_MODEL").orElse(""))
   inputs.property("iosSimulatorRuntime", providers.environmentVariable("VERITY_SMOKE_IOS_RUNTIME").orElse(""))
