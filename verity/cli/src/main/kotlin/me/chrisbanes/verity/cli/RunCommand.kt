@@ -115,7 +115,6 @@ class RunCommand(
   private val sessionFactory: suspend (Platform, String?, Boolean) -> DeviceSession = DeviceSessionFactory::connect,
   private val clientFactory: (VerityProvider, String) -> LLMClient = { provider, apiKey -> provider.createClient(apiKey) },
   private val environment: (String) -> String? = System::getenv,
-  private val precheckFactory: (ResolvedPrecheck, ModelTraceSink?, PhaseTimer) -> SystemOnePrecheck = { config, trace, timer -> SystemOnePrecheck(config, trace, timer) },
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -776,7 +775,7 @@ class RunCommand(
       echo("Provider: ${provider.name}")
       echo("Navigator model: ${navigatorModel.id}")
       echo("Inspector model: ${inspectorModel.id}")
-      val client = precheckConfig?.let { precheckFactory(it, preflight.trace, timer) }
+      val client = precheckConfig?.let { SystemOnePrecheck(it, preflight.trace, timer, warn = { message -> echo(message, err = true) }) }
       precheckClient = client
       precheckConfig?.let { echo("Pre-check: ${it.model} at ${URI(it.baseUrl).authority}") }
       projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }

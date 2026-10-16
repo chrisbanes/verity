@@ -42,12 +42,12 @@ class RunCommandPrecheckTest {
 
   private fun session() = FakeDeviceSession(Platform.ANDROID_TV, hierarchyProvider = { HierarchyNode(attributes = mapOf("text" to "Home")) })
 
-  private fun withClassifier(noul: String, block: (port: Int) -> Unit) {
+  private fun withClassifier(noul: String, status: Int = 200, block: (port: Int) -> Unit) {
     val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
     server.createContext("/") { exchange ->
       exchange.requestBody.readBytes()
       val body = """{"model":"jev-1.13.0","answers":{"condition":{"type":"noul","noul":$noul}}}""".toByteArray()
-      exchange.sendResponseHeaders(200, body.size.toLong())
+      exchange.sendResponseHeaders(status, body.size.toLong())
       exchange.responseBody.use { it.write(body) }
       exchange.close()
     }
@@ -70,9 +70,18 @@ class RunCommandPrecheckTest {
       var calls = 0
       val command = RunCommand(
         environment = { null },
-        preflightChecker = { _, _, _, _ -> error("preflight must not run").also { calls++ } },
-        sessionFactory = { _, _, _ -> error("no session").also { calls++ } },
-        clientFactory = { _, _ -> error("no client").also { calls++ } },
+        preflightChecker = { _, _, _, _ ->
+          calls++
+          error("preflight must not run")
+        },
+        sessionFactory = { _, _, _ ->
+          calls++
+          error("no session")
+        },
+        clientFactory = { _, _ ->
+          calls++
+          error("no client")
+        },
       )
 
       val result = Verity().subcommands(command).test("--output-path ${dir.path}/output run --precheck ${journey(dir, "Wait until ready").path}")
@@ -93,8 +102,14 @@ class RunCommandPrecheckTest {
       var calls = 0
       val command = RunCommand(
         loadConfig = { VerityConfig(precheck = VerityPrecheckConfig(enabled = true, baseUrl = "http://example.com", model = "m")) },
-        preflightChecker = { _, _, _, _ -> error("preflight must not run").also { calls++ } },
-        sessionFactory = { _, _, _ -> error("no session").also { calls++ } },
+        preflightChecker = { _, _, _, _ ->
+          calls++
+          error("preflight must not run")
+        },
+        sessionFactory = { _, _, _ ->
+          calls++
+          error("no session")
+        },
       )
 
       val result = Verity().subcommands(command).test("--output-path ${dir.path}/output run ${journey(dir, "Wait until ready").path}")
@@ -169,6 +184,28 @@ class RunCommandPrecheckTest {
         assertThat(result.output).contains("Pre-check: accepted 0, uncertain fallbacks 1, error fallbacks 0")
         assertThat(backend.requests.map { it.promptName }).isEqualTo(listOf("tree-eval"))
         assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 1, 0))
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `a server error falls back to the inspector, warns once on stderr and is counted as an error`() {
+    val dir = createTempDirectory("verity-pc-error").toFile()
+    try {
+      withClassifier("0.95", status = 500) { port ->
+        val backend = Backend()
+        val output = File(dir, "output")
+        val command = RunCommand(loadConfig = { enabledConfig(port) }, preflightChecker = { _, _, _, _ -> preflight(backend) }, sessionFactory = { _, _, _ -> session() })
+
+        val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run ${journey(dir, "Wait until the page is ready").path}")
+
+        assertThat(result.statusCode).isEqualTo(0)
+        assertThat(result.stderr).contains("Warning: pre-check request to 127.0.0.1:$port failed (HTTP 500)")
+        assertThat(result.output).contains("Pre-check: accepted 0, uncertain fallbacks 0, error fallbacks 1")
+        assertThat(backend.requests.map { it.promptName }).isEqualTo(listOf("tree-eval"))
+        assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 0, 1))
       }
     } finally {
       dir.deleteRecursively()

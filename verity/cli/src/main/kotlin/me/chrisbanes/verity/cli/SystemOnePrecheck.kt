@@ -16,7 +16,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.future.await
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -84,9 +83,10 @@ class SystemOnePrecheck(
         probability <= config.failAt -> "failed"
         else -> "uncertain"
       }
-      trace("$id response ${elapsed()} model=$model noul=$probability outcome=$outcome")
-      // A discarded failure is no decision, so it must not count as accepted.
-      if (outcome == "uncertain" || (outcome == "failed" && !acceptFail)) {
+      // A failure the caller cannot use is no decision: it must not count as accepted, and the trace says so.
+      val discarded = outcome == "failed" && !acceptFail
+      trace("$id response ${elapsed()} model=$model noul=$probability outcome=${if (discarded) "failed-discarded" else outcome}")
+      if (outcome == "uncertain" || discarded) {
         stats.uncertain()
         return null
       }
@@ -104,13 +104,14 @@ class SystemOnePrecheck(
 
   private suspend fun query(state: String, condition: String): Pair<Double, String> {
     val body = Json.encodeToString(SystemOneRequest.serializer(), SystemOneRequest(config.model, state, mapOf("condition" to NoulQuestion("noul", condition))))
-    val request = HttpRequest.newBuilder(uri)
-      .timeout(config.timeout.toJavaDuration())
-      .header("Content-Type", "application/json")
-      .apply { config.apiKey?.let { header("Authorization", "Bearer $it") } }
-      .POST(HttpRequest.BodyPublishers.ofString(body))
-      .build()
     val response = try {
+      // Built inside the guard: the JDK rejects a malformed header value with a message that would quote the key.
+      val request = HttpRequest.newBuilder(uri)
+        .timeout(config.timeout.toJavaDuration())
+        .header("Content-Type", "application/json")
+        .apply { config.apiKey?.let { header("Authorization", "Bearer $it") } }
+        .POST(HttpRequest.BodyPublishers.ofString(body))
+        .build()
       withTimeoutOrNull(config.timeout) { send(request) } ?: throw Failure("timeout")
     } catch (e: CancellationException) {
       throw e
@@ -123,7 +124,7 @@ class SystemOnePrecheck(
     }
     if (response.statusCode() !in 200..299) throw Failure("HTTP ${response.statusCode()}")
     val answer = try {
-      Json { ignoreUnknownKeys = true }.decodeFromString(SystemOneResponse.serializer(), response.body())
+      lenientJson.decodeFromString(SystemOneResponse.serializer(), response.body())
     } catch (_: SerializationException) {
       throw Failure("invalid response")
     } catch (_: IllegalArgumentException) {
@@ -151,9 +152,11 @@ class SystemOnePrecheck(
   private class SystemOneResponse(val model: String? = null, val answers: Map<String, NoulAnswer> = emptyMap())
 
   @Serializable
-  private class NoulAnswer(@SerialName("noul") val noul: JsonPrimitive? = null)
+  private class NoulAnswer(val noul: JsonPrimitive? = null)
 
   private companion object {
+    val lenientJson = Json { ignoreUnknownKeys = true }
+
     // Redirects stay off so the bearer key is never forwarded to another host.
     fun defaultSend(config: ResolvedPrecheck): suspend (HttpRequest) -> HttpResponse<String> {
       val client = HttpClient.newBuilder().connectTimeout(config.timeout.toJavaDuration()).followRedirects(HttpClient.Redirect.NEVER).build()

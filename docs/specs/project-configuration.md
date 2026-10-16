@@ -64,15 +64,15 @@ An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wa
 
 Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. The request is `POST <base-url>/v1/systemone` with a single `noul` question; only the accessibility tree and journey memory text are sent, never screenshots.
 
-A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts. A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback.
+A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts. A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback and is traced as `outcome=failed-discarded`.
 
 Validation failures are setup failures: exit `3` before a run directory, preflight or device session exists, with a message starting `precheck.`. They are:
 
-- `base-url` is not `https`, or is `http` for anything but `localhost`, `127.0.0.1` or `[::1]`, or has no host, credentials, query or fragment;
+- `base-url` is not `https`, or is `http` for anything but `localhost`, `127.0.0.1` or `[::1]`, has no host, or includes credentials, a query or a fragment;
 - `model` is missing for a server other than TypeSafe;
 - `timeout` is unparseable or not positive;
 - `pass-at` is not greater than `fail-at`;
-- the variable named by `api-key-env` is unset or blank.
+- the variable named by `api-key-env` is unset, blank or contains a control character.
 
 Thresholds outside `[0, 1]` are accepted. `pass-at: 2` with `fail-at: -1` is a shadow mode: every check is traced and then falls back to the inspector, which produces paired pre-check and inspector answers from one run.
 

@@ -146,6 +146,18 @@ class SystemOnePrecheckTest {
   }
 
   @Test
+  fun `a key the JDK rejects as a header falls back as an error without leaking it`() = withServer { f ->
+    val warnings = mutableListOf<String>()
+    val client = SystemOnePrecheck(config(f, apiKey = "bad\rkey"), warn = { warnings += it })
+
+    assertThat(client.check("S", "C", acceptFail = true)).isNull()
+
+    assertThat(client.stats.errorFallbacks).isEqualTo(1)
+    assertThat(warnings.single()).doesNotContain("bad")
+    assertThat(f.requests).hasSize(0)
+  }
+
+  @Test
   fun `a slow server times out into an error fallback`() = withServer { f ->
     f.respond = {
       f.release.await(5, TimeUnit.SECONDS)
