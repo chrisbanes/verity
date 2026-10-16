@@ -42,9 +42,12 @@ For other conditions, evaluation proceeds in this order:
 | --- | --- | --- |
 | `literal` | Case-insensitive substring match for the complete condition | A match satisfies the condition without a model request |
 | `focus` | A recognised focus form, using the existing lenient focus detector | True or false is final for this check, without a model request |
+| `precheck` | Opt-in [pre-check](project-configuration.md#pre-check) probability for the same PROMPT hierarchy, tried before the inspector | A confident pass or fail decides the check without an inspector request; otherwise the `tree` tier runs |
 | `tree` | Inspector evaluation of the current PROMPT accessibility hierarchy | A valid inspector verdict supplies the outcome and reasoning |
 
 The focus grammar recognises exactly `<target> is focused`, `<target> has focus` and `focus is on <target>`, case-insensitively. Targets are trimmed, with matching surrounding single or double quotes removed; blank targets are not recognised. Other focus-like prose belongs to tree inspection. Seeing the target text alone does not satisfy a false focus condition: the literal tier searches for the complete condition, not the extracted target. Literal, focus and tree work for one condition check share a single hierarchy capture.
+
+The pre-check never changes the literal, focus or visual tiers, and it never fails a check: a timeout, error or uncertain probability falls back to the `tree` tier unchanged. It saves the same hierarchy evidence as the inspector. In a batched D-pad loop only a confident pass is accepted, because an unmet check needs the inspector's batching hints; a confident fail falls back to the inspector.
 
 Choose a literal condition for visible text, a recognised focus form for navigation focus, tree inspection for relationships described by the accessibility hierarchy, and `visually` for appearance. Inspector tiers can incur provider costs; deterministic tiers do not request a model.
 
@@ -77,7 +80,7 @@ Inspector replies require a strict JSON object with a genuine boolean `passed` a
 
 ## Results, evidence and reuse
 
-Loop segments include optional structured `loop` metadata: `condition`, completed `iterations`, `tier` (`literal`, `focus`, `tree` or `visual`) and final condition `reasoning`. Batched D-pad loops also record `pressesPerCheck`, the bodies completed before each check after the first, for example `[6]` or `[3, 2, 1]`. It sums to `iterations` and is absent for other loops and when no body ran. Segment reasoning may also describe iteration or execution context. Tree and visual tiers retain the final evaluated hierarchy or screenshot reference when optional persistence succeeds. Failure to persist an optional screenshot uses a temporary current capture; it never permits visual evaluation without a captured image.
+Loop segments include optional structured `loop` metadata: `condition`, completed `iterations`, `tier` (`literal`, `focus`, `tree`, `visual` or `precheck`) and final condition `reasoning`. When the pre-check decided the final check the tier is `precheck` and `precheck` holds its `probability`, `model` and `host`; the field is absent otherwise. Batched D-pad loops also record `pressesPerCheck`, the bodies completed before each check after the first, for example `[6]` or `[3, 2, 1]`. It sums to `iterations` and is absent for other loops and when no body ran. Segment reasoning may also describe iteration or execution context. Tree and visual tiers retain the final evaluated hierarchy or screenshot reference when optional persistence succeeds. Failure to persist an optional screenshot uses a temporary current capture; it never permits visual evaluation without a captured image.
 
 `ConditionEvaluator.evaluate` performs one action-free check. It does not poll, delay or accumulate history, so a caller can own an overall deadline. An optional per-call `InspectionContext` carries reference text and earlier screenshot paths, empty by default. References are labelled separately from current state and are not proof of the current condition. The CLI fills it with bounded earlier verdicts, the execution trail (including earlier iterations of the current loop) and, for `visually` conditions, earlier screenshots; see [journey memory](journey-memory.md).
 
