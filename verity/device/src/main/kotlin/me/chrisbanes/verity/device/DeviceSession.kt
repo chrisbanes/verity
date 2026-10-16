@@ -78,6 +78,9 @@ interface DeviceSession : AutoCloseable {
 
   /** Wait for any in-progress animations to finish. */
   suspend fun waitForAnimationToEnd()
+
+  /** Poll bounded captures until two consecutive ones are structurally equal, within [budget]. */
+  suspend fun awaitStableHierarchy(budget: Duration): StableHierarchyResult = HierarchyStabilityObserver().await(this, budget)
 }
 
 /** A capture exhausted its owned complete-capture budget. */

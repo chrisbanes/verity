@@ -44,4 +44,6 @@ class TimingDeviceSession(
   override suspend fun checkFocused(text: String): Boolean = timed("checkFocused") { delegate.checkFocused(text) }
 
   override suspend fun waitForAnimationToEnd() = timed("waitForAnimationToEnd") { delegate.waitForAnimationToEnd() }
+
+  override suspend fun awaitStableHierarchy(budget: Duration): StableHierarchyResult = timed("awaitStableHierarchy") { delegate.awaitStableHierarchy(budget) }
 }
