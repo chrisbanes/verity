@@ -21,7 +21,7 @@ A check uses the same tiers as [loop conditions](loop-conditions.md#one-current-
 | --- | --- | --- |
 | Complete literal text | Case-insensitive substring search in the current hierarchy | Visible text establishes the condition without a model call |
 | `<target> is focused`, `<target> has focus`, `focus is on <target>` | Deterministic focus relationship | Navigation focus establishes the condition; false focus does not call the inspector |
-| Other prose | Inspector verdict over the current CONTENT hierarchy | The condition describes relationships in accessibility state |
+| Other prose | Inspector verdict over the current PROMPT hierarchy | The condition describes relationships in accessibility state |
 | Leading `visually` | Inspector verdict over a current screenshot | The condition concerns appearance that accessibility text cannot establish |
 
 For nonvisual waits, one bounded hierarchy capture supplies the literal, focus and tree checks for that poll. `visually` bypasses those checks and requires a screenshot. Tree and visual inspection use the configured inspector and can incur provider costs. No navigator request is generated for a wait.

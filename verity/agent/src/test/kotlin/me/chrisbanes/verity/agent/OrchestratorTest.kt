@@ -364,6 +364,35 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `tree assertion sends the prompt rendering without bounds-only wrappers`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(wrappedHome)))
+    val recorder = RecordingArtifactRecorder()
+    val orchestrator = Orchestrator(
+      session = session,
+      navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(error("unused")) } },
+      inspectorFactory = {
+        InspectorAgent(
+          evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed": true, "reasoning": "Tree matched"}""") },
+          evaluateVisualContent = { _, _, _, _ -> error("unused") },
+        )
+      },
+      artifactRecorder = recorder,
+    )
+
+    orchestrator.run(
+      Journey(
+        name = "tree-prompt",
+        app = APP_ID,
+        platform = Platform.ANDROID_MOBILE,
+        steps = listOf(JourneyStep.Assert(description = "Home is visible", mode = AssertMode.TREE)),
+      ),
+    )
+
+    assertThat(recorder.hierarchies.single()).isEqualTo(HierarchyRenderer.render(wrappedHome, HierarchyFilter.PROMPT))
+    assertThat(recorder.hierarchies.single()).isEqualTo("[text=Home, bounds=[10,10][100,50]]\n")
+  }
+
+  @Test
   fun `visual assertion records screenshot evidence`() = runTest {
     val screenshotDirectory = Files.createTempDirectory("verity-visual-test")
     try {
@@ -620,7 +649,7 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     val message = messages.single()
     assertThat(message).contains("Current accessibility tree (use its focused node to plan navigation):")
-    assertThat(message).contains(HierarchyRenderer.render(tree, HierarchyFilter.CONTENT))
+    assertThat(message).contains(HierarchyRenderer.render(tree, HierarchyFilter.PROMPT))
     assertThat(session.renderedActionFlows.last()).isEqualTo(flow("- tapOn: \"Settings\""))
   }
 
@@ -710,6 +739,17 @@ class OrchestratorTest {
   }
 
   @Test
+  fun `slow path omits bounds-only wrappers from the navigator hierarchy`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(List(5) { wrappedHome }))
+    val messages = mutableListOf<String>()
+
+    slowPathOrchestrator(withBoundedCapture(session), messages).run(slowJourney)
+
+    assertThat(messages.single()).contains("[text=Home, bounds=[10,10][100,50]]")
+    assertThat(messages.single()).doesNotContain("[bounds=[0,0][1000,500]]")
+  }
+
+  @Test
   fun `loop slow path passes hierarchy to navigator`() = runTest {
     val tree = HierarchyNode(attributes = mapOf("text" to "Home"), states = setOf("focused"))
     val session = FakeDeviceSession(screens = ArrayDeque(listOf(screen("Home"), tree, screen("Settings"))))
@@ -718,7 +758,7 @@ class OrchestratorTest {
 
     slowPathOrchestrator(withBoundedCapture(session), messages).run(journey)
 
-    assertThat(messages.single()).contains(HierarchyRenderer.render(tree, HierarchyFilter.CONTENT))
+    assertThat(messages.single()).contains(HierarchyRenderer.render(tree, HierarchyFilter.PROMPT))
   }
 
   @Test
@@ -974,7 +1014,7 @@ class OrchestratorTest {
     )
     assertThat(session.hierarchyCaptures).isEqualTo(6) // 1 initial + 5 post-scroll
     assertThat(prompts.map { it.substringAfter("Current screen:\n") })
-      .isEqualTo(screens.take(5).map { HierarchyRenderer.render(it, HierarchyFilter.CONTENT) })
+      .isEqualTo(screens.take(5).map { HierarchyRenderer.render(it, HierarchyFilter.PROMPT) })
   }
 
   @Test
@@ -996,8 +1036,22 @@ class OrchestratorTest {
       flow("- tapOn: \"Settings\""),
     )
     assertThat(session.hierarchyCaptures).isEqualTo(2) // initial + the one performed scroll
-    val home = HierarchyRenderer.render(screen("Home"), HierarchyFilter.CONTENT)
+    val home = HierarchyRenderer.render(screen("Home"), HierarchyFilter.PROMPT)
     assertThat(prompts.map { it.substringAfter("Current screen:\n") }).containsExactly(home, home)
+  }
+
+  @Test
+  fun `scroll-to-find prompts with the prompt rendering without bounds-only wrappers`() = runTest {
+    val session = FakeDeviceSession(screens = ArrayDeque(listOf(wrappedHome, screen("Settings"))))
+    val prompts = mutableListOf<String>()
+    val orchestrator = scrollOrchestrator(session) {
+      prompts += it
+      modelReply("DOWN")
+    }
+
+    orchestrator.run(tapSettingsJourney())
+
+    assertThat(prompts.single().substringAfter("Current screen:\n")).isEqualTo("[text=Home, bounds=[10,10][100,50]]\n")
   }
 
   @Test
@@ -1716,6 +1770,12 @@ class OrchestratorTest {
     const val APP_ID = "com.example.app"
     const val LAUNCH_FLOW = "appId: \"$APP_ID\"\n---\n- launchApp"
     fun screen(text: String) = HierarchyNode(attributes = mapOf("text" to text))
+
+    /** A bounds-only wrapper around one text node: `PROMPT` drops the wrapper line, `CONTENT` keeps it. */
+    val wrappedHome = HierarchyNode(
+      attributes = mapOf("bounds" to "[0,0][1000,500]"),
+      children = listOf(HierarchyNode(attributes = mapOf("text" to "Home", "bounds" to "[10,10][100,50]"))),
+    )
     fun flow(command: String) = "appId: \"$APP_ID\"\n---\n$command"
 
     fun deleteRecursively(path: Path) {

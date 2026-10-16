@@ -62,7 +62,7 @@ class ConditionEvaluator(
     FocusConditionParser.parse(condition)?.let { target ->
       return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint), tree)
     }
-    val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.CONTENT, checkpoint)
+    val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.PROMPT, checkpoint)
     val evaluation = inspection.inspectTree(hierarchy, condition, context, loopHints)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence, tree)
   }
@@ -119,7 +119,7 @@ internal class ScreenInspection(
   private val onInspectedScreenshot: suspend (Path) -> Unit = {},
 ) {
   suspend fun tree(description: String, context: InspectionContext = InspectionContext()): InspectionEvaluation {
-    val hierarchy = session.captureHierarchy(HierarchyFilter.CONTENT)
+    val hierarchy = session.captureHierarchy(HierarchyFilter.PROMPT)
     return inspectTree(hierarchy, description, context)
   }
 

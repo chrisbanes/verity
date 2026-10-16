@@ -88,7 +88,7 @@ class ConditionEvaluatorTest {
       assertThat(session.treeCaptures).isEqualTo(4)
       assertThat(message).contains("Settings")
       assertThat(message).contains("page has a settings menu")
-      val expectedHierarchy = HierarchyRenderer.render(HierarchyNode(attributes = mapOf("text" to "Settings")), HierarchyFilter.CONTENT)
+      val expectedHierarchy = HierarchyRenderer.render(HierarchyNode(attributes = mapOf("text" to "Settings")), HierarchyFilter.PROMPT)
       assertThat(savedHierarchies).isEqualTo(listOf(expectedHierarchy))
     }
   }
@@ -215,6 +215,39 @@ class ConditionEvaluatorTest {
     assertThat(messages.size).isEqualTo(2)
     assertThat(messages[0].contains(InspectorAgent.LOOP_HINTS)).isFalse()
     assertThat(messages[1]).contains(InspectorAgent.LOOP_HINTS)
+  }
+
+  @Test
+  fun `tree tier sends and saves the prompt rendering without bounds-only wrappers`() = runTest {
+    val wrapped = HierarchyNode(
+      attributes = mapOf("bounds" to "[0,0][1000,500]"),
+      children = listOf(HierarchyNode(attributes = mapOf("text" to "Home", "bounds" to "[10,10][100,50]"))),
+    )
+    val session = object : DeviceSession by StateSession() {
+      override suspend fun captureHierarchyTree() = wrapped
+    }
+    var message = ""
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, userMessage, _ ->
+        message = userMessage
+        inspectionReply("""{"passed":true,"reasoning":"ok"}""")
+      },
+      evaluateVisualContent = { _, _, _, _ -> error("unexpected visual") },
+    )
+    val saved = mutableListOf<String>()
+    val recorder = object : JourneyArtifactRecorder {
+      override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String? {
+        saved += hierarchy
+        return "hierarchy.txt"
+      }
+    }
+
+    ConditionEvaluator(session, inspector, recorder).evaluate("home screen is shown")
+
+    val expected = HierarchyRenderer.render(wrapped, HierarchyFilter.PROMPT)
+    assertThat(expected).isEqualTo("[text=Home, bounds=[10,10][100,50]]\n")
+    assertThat(message).contains(expected)
+    assertThat(saved).isEqualTo(listOf(expected))
   }
 
   private class StateSession : DeviceSession {

@@ -13,6 +13,7 @@ class HierarchyCheckpointTest {
     for (operation in listOf<(() -> Unit) -> Unit>(
       { checkpoint -> node.containsText("absent", checkpoint = checkpoint) },
       { checkpoint -> HierarchyRenderer.render(node, HierarchyFilter.ALL, checkpoint) },
+      { checkpoint -> HierarchyRenderer.render(node, HierarchyFilter.PROMPT, checkpoint) },
     )) {
       var checkpoints = 0
       assertFailsWith<Stop> { operation { if (++checkpoints == 50) throw Stop() } }
@@ -43,5 +44,6 @@ class HierarchyCheckpointTest {
     assertThat(node.containsText("settings")).isEqualTo(node.containsText("settings", checkpoint = {}))
     assertThat(FocusDetector.containsFocused(node, "Settings")).isEqualTo(FocusDetector.containsFocused(node, "Settings") {})
     assertThat(HierarchyRenderer.render(node, HierarchyFilter.CONTENT)).isEqualTo(HierarchyRenderer.render(node, HierarchyFilter.CONTENT) {})
+    assertThat(HierarchyRenderer.render(node, HierarchyFilter.PROMPT)).isEqualTo(HierarchyRenderer.render(node, HierarchyFilter.PROMPT) {})
   }
 }

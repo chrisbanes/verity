@@ -280,7 +280,7 @@ class Orchestrator(
 
     // Scroll-to-find loop (max 5 attempts); the post-scroll capture answers both the visibility check and the next prompt.
     repeat(5) {
-      val direction = navigator.suggestScrollDirection(targetText, HierarchyRenderer.render(tree, HierarchyFilter.CONTENT))
+      val direction = navigator.suggestScrollDirection(targetText, HierarchyRenderer.render(tree, HierarchyFilter.PROMPT))
         ?: return@repeat // A valid NONE is an ordinary navigation outcome.
 
       record(Interaction.Scroll(direction), TrailOrigin.SCROLL_TO_FIND)
@@ -311,7 +311,7 @@ class Orchestrator(
       val started = System.nanoTime()
       val callerContext = currentCoroutineContext()
       val tree = session.captureHierarchyTree(HIERARCHY_CAPTURE_TIMEOUT)
-      HierarchyRenderer.render(tree, HierarchyFilter.CONTENT) {
+      HierarchyRenderer.render(tree, HierarchyFilter.PROMPT) {
         callerContext.ensureActive()
         if (System.nanoTime() - started >= HIERARCHY_CAPTURE_TIMEOUT.inWholeNanoseconds) throw CaptureDeadlineExceededException(CaptureOperation.HIERARCHY)
       }

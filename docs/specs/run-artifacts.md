@@ -27,7 +27,7 @@ Journey keys use a one-based, three-digit index and a slug of the journey name. 
 
 Generated slow-path actions and complete loop bodies are validated as `ActionFlow` lists. The selected object is rendered as YAML and saved before that same object is executed when possible. Fast-path interactions are represented by action text and execution mode without manufacturing generated YAML. The static application launch is executed separately and is not currently recorded as a generated segment flow.
 
-Tree assertions and conditions save the hierarchy used for evaluation; visual assertions and conditions save the screenshot used for evaluation when possible. Loop evidence represents the final evaluated state, not a history of checks. Visible/focused assertions do not persist evidence files. Internal structured execution creates no Maestro flow temporary files. Public supplied-YAML execution retains its separate temporary-file lifecycle.
+Tree assertions and conditions save the hierarchy used for evaluation (the `PROMPT` rendering the inspector received); visual assertions and conditions save the screenshot used for evaluation when possible. Loop evidence represents the final evaluated state, not a history of checks. Visible/focused assertions do not persist evidence files. Internal structured execution creates no Maestro flow temporary files. Public supplied-YAML execution retains its separate temporary-file lifecycle.
 
 ## JSON contract
 

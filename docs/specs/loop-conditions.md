@@ -42,7 +42,7 @@ For other conditions, evaluation proceeds in this order:
 | --- | --- | --- |
 | `literal` | Case-insensitive substring match for the complete condition | A match satisfies the condition without a model request |
 | `focus` | A recognised focus form, using the existing lenient focus detector | True or false is final for this check, without a model request |
-| `tree` | Inspector evaluation of the current CONTENT accessibility hierarchy | A valid inspector verdict supplies the outcome and reasoning |
+| `tree` | Inspector evaluation of the current PROMPT accessibility hierarchy | A valid inspector verdict supplies the outcome and reasoning |
 
 The focus grammar recognises exactly `<target> is focused`, `<target> has focus` and `focus is on <target>`, case-insensitively. Targets are trimmed, with matching surrounding single or double quotes removed; blank targets are not recognised. Other focus-like prose belongs to tree inspection. Seeing the target text alone does not satisfy a false focus condition: the literal tier searches for the complete condition, not the extracted target. Literal, focus and tree work for one condition check share a single hierarchy capture.
 
