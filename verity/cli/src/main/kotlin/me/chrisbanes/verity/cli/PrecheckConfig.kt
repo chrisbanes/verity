@@ -63,8 +63,8 @@ fun resolvePrecheck(
   } else {
     (config?.apiKeyEnv ?: TYPESAFE_API_KEY_ENV.takeIf { typeSafe })?.let { name ->
       val key = requireNotNull(env(name)?.takeIf { it.isNotBlank() }) { "precheck.api-key-env: environment variable $name is not set" }
-      // A control character (a stray CR from a CRLF key file) cannot be sent in a header.
-      require(key.none { it.isISOControl() }) { "precheck.api-key-env: environment variable $name contains a control character" }
+      // A control or non-Latin-1 character (a stray CR from a CRLF key file, say) cannot be sent in a header.
+      require(key.none { it.isISOControl() || it.code > 0xFF }) { "precheck.api-key-env: environment variable $name contains an unsupported character" }
       key
     }
   }

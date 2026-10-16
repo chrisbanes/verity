@@ -90,6 +90,7 @@ class PrecheckConfigTest {
     assertRejected(VerityPrecheckConfig(enabled = true), env = emptyMap())
     assertRejected(VerityPrecheckConfig(enabled = true), env = mapOf("TYPESAFE_API_KEY" to "  "))
     assertRejected(VerityPrecheckConfig(enabled = true), env = mapOf("TYPESAFE_API_KEY" to "s3cr3t\r"))
+    assertRejected(VerityPrecheckConfig(enabled = true), env = mapOf("TYPESAFE_API_KEY" to "s3cr3t\u2603"))
   }
 
   @Test

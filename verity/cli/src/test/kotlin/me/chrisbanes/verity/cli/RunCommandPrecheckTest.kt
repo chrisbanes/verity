@@ -213,6 +213,26 @@ class RunCommandPrecheckTest {
   }
 
   @Test
+  fun `an enabled run that fails during setup still reports zero pre-check counts`() {
+    val dir = createTempDirectory("verity-pc-setup").toFile()
+    try {
+      val output = File(dir, "output")
+      val command = RunCommand(
+        loadConfig = { enabledConfig(1) },
+        preflightChecker = { _, _, _, _ -> error("preflight failed") },
+        sessionFactory = { _, _, _ -> error("no session") },
+      )
+
+      val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run ${journey(dir, "Wait until the page is ready").path}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 0, 0))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
   fun `without configuration nothing about the pre-check appears`() {
     val dir = createTempDirectory("verity-pc-off").toFile()
     try {

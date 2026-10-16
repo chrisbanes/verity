@@ -46,6 +46,7 @@ import me.chrisbanes.verity.core.result.EffortArtifactSetting
 import me.chrisbanes.verity.core.result.EffortSettingMode
 import me.chrisbanes.verity.core.result.JourneyArtifactIdentity
 import me.chrisbanes.verity.core.result.JourneyArtifactResult
+import me.chrisbanes.verity.core.result.PrecheckSummaryArtifact
 import me.chrisbanes.verity.core.result.SegmentArtifactResult
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
 import me.chrisbanes.verity.core.result.SuiteJourneyArtifact
@@ -639,7 +640,8 @@ class RunCommand(
     inspectorEffort = metadata?.inspectorEffort,
     openaiAuth = metadata?.openaiAuth,
     modelBackend = metadata?.modelBackend,
-    precheck = precheckClient?.stats?.snapshot(),
+    // An enabled run that failed before the client started still reports zero counts, so it differs from a disabled run.
+    precheck = precheckClient?.stats?.snapshot() ?: precheckConfig?.let { PrecheckSummaryArtifact(0, 0, 0) },
   )
 
   private fun ResolvedJourneyResult.toArtifactResult(): JourneyArtifactResult = JourneyArtifactResult(
