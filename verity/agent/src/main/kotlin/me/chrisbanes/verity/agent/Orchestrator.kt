@@ -404,7 +404,7 @@ class Orchestrator(
           var baseline: FocusObservation? = null
           while (pressed < size) {
             val after = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
-              session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }
+              session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }.focus
             }
             pressed++
             completedBodies++

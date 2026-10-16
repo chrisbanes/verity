@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.agent
 
 import me.chrisbanes.verity.core.hierarchy.FocusObservation
+import me.chrisbanes.verity.core.hierarchy.observeFocus
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
@@ -10,9 +11,10 @@ import me.chrisbanes.verity.device.FocusChangeObserver
 
 /**
  * Executes a validated [flow] in order. Raw keycode actions cannot be Maestro commands, and on
- * Android TV direction key presses settle on focus change instead of a Maestro animation wait, so
- * each maximal run of other actions becomes its own Maestro sub-flow and those keys are pressed
- * directly between them, settling afterwards. A wait for animation right after a direct press is
+ * Android TV direct key presses settle on focus change or hierarchy stability instead of a Maestro
+ * animation wait, so each maximal run of other actions becomes its own Maestro sub-flow and those
+ * keys are pressed directly between them, settling afterwards. A stable settle's tree supplies the
+ * next press's focus baseline. A wait for animation right after a direct press is
  * replaced by its settle. The first failed sub-flow stops the walk.
  */
 internal suspend fun DeviceSession.executeOrdered(
@@ -41,11 +43,12 @@ internal suspend fun DeviceSession.executeOrdered(
     }
     if (run.isNotEmpty()) focus = null
     if (!flush()) return result
-    focus = when (action) {
+    val settled = when (action) {
       is Interaction.KeyCode -> pressAndSettle(focusObserver, action.isDirection(), focus) { pressKey(action.keycode, action.longPress) }
       is Interaction.KeyPress -> pressAndSettle(focusObserver, direction = true, focus) { pressKey(action.keyName) }
       else -> error("Unexpected direct action: $action")
     }
+    focus = settled.focus ?: settled.tree?.let(::observeFocus)
     previousDirect = true
   }
   flush()
