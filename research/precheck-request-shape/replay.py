@@ -92,12 +92,21 @@ SHAPES = {
 }
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    # urllib would forward the Authorization header to a redirect target; refuse redirects like the production client.
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def ask(base_url, model, key, state, question):
     body = json.dumps({"model": model, "state": state, "questions": {"condition": question}}).encode()
     request = urllib.request.Request(f"{base_url}/v1/systemone", data=body, method="POST",
                                      headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with OPENER.open(request, timeout=15) as response:
             return float(json.load(response)["answers"]["condition"]["noul"])
     except (urllib.error.URLError, KeyError, ValueError, TimeoutError) as e:
         return type(e).__name__
