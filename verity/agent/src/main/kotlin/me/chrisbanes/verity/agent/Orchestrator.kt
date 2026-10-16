@@ -398,17 +398,16 @@ class Orchestrator(
       val seen = mutableListOf<FocusObservation>()
       // Cleared on the first edge, wrap or unmet on-screen prediction; every later body is checked.
       var batching = true
-      // The last press's stable settle tree, which answers the following check.
-      var settled: HierarchyNode? = null
       validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
       while (completedBodies < loop.max) {
         evaluation.tree?.let { seen += observeFocus(it) }
         val prediction = if (batching) predictPresses(direction, evaluation) else null
         val size = minOf(prediction?.presses ?: 1, loop.max - completedBodies)
         var pressed = 0
+        // The last press's stable settle tree, which answers the following check.
+        var settled: HierarchyNode? = null
         try {
           var baseline: FocusObservation? = null
-          settled = null
           while (pressed < size) {
             val result = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
               session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }
@@ -455,7 +454,7 @@ class Orchestrator(
         return result(e.message.orEmpty())
       }
       completedBodies++
-      evaluation = evaluator.evaluate(loop.until, memory.inspectionContext(visual), tree = settled)
+      evaluation = check(settled)
       if (evaluation.verdict.passed) return result()
     }
     return result()

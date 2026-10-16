@@ -14,8 +14,9 @@ import me.chrisbanes.verity.device.FocusChangeObserver
  * Android TV direct key presses settle on focus change or hierarchy stability instead of a Maestro
  * animation wait, so each maximal run of other actions becomes its own Maestro sub-flow and those
  * keys are pressed directly between them, settling afterwards. A stable settle's tree supplies the
- * next press's focus baseline; [visual] keeps the animation wait for screenshot checks. A wait for animation right after a direct press is
- * replaced by its settle. The first failed sub-flow stops the walk.
+ * next press's focus baseline; [visual] keeps the animation wait for screenshot checks. A wait for
+ * animation right after a direct press is replaced by its settle. The first failed sub-flow stops
+ * the walk.
  */
 internal suspend fun DeviceSession.executeOrdered(
   flow: ActionFlow,
