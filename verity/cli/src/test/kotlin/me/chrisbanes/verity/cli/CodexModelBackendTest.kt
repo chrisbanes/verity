@@ -366,7 +366,7 @@ class CodexModelBackendTest {
   @Test
   fun `informational notifications are accepted only when bound to the owned thread and turn`() = runTest {
     withContext(Dispatchers.Default) {
-      listOf("model-bound-foreign-settings", "model-bound-foreign-warning", "model-bound-null-warning", "model-bound-absent-warning", "model-bound-foreign-raw-completed", "model-bound-raw-completed-foreign-turn", "model-bound-raw-completed-missing-turn", "model-bound-raw-completed-before-turn", "model-bound-mcp-status").forEach { scenario ->
+      listOf("model-bound-foreign-settings", "model-bound-foreign-warning", "model-bound-null-warning", "model-bound-absent-warning", "model-bound-foreign-raw-completed", "model-bound-raw-completed-foreign-turn", "model-bound-raw-completed-missing-turn", "model-bound-moderation-foreign-turn", "model-bound-raw-completed-before-turn", "model-bound-mcp-status").forEach { scenario ->
         fixture(scenario) { fake, backend ->
           assertThat(assertFailsWith<CodexFailure>("scenario=$scenario") { backend.execute(request()) }.kind, "scenario=$scenario").isEqualTo(CodexFailureKind.PROTOCOL)
           // Before the turn ID is known there is no owned turn to interrupt; the exact process is closed instead.
