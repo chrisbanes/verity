@@ -1640,6 +1640,59 @@ class OrchestratorTest {
     }
   }
 
+  /** An Android TV fake whose captures follow [afterPress] once Select is pressed, logging each capture as an event. */
+  private fun selectSession(before: HierarchyNode, afterPress: List<HierarchyNode>): me.chrisbanes.verity.device.FakeDeviceSession {
+    lateinit var fake: me.chrisbanes.verity.device.FakeDeviceSession
+    var afterCaptures = 0
+    fake = me.chrisbanes.verity.device.FakeDeviceSession(Platform.ANDROID_TV, hierarchyProvider = {
+      fake.events += "capture"
+      if (fake.pressedKeys.isEmpty()) before else afterPress[minOf(afterCaptures++, afterPress.lastIndex)]
+    })
+    return fake
+  }
+
+  private fun text(value: String) = HierarchyNode(attributes = mapOf("text" to value))
+
+  @Test
+  fun `side effect loop checks the tree its key press settled on`() = runTest {
+    val session = selectSession(text("Item 0"), listOf(text("Item 1"), text("Item 2"), text("Item done")))
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not yet"}""") },
+      evaluateVisualContent = { _, _, _, _ -> error("unexpected visual") },
+    )
+    val journey = Journey("settle", APP_ID, Platform.ANDROID_TV, steps = listOf(JourneyStep.Loop("Press select", "Item done", 3)))
+
+    val result = loopOrchestrator(session, inspector).run(journey)
+
+    assertThat(result.passed).isTrue()
+    assertThat(result.segments.single().loop?.iterations).isEqualTo(1)
+    assertThat(session.pressedKeys).containsExactly("Remote Dpad Center")
+    // Four settle captures (T1, T2, Tdone, Tdone) and the trail's after-capture; the check captures nothing.
+    val afterPress = session.events.dropWhile { it != "name:Remote Dpad Center" }.drop(1)
+    assertThat(afterPress).isEqualTo(List(5) { "capture" })
+  }
+
+  @Test
+  fun `visual loop keeps the animation wait after each key press`() = runTest {
+    val fake = selectSession(text("Item 0"), listOf(text("Item 1")))
+    val session = object : DeviceSession by fake {
+      override suspend fun captureScreenshot(output: Path) {
+        Files.write(output, byteArrayOf(1))
+      }
+    }
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ -> error("unexpected tree") },
+      evaluateVisualContent = { _, _, _, _ -> inspectionReply("""{"passed":false,"reasoning":"not yet"}""") },
+    )
+    val journey = Journey("visual", APP_ID, Platform.ANDROID_TV, steps = listOf(JourneyStep.Loop("Press select", "visually the item is done", 2)))
+
+    loopOrchestrator(session, inspector).run(journey)
+
+    val presses = fake.events.withIndex().filter { it.value == "name:Remote Dpad Center" }
+    assertThat(presses.size).isEqualTo(2)
+    assertThat(presses.map { fake.events[it.index + 1] }).containsExactly("settle", "settle")
+  }
+
   private fun loopJourney(body: String, max: Int, platform: Platform) = Journey(
     name = "loop-contract",
     app = APP_ID,
