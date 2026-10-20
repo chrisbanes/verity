@@ -21,7 +21,7 @@ import me.chrisbanes.verity.device.ios.BoundedIosScreenshotCapture
 import me.chrisbanes.verity.device.ios.IosDeviceSession
 import me.chrisbanes.verity.device.ios.XCTestHierarchyIosDevice
 import me.chrisbanes.verity.device.preflight.LocalProcessRunner
-import me.chrisbanes.verity.device.preflight.isIpAddress
+import me.chrisbanes.verity.device.preflight.isBareIpv4Address
 import me.chrisbanes.verity.device.preflight.parseSimctlDevices
 import util.IOSDeviceType
 import xcuitest.XCTestClient
@@ -166,9 +166,9 @@ object DeviceSessionFactory {
   }
 
   private fun validateAndroidDeviceId(deviceId: String) {
-    require(!isIpAddress(deviceId)) {
-      "Invalid Android device ID '$deviceId'. Expected an ADB serial (for example, " +
-        "emulator-5554), not an IP address."
+    require(!isBareIpv4Address(deviceId)) {
+      "Invalid Android device ID '$deviceId'. Expected an ADB serial from `adb devices` " +
+        "(for example, emulator-5554 or 192.168.1.20:5555), not a bare IP address."
     }
   }
 }

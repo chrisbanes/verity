@@ -11,14 +11,14 @@ class AndroidPreflightChecker(
   private val processRunner: ProcessRunner = LocalProcessRunner,
 ) {
   suspend fun check(deviceId: String?): PreflightReport {
-    if (deviceId != null && isIpAddress(deviceId)) {
+    if (deviceId != null && isBareIpv4Address(deviceId)) {
       return PreflightReport(
         listOf(
           PreflightIssue(
             code = PreflightCodes.ANDROID_DEVICE_ID_INVALID,
             severity = PreflightSeverity.ERROR,
             message = "Invalid Android device ID '$deviceId'.",
-            remediation = "Pass an ADB serial such as emulator-5554 instead of an IP address.",
+            remediation = "Pass the serial `adb devices` lists, such as emulator-5554 or 192.168.1.20:5555, not a bare IP address.",
             details = mapOf("device" to deviceId),
           ),
         ),
@@ -113,7 +113,7 @@ class AndroidPreflightChecker(
   }
 }
 
-private val IPV4_WITH_OPTIONAL_PORT = Regex("""^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$""")
+private val BARE_IPV4 = Regex("""^\d{1,3}(?:\.\d{1,3}){3}$""")
 
-/** ADB device IDs must be serials; IP addresses are rejected by both preflight and connect. */
-internal fun isIpAddress(value: String): Boolean = IPV4_WITH_OPTIONAL_PORT.matches(value)
+/** ADB never lists a portless IP as a serial, so preflight and connect both reject it; `IP:port` is a valid wireless serial. */
+internal fun isBareIpv4Address(value: String): Boolean = BARE_IPV4.matches(value)

@@ -731,7 +731,26 @@ class DeviceSessionProductionReadyTest {
         createWithId = { error("unused") },
         discover = { error("unused") },
       )
-    }.messageContains("Expected an ADB serial")
+    }.also {
+      it.messageContains("Expected an ADB serial")
+      it.messageContains("adb devices")
+    }
+  }
+
+  @Test
+  fun `resolveAndroidConnection accepts wireless ip port serial`() {
+    val expected = Any()
+
+    val connection = DeviceSessionFactory.resolveAndroidConnection(
+      deviceId = "192.168.1.20:5555",
+      createWithId = { id ->
+        assertThat(id).isEqualTo("192.168.1.20:5555")
+        expected
+      },
+      discover = { error("unused") },
+    )
+
+    assertThat(connection).isEqualTo(expected)
   }
 
   private class FakeIosDevice : device.IOSDevice {
