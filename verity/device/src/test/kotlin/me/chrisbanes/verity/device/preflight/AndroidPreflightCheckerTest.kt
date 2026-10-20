@@ -1,6 +1,7 @@
 package me.chrisbanes.verity.device.preflight
 
 import assertk.assertThat
+import assertk.assertions.contains
 import assertk.assertions.isEqualTo
 import assertk.assertions.isTrue
 import kotlin.test.Test
@@ -59,7 +60,43 @@ class AndroidPreflightCheckerTest {
 
     val report = checker.check(deviceId = "192.168.1.20")
 
-    assertThat(report.issues.single().code).isEqualTo(PreflightCodes.ANDROID_DEVICE_ID_INVALID)
+    val issue = report.issues.single()
+    assertThat(issue.code).isEqualTo(PreflightCodes.ANDROID_DEVICE_ID_INVALID)
+    assertThat(issue.remediation.orEmpty()).contains("adb devices")
+    assertThat(issue.remediation.orEmpty()).contains("192.168.1.20:5555")
+  }
+
+  @Test
+  fun `accepts wireless ip port serial as explicit android device id`() = runTest {
+    val checker = AndroidPreflightChecker(
+      processRunner = FakeProcessRunner(
+        mapOf(
+          listOf("adb", "version") to ProcessResult(0, "ok"),
+          listOf("adb", "-s", "192.168.1.20:5555", "get-state") to ProcessResult(0, "device\n"),
+        ),
+      ),
+    )
+
+    val report = checker.check(deviceId = "192.168.1.20:5555")
+
+    assertThat(report.passed).isTrue()
+  }
+
+  @Test
+  fun `reports unavailable wireless ip port serial as device unavailable`() = runTest {
+    val checker = AndroidPreflightChecker(
+      processRunner = FakeProcessRunner(
+        mapOf(
+          listOf("adb", "version") to ProcessResult(0, "ok"),
+          listOf("adb", "-s", "192.168.1.20:5555", "get-state") to
+            ProcessResult(1, "error: device '192.168.1.20:5555' not found"),
+        ),
+      ),
+    )
+
+    val report = checker.check(deviceId = "192.168.1.20:5555")
+
+    assertThat(report.issues.single().code).isEqualTo(PreflightCodes.ANDROID_DEVICE_UNAVAILABLE)
   }
 }
 

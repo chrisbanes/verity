@@ -15,7 +15,7 @@ private val platformNames = Platform.entries.joinToString { it.wireName }
 class Verity : CliktCommand(name = "verity") {
   override fun help(context: Context): String = "LLM-powered E2E testing for mobile and TV"
 
-  val device: String? by option("--device", help = "Device ID or IP:port (auto-discover if omitted)")
+  val device: String? by option("--device", help = "Device ID: an ADB serial from adb devices (including wireless IP:port, not a bare IP) or iOS UDID; auto-discover if omitted")
   val platform: Platform? by option(
     "--platform",
     help = "Override target platform: $platformNames (defaults to journey platform)",
