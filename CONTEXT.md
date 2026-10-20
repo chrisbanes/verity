@@ -73,6 +73,14 @@ _Avoid_: Domain glossary, project configuration
 Verity's built-in guidance for device automation and platform controls.
 _Avoid_: Project context
 
+**Pre-check**:
+An optional fast probability judgement of a loop or wait condition, consulted before the inspector. Only a confident answer decides the check; anything else falls back to the inspector on the same evidence.
+_Avoid_: Assertion, inspection
+
+**Pre-check provider**:
+The service and protocol that answers pre-checks. It is chosen separately from the model provider that powers navigation and inspection.
+_Avoid_: Model provider
+
 ### Outcomes
 
 **Run artifact**:
