@@ -88,6 +88,7 @@ class KeyActionParserTest {
       "missing keycode" to (block("A: 1", "Open: { long-press: true }") to "remote.md:3"),
       "negative keycode" to (block("A: 1", "Open: -1") to "remote.md:3"),
       "fractional keycode" to (block("A: 1", "Open: 1.5") to "remote.md:3"),
+      "non-ascii digits" to (block("A: 1", "Open: \u0661\u0667\u0664") to "remote.md:3"),
       "hex keycode" to (block("A: 1", "Open: 0x1A") to "remote.md:3"),
       "overflowing keycode" to (block("A: 1", "Open: 99999999999") to "remote.md:3"),
       "bad long-press" to (block("A: 1", "Open: { keycode: 1, long-press: yes }") to "remote.md:3"),

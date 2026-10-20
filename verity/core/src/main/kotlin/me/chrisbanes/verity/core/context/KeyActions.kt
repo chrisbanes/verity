@@ -97,7 +97,7 @@ internal object KeyActionParser {
 
   private fun keycode(node: YamlScalar, fail: (Int, String) -> Nothing): Int {
     val content = node.content
-    return content.takeIf { it.all(Char::isDigit) }?.toIntOrNull()
+    return content.takeIf { it.isNotEmpty() && it.all { c -> c in '0'..'9' } }?.toIntOrNull()
       ?: fail(node.location.line, "keycode must be a non-negative integer, got \"$content\"")
   }
 }

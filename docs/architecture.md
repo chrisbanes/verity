@@ -509,7 +509,7 @@ Saved files survive `close_session`, and callers eventually delete them after us
 | `check_visible` | session_id, text | true/false | Deterministic, case-insensitive |
 | `check_focused` | session_id, text | true/false | Lenient ancestor/sibling/child check |
 | `run_loop` | session_id, action, until | SATISFIED/NOT + iterations | Optional: max, wait_ms |
-| `get_context` | optional path | loaded-file metadata + bundled defaults + markdown context text | Required context can error |
+| `get_context` | optional path | loaded-file metadata (plus `Key actions: N` when [key actions](specs/project-context.md#key-actions) load) + bundled defaults + markdown context text | Required context, malformed key-action blocks and duplicate key actions error |
 
 
 `press_key` accepts an exact JSON string `key` or a non-negative integer JSON `keycode` within JVM `Int` range. Optional `long_press` must be a JSON Boolean and defaults to false. Selector, type, range and focus-option validation happen before session work. Sessions lacking `supportsRawKeycodes` or `supportsLongPress` reject the matching raw/hold call before hierarchy capture, input or animation waiting; iOS currently has neither. Supported default calls retain their text response and animation wait; focus waiting uses the same baseline/action/wait sequence under one session mutex for every supported selector and hold choice. These arguments extend the shared stdio/HTTP registration without changing journey or loop key resolution; see the [TV controls context](../verity/core/src/main/resources/verity/context/tv-controls.md).
