@@ -143,7 +143,7 @@ class RunCommand(
 
   // Set once per run before any device work; null when the pre-check is off.
   private var precheckConfig: ResolvedPrecheck? = null
-  private var precheckClient: SystemOnePrecheck? = null
+  private var precheckStats: PrecheckStats? = null
 
   // Only a real run records; the default no-op keeps ordinary runs identical.
   private val recorder: RecordingPhaseTimer? by lazy { if (timing) RecordingPhaseTimer() else null }
@@ -362,7 +362,7 @@ class RunCommand(
     } finally {
       // Also on failure: a slow failing run is the one worth measuring.
       recorder?.let { echo(it.report().render()) }
-      if (recorder != null) precheckClient?.let { echo(it.stats.render()) }
+      if (recorder != null) precheckStats?.let { echo(it.render()) }
     }
   }
 
@@ -642,7 +642,7 @@ class RunCommand(
     openaiAuth = metadata?.openaiAuth,
     modelBackend = metadata?.modelBackend,
     // An enabled run that failed before the client started still reports zero counts, so it differs from a disabled run.
-    precheck = precheckClient?.stats?.snapshot() ?: precheckConfig?.let { PrecheckSummaryArtifact(0, 0, 0) },
+    precheck = precheckStats?.snapshot() ?: precheckConfig?.let { PrecheckSummaryArtifact(0, 0, 0) },
   )
 
   private fun ResolvedJourneyResult.toArtifactResult(): JourneyArtifactResult = JourneyArtifactResult(
@@ -724,7 +724,7 @@ class RunCommand(
     echo("Total: ${suiteResult.results.size}")
     echo("Passed: ${suiteResult.passedCount}")
     echo("Failed: ${suiteResult.failedCount}")
-    precheckClient?.let { echo(it.stats.render()) }
+    precheckStats?.let { echo(it.render()) }
   }
 
   private suspend fun runSuiteWithDevice(
@@ -778,8 +778,10 @@ class RunCommand(
       echo("Provider: ${provider.name}")
       echo("Navigator model: ${navigatorModel.id}")
       echo("Inspector model: ${inspectorModel.id}")
-      val client = precheckConfig?.let { SystemOnePrecheck(it, preflight.trace, timer, warn = { message -> echo(message, err = true) }) }
-      precheckClient = client
+      val client = precheckConfig?.let { config ->
+        val stats = PrecheckStats().also { precheckStats = it }
+        SystemOnePrecheck(config, stats, preflight.trace, timer, warn = { message -> echo(message, err = true) })
+      }
       precheckConfig?.let { echo("Pre-check: ${it.model} at ${URI(it.baseUrl).authority}") }
       projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 

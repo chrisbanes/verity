@@ -83,7 +83,8 @@ class SystemOnePrecheckTest {
 
   @Test
   fun `confident pass posts the system one request and counts it accepted`() = withServer { f ->
-    val client = SystemOnePrecheck(config(f))
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f), stats)
 
     val verdict = client.check(S, "C", acceptFail = true)
 
@@ -96,12 +97,12 @@ class SystemOnePrecheckTest {
         """{"model":"jev-latest","state":{"accessibility_tree":"S"},"questions":{"condition":{"type":"noul","instructions":"Using the current accessibility tree of an Android TV app, does the screen satisfy this condition? Earlier observations are reference only, not proof. Condition: C","criteria":$CRITERIA}}}""",
       ),
     )
-    assertThat(client.stats.accepted).isEqualTo(1)
+    assertThat(stats.accepted).isEqualTo(1)
   }
 
   @Test
   fun `earlier observations are a separate state field and the platform is named in the question`() = withServer { f ->
-    val client = SystemOnePrecheck(config(f))
+    val client = SystemOnePrecheck(config(f), PrecheckStats())
 
     client.check(PrecheckState(Platform.IOS, "T", referenceText = "R"), "the row is ready", acceptFail = true)
     client.check(PrecheckState(Platform.ANDROID_MOBILE, "T"), "the row is ready", acceptFail = true)
@@ -120,35 +121,38 @@ class SystemOnePrecheckTest {
   @Test
   fun `confident fail returns a failed verdict`() = withServer { f ->
     f.respond = { 200 to ok(0.05) }
-    assertThat(SystemOnePrecheck(config(f)).check(S, "C", acceptFail = true)!!.passed).isEqualTo(false)
+    assertThat(SystemOnePrecheck(config(f), PrecheckStats()).check(S, "C", acceptFail = true)!!.passed).isEqualTo(false)
   }
 
   @Test
   fun `a confident fail the caller cannot use counts as an uncertain fallback`() = withServer { f ->
     f.respond = { 200 to ok(0.05) }
-    val client = SystemOnePrecheck(config(f))
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f), stats)
 
     assertThat(client.check(S, "C", acceptFail = false)).isNull()
-    assertThat(client.stats.accepted).isEqualTo(0)
-    assertThat(client.stats.uncertainFallbacks).isEqualTo(1)
+    assertThat(stats.accepted).isEqualTo(0)
+    assertThat(stats.uncertainFallbacks).isEqualTo(1)
   }
 
   @Test
   fun `uncertain probability falls back without a warning`() = withServer { f ->
     f.respond = { 200 to ok(0.5) }
     val warnings = mutableListOf<String>()
-    val client = SystemOnePrecheck(config(f), warn = { warnings += it })
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f), stats, warn = { warnings += it })
 
     assertThat(client.check(S, "C", acceptFail = true)).isNull()
-    assertThat(client.stats.uncertainFallbacks).isEqualTo(1)
-    assertThat(client.stats.errorFallbacks).isEqualTo(0)
+    assertThat(stats.uncertainFallbacks).isEqualTo(1)
+    assertThat(stats.errorFallbacks).isEqualTo(0)
     assertThat(warnings).hasSize(0)
   }
 
   @Test
   fun `every failure kind falls back, is counted as an error, and warns once without secrets`() = withServer { f ->
     val warnings = mutableListOf<String>()
-    val client = SystemOnePrecheck(config(f), warn = { warnings += it })
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f), stats, warn = { warnings += it })
     val responses = listOf(
       500 to "boom",
       401 to "nope",
@@ -162,8 +166,8 @@ class SystemOnePrecheckTest {
       assertThat(client.check(PrecheckState(Platform.ANDROID_TV, "TREE-TEXT"), "C", acceptFail = true)).isNull()
     }
 
-    assertThat(client.stats.errorFallbacks).isEqualTo(responses.size)
-    assertThat(client.stats.uncertainFallbacks).isEqualTo(0)
+    assertThat(stats.errorFallbacks).isEqualTo(responses.size)
+    assertThat(stats.uncertainFallbacks).isEqualTo(0)
     assertThat(warnings).hasSize(1)
     assertThat(warnings.single()).all {
       contains("127.0.0.1:${f.port}")
@@ -176,11 +180,12 @@ class SystemOnePrecheckTest {
   @Test
   fun `a key the JDK rejects as a header falls back as an error without leaking it`() = withServer { f ->
     val warnings = mutableListOf<String>()
-    val client = SystemOnePrecheck(config(f, apiKey = "bad\rkey"), warn = { warnings += it })
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f, apiKey = "bad\rkey"), stats, warn = { warnings += it })
 
     assertThat(client.check(S, "C", acceptFail = true)).isNull()
 
-    assertThat(client.stats.errorFallbacks).isEqualTo(1)
+    assertThat(stats.errorFallbacks).isEqualTo(1)
     assertThat(warnings.single()).doesNotContain("bad")
     assertThat(f.requests).hasSize(0)
   }
@@ -192,20 +197,21 @@ class SystemOnePrecheckTest {
       200 to ok(0.95)
     }
     val warnings = mutableListOf<String>()
-    val client = SystemOnePrecheck(config(f), warn = { warnings += it })
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f), stats, warn = { warnings += it })
 
     val started = TimeSource.Monotonic.markNow()
     assertThat(client.check(S, "C", acceptFail = true)).isNull()
 
     assertThat(started.elapsedNow().inWholeMilliseconds).isLessThan(1500)
-    assertThat(client.stats.errorFallbacks).isEqualTo(1)
+    assertThat(stats.errorFallbacks).isEqualTo(1)
     assertThat(warnings.single()).contains("(timeout)")
   }
 
   @Test
   fun `bearer key is sent only when configured`() = withServer { f ->
-    SystemOnePrecheck(config(f, apiKey = "k1")).check(S, "C", acceptFail = true)
-    SystemOnePrecheck(config(f, apiKey = null)).check(S, "C", acceptFail = true)
+    SystemOnePrecheck(config(f, apiKey = "k1"), PrecheckStats()).check(S, "C", acceptFail = true)
+    SystemOnePrecheck(config(f, apiKey = null), PrecheckStats()).check(S, "C", acceptFail = true)
 
     assertThat(f.requests.map { it.second }).isEqualTo(listOf("Bearer k1", null))
   }
@@ -214,7 +220,7 @@ class SystemOnePrecheckTest {
   fun `trace and timing cover successes and failures without the key`() = withServer { f ->
     val lines = CopyOnWriteArrayList<String>()
     val timer = RecordingPhaseTimer()
-    val client = SystemOnePrecheck(config(f), trace = { _, text -> lines += text }, timer = timer)
+    val client = SystemOnePrecheck(config(f), PrecheckStats(), trace = { _, text -> lines += text }, timer = timer)
 
     client.check(S, "C", acceptFail = true)
     f.respond = { 500 to "boom" }
@@ -244,13 +250,14 @@ class SystemOnePrecheckTest {
       f.release.await(5, TimeUnit.SECONDS)
       200 to ok(0.95)
     }
-    val client = SystemOnePrecheck(config(f).copy(timeout = 10_000.milliseconds))
+    val stats = PrecheckStats()
+    val client = SystemOnePrecheck(config(f).copy(timeout = 10_000.milliseconds), stats)
     coroutineScope {
       val call = async { client.check(S, "C", acceptFail = true) }
       withContext(Dispatchers.IO) { entered.await(5, TimeUnit.SECONDS) }
       call.cancelAndJoin()
       assertThat(runCatching { call.await() }.exceptionOrNull()).isNotNull().isInstanceOf<CancellationException>()
     }
-    assertThat(client.stats.snapshot().let { listOf(it.accepted, it.uncertainFallbacks, it.errorFallbacks) }).isEqualTo(listOf(0, 0, 0))
+    assertThat(stats.snapshot().let { listOf(it.accepted, it.uncertainFallbacks, it.errorFallbacks) }).isEqualTo(listOf(0, 0, 0))
   }
 }

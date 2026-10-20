@@ -59,13 +59,12 @@ class PrecheckStats {
  */
 class SystemOnePrecheck(
   private val config: ResolvedPrecheck,
+  private val stats: PrecheckStats,
   private val trace: ModelTraceSink? = null,
   private val timer: PhaseTimer = NoOpPhaseTimer,
   private val warn: (String) -> Unit = { System.err.println(it) },
   private val send: suspend (HttpRequest) -> HttpResponse<String> = defaultSend(config),
 ) : ConditionPrecheck {
-  val stats = PrecheckStats()
-
   private val uri = URI("${config.baseUrl}/v1/systemone")
   private val host = uri.host + if (uri.port != -1) ":${uri.port}" else ""
   private val ids = AtomicLong()
