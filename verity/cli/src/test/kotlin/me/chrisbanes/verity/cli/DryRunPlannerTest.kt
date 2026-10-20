@@ -10,6 +10,7 @@ import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
 import assertk.assertions.messageContains
 import com.github.ajalt.clikt.core.CliktError
+import java.io.File
 import kotlin.test.Test
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import me.chrisbanes.verity.agent.NavigatorAgent
 import me.chrisbanes.verity.agent.modelReply
+import me.chrisbanes.verity.core.context.KeyAction
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
@@ -554,6 +556,30 @@ class DryRunPlannerTest {
     assertThat(failure.statusCode).isEqualTo(3)
     assertThat(failure.message.orEmpty()).contains("Dry-run YAML generation failed")
     assertThat(failure.message.orEmpty()).contains("UNSUPPORTED_INTERACTION")
+  }
+
+  @Test
+  fun `key actions preview as mapped interactions with their source in steps and loop bodies`() = runTest {
+    val keys = listOf(KeyAction("Open Quick Actions", 174, longPress = false, file = File("remote.md"), line = 3))
+    val planner = DryRunPlanner(navigatorFactory = { error("must not initialize navigator") }, keyActions = keys)
+    val tv = Journey(
+      "Keys",
+      "com.example.app",
+      Platform.ANDROID_TV,
+      listOf(JourneyStep.Action(" open quick actions "), JourneyStep.Loop("Open Quick Actions", "page is ready", 2)),
+    )
+    val segments = planner.plan(resolvedJourney(tv)).segments
+
+    val expected = "KeyCode(keycode=174, longPress=false) from key action in remote.md:3"
+    assertThat(segments[0].actions?.kind).isEqualTo(DryRunExecutionKind.FAST_PATH)
+    assertThat(segments[0].actions?.interactions.orEmpty()).containsExactly(expected)
+    assertThat(segments[1].loop?.interactions.orEmpty()).containsExactly(expected)
+    assertThat(segments[1].loop?.batching).isEqualTo(false)
+
+    val ios = tv.copy(platform = Platform.IOS)
+    val failure = runCatching { planner.plan(resolvedJourney(ios)) }.exceptionOrNull() as CliktError
+    assertThat(failure.statusCode).isEqualTo(3)
+    assertThat(failure.message.orEmpty()).contains("Mapped action preparation failed")
   }
 
   private val previewSentinel = "sk-private Bearer private-credential eyJprivate.payload.signature HTTP_BODY_PRIVATE HEADER_PRIVATE"

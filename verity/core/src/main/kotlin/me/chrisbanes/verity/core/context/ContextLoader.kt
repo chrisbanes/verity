@@ -1,11 +1,14 @@
 package me.chrisbanes.verity.core.context
 
 import java.io.File
+import me.chrisbanes.verity.core.interaction.InteractionMapper
+import me.chrisbanes.verity.core.model.Platform
 
 data class ContextBundle(
   val text: String,
   val loadedFiles: List<File>,
   val status: ContextStatus,
+  val keyActions: List<KeyAction> = emptyList(),
 )
 
 enum class ContextStatus {
@@ -19,9 +22,13 @@ enum class ContextStatus {
 fun ContextBundle.describe(contextDir: File?, required: Boolean, fileLine: (File) -> String): List<String> {
   val mode = if (required) "required" else "optional"
   return when (status) {
-    ContextStatus.LOADED -> listOf("Project context: loaded ${loadedFiles.size} file(s)") + loadedFiles.map(fileLine)
+    ContextStatus.LOADED -> listOf("Project context: loaded ${loadedFiles.size} file(s)") + loadedFiles.map(fileLine) +
+      listOfNotNull("Key actions: ${keyActions.size}".takeIf { keyActions.isNotEmpty() })
+
     ContextStatus.NOT_CONFIGURED -> listOf("Project context: $mode, not configured")
+
     ContextStatus.MISSING_DIRECTORY -> listOf("Project context: $mode, missing directory: ${contextDir!!.absolutePath}")
+
     ContextStatus.EMPTY_DIRECTORY -> listOf("Project context: $mode, no markdown files found in: ${contextDir!!.absolutePath}")
   }
 }
@@ -50,7 +57,11 @@ object ContextLoader {
 
   fun load(directory: File): String = loadProject(directory = directory, required = false).text
 
-  fun loadProject(directory: File?, required: Boolean): ContextBundle {
+  /**
+   * Loads project context and parses its `verity-key-actions` blocks, which fail setup even when context is optional.
+   * With a [platform], a key action whose name that platform's built-in mapper already maps is rejected.
+   */
+  fun loadProject(directory: File?, required: Boolean, platform: Platform? = null): ContextBundle {
     val bundle = when {
       directory == null -> ContextBundle(
         text = "",
@@ -77,10 +88,12 @@ object ContextLoader {
             status = ContextStatus.EMPTY_DIRECTORY,
           )
         } else {
+          val texts = files.map { it.readText() }
           ContextBundle(
-            text = files.joinToString("\n\n") { it.readText().trim() },
+            text = texts.joinToString("\n\n") { it.trim() },
             loadedFiles = files,
             status = ContextStatus.LOADED,
+            keyActions = validated(files.zip(texts).flatMap { (file, text) -> KeyActionParser.parse(file, text) }, platform),
           )
         }
       }
@@ -91,6 +104,20 @@ object ContextLoader {
     }
 
     return bundle
+  }
+
+  private fun validated(keyActions: List<KeyAction>, platform: Platform?): List<KeyAction> {
+    val builtIn = platform?.let(InteractionMapper::forPlatform)
+    val seen = mutableMapOf<String, KeyAction>()
+    for (action in keyActions) {
+      seen.put(action.name.lowercase(), action)?.let {
+        throw ContextValidationException("Duplicate key action \"${action.name}\" in ${it.location} and ${action.location}")
+      }
+      if (builtIn?.map(action.name) != null) {
+        throw ContextValidationException("Key action \"${action.name}\" in ${action.location} matches a built-in $platform instruction")
+      }
+    }
+    return keyActions
   }
 
   private fun ContextBundle.requiredFailureMessage(directory: File?): String = when (status) {

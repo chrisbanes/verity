@@ -69,6 +69,10 @@ _Avoid_: Generated flow, evidence
 Application-specific guidance supplied to help interpret journey instructions.
 _Avoid_: Domain glossary, project configuration
 
+**Key action**:
+A named action that project context maps to a specific device key press, which may be a long press. The name stands for the whole gesture.
+_Avoid_: Named action, keycode action
+
 **Bundled context**:
 Verity's built-in guidance for device automation and platform controls.
 _Avoid_: Project context

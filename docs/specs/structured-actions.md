@@ -8,7 +8,7 @@ An unknown `keyPress` name fails with `UNSUPPORTED_KEY` and a detail that names 
 
 ## Raw keycodes
 
-`{"type":"keyCode","keycode":174}` sends a raw Android keycode, here `KEYCODE_BOOKMARK`. `keycode` is a required non-negative JSON integer and `longPress` an optional JSON boolean (default `false`); strings, fractions, `null` and unknown properties are rejected. On Android TV and mobile, the whole steps `press keycode N` and `long press keycode N` map to this action without a model call; other wording goes to the navigator, whose Android prompts teach the action.
+`{"type":"keyCode","keycode":174}` sends a raw Android keycode, here `KEYCODE_BOOKMARK`. `keycode` is a required non-negative JSON integer and `longPress` an optional JSON boolean (default `false`); strings, fractions, `null` and unknown properties are rejected. On Android TV and mobile, the whole steps `press keycode N` and `long press keycode N` map to this action without a model call; a [key action](project-context.md#key-actions) declared in project context maps the same way, checked before the built-in phrases. Other wording goes to the navigator, whose Android prompts teach the action.
 
 A keycode action is never compiled to a Maestro command. It runs through `DeviceSession.pressKey(keycode, longPress)`, and needs `supportsRawKeycodes` (plus `supportsLongPress` when `longPress` is true). A session without them, currently iOS, rejects the flow with `UNSUPPORTED_INTERACTION` before any device work in that flow or loop body: mapped groups are checked before their first action, and generated flows right after generation, before the generated-flow artifact is written.
 

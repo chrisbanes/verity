@@ -560,6 +560,47 @@ class VerityMcpServerTest {
   }
 
   @Test
+  fun `get_context reports key actions and keeps the blocks in the text`() = runTest {
+    // MCP has no platform, so a built-in name like "Press back" loads without the collision check.
+    val block = "```verity-key-actions\nOpen Quick Actions: 174\nPress back: 4\n```"
+    val withBlock = getContext("remote.md" to "# Remote\n$block")
+    assertThat(withBlock.isError).isIn(null, false)
+    assertThat(withBlock.text()).contains("Key actions: 2")
+    assertThat(withBlock.text()).contains(block)
+
+    assertThat(getContext("app.md" to "# App").text().contains("Key actions")).isEqualTo(false)
+  }
+
+  @Test
+  fun `get_context errors for malformed blocks and duplicate names across files`() = runTest {
+    val malformed = getContext("remote.md" to "x\n```verity-key-actions\nOpen: [1]\n```")
+    assertThat(malformed.isError).isEqualTo(true)
+    assertThat(malformed.text()).contains("Invalid key action in remote.md:3")
+
+    val duplicate = getContext(
+      "a.md" to "```verity-key-actions\nOpen: 1\n```",
+      "b.md" to "```verity-key-actions\nopen: 2\n```",
+    )
+    assertThat(duplicate.isError).isEqualTo(true)
+    assertThat(duplicate.text()).contains("in a.md:2 and b.md:2")
+  }
+
+  private suspend fun getContext(vararg files: Pair<String, String>): CallToolResult {
+    val dir = kotlin.io.path.createTempDirectory("mcp-key-actions").toFile()
+    try {
+      files.forEach { (name, text) -> File(dir, name).writeText(text) }
+      return VerityMcpServer(contextPath = dir).create().tools["get_context"]!!.handler.invoke(
+        StubClientConnection(),
+        CallToolRequest(CallToolRequestParams(name = "get_context")),
+      )
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  private fun CallToolResult.text() = (content.first() as TextContent).text
+
+  @Test
   fun `get_context errors when required configured path is missing`() = runTest {
     val server = VerityMcpServer(
       contextPath = File("/nonexistent/context"),
