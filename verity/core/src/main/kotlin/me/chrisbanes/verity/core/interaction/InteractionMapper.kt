@@ -1,5 +1,6 @@
 package me.chrisbanes.verity.core.interaction
 
+import me.chrisbanes.verity.core.context.KeyAction
 import me.chrisbanes.verity.core.model.Platform
 
 interface InteractionMapper {
@@ -15,6 +16,11 @@ interface InteractionMapper {
       Platform.ANDROID_TV -> AndroidTvInteractionMapper
       Platform.ANDROID_MOBILE -> AndroidMobileInteractionMapper
       Platform.IOS -> IosInteractionMapper
+    }
+
+    /** The platform mapper, with [keyActions] resolved first; the platform mapper itself when there are none. */
+    fun forPlatform(platform: Platform, keyActions: List<KeyAction>): InteractionMapper = forPlatform(platform).let {
+      if (keyActions.isEmpty()) it else KeyActionInteractionMapper(keyActions, it)
     }
   }
 }

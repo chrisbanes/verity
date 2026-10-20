@@ -7,10 +7,12 @@ import me.chrisbanes.verity.agent.ConditionEvaluator
 import me.chrisbanes.verity.agent.ConditionKind
 import me.chrisbanes.verity.agent.ModelFailureException
 import me.chrisbanes.verity.agent.redactModelDiagnostic
+import me.chrisbanes.verity.core.context.KeyAction
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.hierarchy.FocusStepPlanner
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.interaction.InteractionMapper
+import me.chrisbanes.verity.core.interaction.KeyActionInteractionMapper
 import me.chrisbanes.verity.core.journey.JourneySegmenter
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.AssertMode
@@ -88,6 +90,7 @@ class DryRunPlanner(
   private val context: String = "",
   /** Whether a run would pre-check prose conditions; only labels tiers, nothing is resolved or called. */
   private val precheck: Boolean = false,
+  private val keyActions: List<KeyAction> = emptyList(),
 ) {
   private var navigator: DryRunNavigator? = null
 
@@ -113,7 +116,7 @@ class DryRunPlanner(
         interactions = body.interactions,
         yaml = body.yaml,
         batching = ConditionEvaluator.canBatchPresses(loop.until) &&
-          FocusStepPlanner.batchDirection(InteractionMapper.forPlatform(resolvedJourney.journey.platform).mapAll(loop.actionInstructions), resolvedJourney.journey.platform) != null,
+          FocusStepPlanner.batchDirection(mapper(resolvedJourney.journey.platform).mapAll(loop.actionInstructions), resolvedJourney.journey.platform) != null,
         tier = conditionTier(loop.until),
       )
     },
@@ -137,7 +140,8 @@ class DryRunPlanner(
     if (instructions.isEmpty()) return null
 
     val journey = resolvedJourney.journey
-    val interactions = InteractionMapper.forPlatform(journey.platform).mapAll(instructions)
+    val mapper = mapper(journey.platform)
+    val interactions = mapper.mapAll(instructions)
     return if (interactions != null) {
       try {
         validateActionFlow(ActionFlow(journey.app, interactions), journey.platform)
@@ -149,7 +153,10 @@ class DryRunPlanner(
       DryRunActionGroupReport(
         instructions = instructions,
         kind = DryRunExecutionKind.FAST_PATH,
-        interactions = interactions.map(::describeInteraction),
+        interactions = interactions.mapIndexed { index, interaction ->
+          val source = (mapper as? KeyActionInteractionMapper)?.keyActionFor(instructions[index])?.let { " from key action in ${it.location}" }.orEmpty()
+          describeInteraction(interaction) + source
+        },
       )
     } else {
       DryRunActionGroupReport(
@@ -200,6 +207,8 @@ class DryRunPlanner(
     redactModelDiagnostic("Dry-run YAML generation failed for ${resolvedJourney.file.path} segment ${segment.index}: $message"),
     statusCode = status,
   )
+
+  private fun mapper(platform: Platform) = InteractionMapper.forPlatform(platform, keyActions)
 
   private suspend fun navigator(): DryRunNavigator = navigator ?: navigatorFactory().also { navigator = it }
 

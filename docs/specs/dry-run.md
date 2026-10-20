@@ -4,7 +4,7 @@
 
 ## Execution boundary
 
-Dry run resolves and parses journeys, applies platform overrides and assertion strategy, and creates a report for each journey. Directory ordering, empty-directory rejection, and mixed-platform rejection follow the [suite spec](directory-suite-runs.md). Optional or required [project context](project-context.md) is loaded before planning.
+Dry run resolves and parses journeys, applies platform overrides and assertion strategy, and creates a report for each journey. Directory ordering, empty-directory rejection, and mixed-platform rejection follow the [suite spec](directory-suite-runs.md). Optional or required [project context](project-context.md) is loaded before planning; a malformed or conflicting key-action block exits `3`, and a loaded key action adds a `Key actions: N` status line.
 
 It never performs device preflight, opens a device session, executes a flow, captures screen state, or evaluates an assertion. Assertion descriptions and modes in a report are planned checks, not verdicts.
 
@@ -16,7 +16,7 @@ The report includes the static application-launch YAML and each segment's action
 
 Navigator creation and provider/navigator-model/credential preflight are deferred until generated actions are needed. Fast-path-only suites require neither a valid provider configuration nor credentials, and explicit navigator effort is not validated. Inspector models and inspector effort are not validated because assertions are not evaluated. When generation is needed, only the navigator's explicit effort is checked against the selected provider/model/backend before client creation, then passed through unchanged. An unsupported setting exits with setup code `3`; a fast-only preview remains lazy even when the unused effort settings are invalid. Slow-path planning may make LLM calls and incur provider costs. `--model-trace` follows the same lazy boundary: a fast-only preview never opens or validates the trace file, and generation opens it during navigator preflight. See the [preflight spec](preflight-checks.md#reasoning-effort-capability) for supported rows and request fields.
 
-Mapped groups and generated complete action lists pass the device-free command compiler before entering the report. Generated lists are decoded from strict JSON and rendered as YAML only for the preview. A raw keycode renders as a preview-only `keyCode` entry; it is accepted for Android journeys and rejected for iOS journeys with setup code `3`, without device work. Validation performs no filesystem or device operations.
+Mapped groups and generated complete action lists pass the device-free command compiler before entering the report. Generated lists are decoded from strict JSON and rendered as YAML only for the preview. A raw keycode renders as a preview-only `keyCode` entry, and an instruction resolved from a [key action](project-context.md#key-actions) shows its source after the interaction, for example `KeyCode(keycode=174, longPress=false) from key action in remote.md:12`; it is accepted for Android journeys and rejected for iOS journeys with setup code `3`, without device work. Validation performs no filesystem or device operations.
 
 Generation failures identify the journey file, segment and fixed model stage/failure class. All journeys are planned before report writing starts, so a generation failure stops later planning and does not produce a new partial report marked as successful.
 

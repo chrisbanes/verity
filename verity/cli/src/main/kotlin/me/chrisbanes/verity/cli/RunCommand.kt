@@ -398,7 +398,7 @@ class RunCommand(
   ): DryRunSuiteReport {
     val contextDir = resolved.contextPath
     val requireContext = resolveRequiredContext(parent.requireContext, config)
-    val projectContext = loadProjectContext(contextDir, requireContext) { throw CliktError(redactModelDiagnostic(it), statusCode = EXIT_SETUP) }
+    val projectContext = loadProjectContext(contextDir, requireContext, journeys.first().journey.platform) { throw CliktError(redactModelDiagnostic(it), statusCode = EXIT_SETUP) }
     projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
 
     var backend: ModelRequestBackend? = null
@@ -407,6 +407,7 @@ class RunCommand(
     try {
       val planner = DryRunPlanner(
         context = projectContext.text,
+        keyActions = projectContext.keyActions,
         precheck = precheckEnabled(config.precheck, PrecheckCliOptions(precheck)),
         // DryRunPlanner memoizes the navigator, so the backend is acquired at most once.
         navigatorFactory = {
@@ -474,10 +475,11 @@ class RunCommand(
   private suspend fun loadProjectContext(
     contextDir: File?,
     required: Boolean,
+    platform: Platform,
     onInvalid: (String) -> Nothing,
   ): ContextBundle = try {
     withContext(Dispatchers.IO) {
-      ContextLoader.loadProject(directory = contextDir, required = required)
+      ContextLoader.loadProject(directory = contextDir, required = required, platform = platform)
     }
   } catch (e: ContextValidationException) {
     onInvalid(e.message ?: "Project context validation failed")
@@ -738,7 +740,7 @@ class RunCommand(
     val platform = journeys.first().journey.platform
     val contextDir = resolved.contextPath
     val requireContext = resolveRequiredContext(parent.requireContext, config)
-    val projectContext = loadProjectContext(contextDir, requireContext) { throw CliktError(it) }
+    val projectContext = loadProjectContext(contextDir, requireContext, platform) { throw CliktError(it) }
 
     val preflight = preflightChecker(
       parent.preflightRequest(path, platform, resolved.deviceId),
@@ -809,6 +811,7 @@ class RunCommand(
               artifactRecorder = artifactRecorder,
               timer = timer,
               precheck = client,
+              keyActions = projectContext.keyActions,
             )
             orchestrator.run(resolved.journey)
           }.copy(metadata = resolved.toRunArtifactMetadata()).also { completedResults = it.results }

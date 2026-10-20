@@ -4,6 +4,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import me.chrisbanes.verity.core.context.KeyAction
 import me.chrisbanes.verity.core.flow.ActionFlowYamlRenderer
 import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.hierarchy.FocusStepPlanner
@@ -59,6 +60,7 @@ class Orchestrator(
   private val nowNanos: () -> Long = System::nanoTime,
   private val timer: PhaseTimer = NoOpPhaseTimer,
   private val precheck: ConditionPrecheck? = null,
+  private val keyActions: List<KeyAction> = emptyList(),
 ) {
   suspend fun run(journey: Journey): JourneyResult {
     // Launch the app before executing any segments; running them on the wrong screen proves nothing.
@@ -90,7 +92,7 @@ class Orchestrator(
               index = segment.index,
               passed = false,
               reasoning = e.message.orEmpty(),
-              executionMode = if (isFastPath(instructions, journey.platform)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
+              executionMode = if (isFastPath(instructions, journey.platform, keyActions)) SegmentExecutionMode.FAST else SegmentExecutionMode.SLOW,
               actions = instructions,
               error = ArtifactError(ArtifactErrorKind.JOURNEY_FAILURE, e.message.orEmpty()),
             )
@@ -145,7 +147,7 @@ class Orchestrator(
     if (segment.actions.isNotEmpty()) {
       val instructions = segment.actions.map { it.instruction }
       actions = instructions
-      val interactions = InteractionMapper.forPlatform(platform).mapAll(instructions)
+      val interactions = InteractionMapper.forPlatform(platform, keyActions).mapAll(instructions)
       if (interactions != null) {
         executeFastPath(instructions, interactions, appId, navigator, memory, TrailSource(segment.index))
         executionMode = SegmentExecutionMode.FAST
@@ -362,7 +364,7 @@ class Orchestrator(
     memory: JourneyMemory,
   ): LoopResult {
     val instructions = loop.actionInstructions
-    val fastPathInteractions = InteractionMapper.forPlatform(platform).mapAll(instructions)
+    val fastPathInteractions = InteractionMapper.forPlatform(platform, keyActions).mapAll(instructions)
     val visual = ConditionEvaluator.isVisual(loop.until)
     val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeIf { ConditionEvaluator.canBatchPresses(loop.until) }
     val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck)
@@ -540,9 +542,6 @@ class Orchestrator(
     /** Budget for the optional navigator hierarchy; expiry is treated like any capture failure. */
     private val HIERARCHY_CAPTURE_TIMEOUT = 5.seconds
 
-    fun isFastPath(instructions: List<String>, platform: Platform): Boolean {
-      val mapper = InteractionMapper.forPlatform(platform)
-      return mapper.allMappable(instructions)
-    }
+    fun isFastPath(instructions: List<String>, platform: Platform, keyActions: List<KeyAction> = emptyList()): Boolean = InteractionMapper.forPlatform(platform, keyActions).allMappable(instructions)
   }
 }
