@@ -15,8 +15,10 @@ data class VerityPrecheckConfig(
   val timeout: String? = null,
   @SerialName("pass-at") val passAt: Double? = null,
   @SerialName("fail-at") val failAt: Double? = null,
-  /** Experimental: also pre-check `visually` loop and wait conditions with the current screenshot (TypeSafe only). */
+  /** Experimental: also pre-check `visually` loop and wait conditions with the current screenshot (System One at TypeSafe, or Decisions). */
   @SerialName("visual-enabled") val visualEnabled: Boolean? = null,
+  /** `system-one` (default) or `decisions`; each provider has its own defaults. */
+  val provider: String? = null,
 )
 
 data class PrecheckCliOptions(
@@ -24,6 +26,8 @@ data class PrecheckCliOptions(
   val model: String? = null,
   val baseUrl: String? = null,
 )
+
+enum class PrecheckProvider { SYSTEM_ONE, DECISIONS }
 
 data class ResolvedPrecheck(
   val baseUrl: String,
@@ -34,13 +38,17 @@ data class ResolvedPrecheck(
   val failAt: Double,
   /** Whether `visually` loop and wait conditions are pre-checked with the current screenshot. */
   val visual: Boolean = false,
+  val provider: PrecheckProvider = PrecheckProvider.SYSTEM_ONE,
 ) {
-  override fun toString(): String = "ResolvedPrecheck(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey == null) "null" else "<redacted>"}, timeout=$timeout, passAt=$passAt, failAt=$failAt, visual=$visual)"
+  override fun toString(): String = "ResolvedPrecheck(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey == null) "null" else "<redacted>"}, timeout=$timeout, passAt=$passAt, failAt=$failAt, visual=$visual, provider=$provider)"
 }
 
 const val TYPESAFE_BASE_URL = "https://api.typesafe.ai"
 private const val TYPESAFE_DEFAULT_MODEL = "jev-latest"
 private const val TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY"
+const val OPENAI_BASE_URL = "https://api.openai.com"
+private const val DECISIONS_MODEL = "gpt-6-luna"
+private const val OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 private val LOOPBACK_HOSTS = setOf("localhost", "127.0.0.1", "[::1]")
 
 /** Whether the pre-check is on, without validating the rest of its configuration. */
@@ -58,19 +66,28 @@ fun resolvePrecheck(
 ): ResolvedPrecheck? {
   if (!precheckEnabled(config, cli)) return null
 
-  val baseUrl = (cli.baseUrl ?: config?.baseUrl ?: TYPESAFE_BASE_URL).trimEnd('/')
+  val provider = when (config?.provider) {
+    null, "system-one" -> PrecheckProvider.SYSTEM_ONE
+    "decisions" -> PrecheckProvider.DECISIONS
+    else -> throw IllegalArgumentException("precheck.provider must be system-one or decisions")
+  }
+  val decisions = provider == PrecheckProvider.DECISIONS
+  val defaultBaseUrl = if (decisions) OPENAI_BASE_URL else TYPESAFE_BASE_URL
+  val baseUrl = (cli.baseUrl ?: config?.baseUrl ?: defaultBaseUrl).trimEnd('/')
   validateBaseUrl(baseUrl)
-  val typeSafe = baseUrl == TYPESAFE_BASE_URL
+  // A default key (and System One's default model) only ever applies at the provider's own host.
+  val atDefaultHost = baseUrl == defaultBaseUrl
   val visual = config?.visualEnabled ?: false
-  require(!visual || typeSafe) { "precheck.visual-enabled requires base-url $TYPESAFE_BASE_URL" }
+  require(!visual || decisions || baseUrl == TYPESAFE_BASE_URL) { "precheck.visual-enabled requires base-url $TYPESAFE_BASE_URL" }
 
-  val model = cli.model ?: config?.model ?: TYPESAFE_DEFAULT_MODEL.takeIf { typeSafe }
+  val model = cli.model ?: config?.model ?: if (decisions) DECISIONS_MODEL else TYPESAFE_DEFAULT_MODEL.takeIf { atDefaultHost }
   require(!model.isNullOrBlank()) { "precheck.model is required unless base-url is $TYPESAFE_BASE_URL" }
 
+  val defaultKeyEnv = (if (decisions) OPENAI_API_KEY_ENV else TYPESAFE_API_KEY_ENV).takeIf { atDefaultHost }
   val apiKey = if (cli.baseUrl != null) {
     null
   } else {
-    (config?.apiKeyEnv ?: TYPESAFE_API_KEY_ENV.takeIf { typeSafe })?.let { name ->
+    (config?.apiKeyEnv ?: defaultKeyEnv)?.let { name ->
       val key = requireNotNull(env(name)?.takeIf { it.isNotBlank() }) { "precheck.api-key-env: environment variable $name is not set" }
       // A control or non-Latin-1 character (a stray CR from a CRLF key file, say) cannot be sent in a header.
       require(key.none { it.isISOControl() || it.code > 0xFF }) { "precheck.api-key-env: environment variable $name contains an unsupported character" }
@@ -87,11 +104,11 @@ fun resolvePrecheck(
   } ?: Duration.parse("2s")
   require(timeout.isPositive()) { "precheck.timeout must be positive" }
 
-  val passAt = config?.passAt ?: 0.9
-  val failAt = config?.failAt ?: 0.1
+  val passAt = config?.passAt ?: if (decisions) 0.95 else 0.9
+  val failAt = config?.failAt ?: if (decisions) 0.05 else 0.1
   require(passAt > failAt) { "precheck.pass-at must be greater than precheck.fail-at" }
 
-  return ResolvedPrecheck(baseUrl, model, apiKey, timeout, passAt, failAt, visual)
+  return ResolvedPrecheck(baseUrl, model, apiKey, timeout, passAt, failAt, visual, provider)
 }
 
 private fun validateBaseUrl(baseUrl: String) {

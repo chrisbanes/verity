@@ -7,6 +7,7 @@ import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
+import assertk.assertions.isInstanceOf
 import assertk.assertions.isNull
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
@@ -32,6 +33,7 @@ import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.core.result.PrecheckSummaryArtifact
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
+import me.chrisbanes.verity.core.timing.NoOpPhaseTimer
 import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 
@@ -92,7 +94,7 @@ class RunCommandPrecheckTest {
   }
 
   /** Runs a visual wait against TypeSafe's base URL with a fake key, answering pre-checks with 0.95 in memory. */
-  private fun runVisualWait(precheck: VerityPrecheckConfig, args: String = ""): Triple<com.github.ajalt.clikt.testing.CliktCommandTestResult, List<HttpRequest>, List<String>> {
+  private fun runVisualWait(precheck: VerityPrecheckConfig, args: String = "", keyEnv: String = "TYPESAFE_API_KEY"): Triple<com.github.ajalt.clikt.testing.CliktCommandTestResult, List<HttpRequest>, List<String>> {
     val dir = createTempDirectory("verity-pc-visual-run").toFile()
     try {
       val sent = java.util.concurrent.CopyOnWriteArrayList<HttpRequest>()
@@ -101,11 +103,22 @@ class RunCommandPrecheckTest {
         loadConfig = { VerityConfig(precheck = precheck) },
         preflightChecker = { _, _, _, _ -> preflight(backend) },
         sessionFactory = { _, _, _ -> ScreenshotSession() },
-        environment = { if (it == "TYPESAFE_API_KEY") "fake-key" else null },
+        environment = { if (it == keyEnv) "fake-key" else null },
         precheckFactory = { config, stats, trace, timer, warn ->
-          SystemOnePrecheck(config, stats, trace, timer, warn) { request ->
+          val send: suspend (HttpRequest) -> HttpResponse<String> = { request ->
             sent += request
-            response("""{"model":"jev-1.13.0","answers":{"condition":{"type":"noul","noul":0.95}}}""")
+            response(
+              if (config.provider == PrecheckProvider.DECISIONS) {
+                """{"model":"gpt-6-luna","answers":[{"type":"predicate","name":"condition","probability":0.99}]}"""
+              } else {
+                """{"model":"jev-1.13.0","answers":{"condition":{"type":"noul","noul":0.95}}}"""
+              },
+            )
+          }
+          if (config.provider == PrecheckProvider.DECISIONS) {
+            DecisionsPrecheck(config, stats, trace, timer, warn, send)
+          } else {
+            SystemOnePrecheck(config, stats, trace, timer, warn, send)
           }
         },
       )
@@ -125,6 +138,56 @@ class RunCommandPrecheckTest {
     assertThat(prompts).isEmpty()
     assertThat(sent.single().headers().firstValue("TypeSafe-Danger-Zone-Images").orElse(null)).isEqualTo("true")
     assertThat(sent.single().uri().toString()).isEqualTo("https://api.typesafe.ai/v1/systemone")
+  }
+
+  @Test
+  fun `an opted-in visual wait with the decisions provider reaches the decisions client`() {
+    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, provider = "decisions", visualEnabled = true), keyEnv = "OPENAI_API_KEY")
+
+    assertThat(result.statusCode).isEqualTo(0)
+    assertThat(result.output).contains("Pre-check: accepted 1, uncertain fallbacks 0, error fallbacks 0")
+    assertThat(prompts).isEmpty()
+    val request = sent.single()
+    assertThat(request.uri().toString()).isEqualTo("https://api.openai.com/v1/decisions")
+    assertThat(request.headers().firstValue("Authorization").orElse(null)).isEqualTo("Bearer fake-key")
+  }
+
+  @Test
+  fun `createPrecheck picks the client by provider`() {
+    val resolved = ResolvedPrecheck("http://127.0.0.1:1", "m", null, Duration.parse("1s"), 0.9, 0.1)
+    fun create(provider: PrecheckProvider) = createPrecheck(resolved.copy(provider = provider), PrecheckStats(), null, NoOpPhaseTimer) {}
+
+    assertThat(create(PrecheckProvider.SYSTEM_ONE)).isInstanceOf<SystemOnePrecheck>()
+    assertThat(create(PrecheckProvider.DECISIONS)).isInstanceOf<DecisionsPrecheck>()
+  }
+
+  @Test
+  fun `an unknown provider exits setup before the preflight, device session or run directory`() {
+    val dir = createTempDirectory("verity-pc-provider").toFile()
+    try {
+      var calls = 0
+      val output = File(dir, "output")
+      val command = RunCommand(
+        loadConfig = { VerityConfig(precheck = VerityPrecheckConfig(enabled = true, provider = "bogus")) },
+        preflightChecker = { _, _, _, _ ->
+          calls++
+          error("preflight must not run")
+        },
+        sessionFactory = { _, _, _ ->
+          calls++
+          error("no session")
+        },
+      )
+
+      val result = Verity().subcommands(command).test("--output-path ${output.path} run ${journey(dir, "Wait until ready").path}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("precheck.provider")
+      assertThat(calls).isEqualTo(0)
+      assertThat(output.exists()).isEqualTo(false)
+    } finally {
+      dir.deleteRecursively()
+    }
   }
 
   @Test

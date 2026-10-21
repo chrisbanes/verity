@@ -141,4 +141,76 @@ class PrecheckConfigTest {
     val config = VerityConfig.fromYaml("precheck:\n  enabled: true\n  visual-enabled: true\n")
     assertThat(config.precheck?.visualEnabled).isEqualTo(true)
   }
+
+  private val decisions = VerityPrecheckConfig(enabled = true, provider = "decisions")
+  private val openAiKeyed = mapOf("OPENAI_API_KEY" to "s3cr3t")
+
+  @Test
+  fun `decisions defaults`() {
+    val resolved = resolve(decisions, env = openAiKeyed)!!
+    assertThat(resolved).isEqualTo(ResolvedPrecheck("https://api.openai.com", "gpt-6-luna", "s3cr3t", 2.seconds, 0.95, 0.05, false, PrecheckProvider.DECISIONS))
+  }
+
+  @Test
+  fun `omitted and system-one providers resolve identically`() {
+    val omitted = resolve()
+    assertThat(omitted!!.provider).isEqualTo(PrecheckProvider.SYSTEM_ONE)
+    assertThat(resolve(VerityPrecheckConfig(enabled = true, provider = "system-one"))).isEqualTo(omitted)
+  }
+
+  @Test
+  fun `decisions defaults can each be overridden`() {
+    val resolved = resolve(
+      VerityPrecheckConfig(enabled = true, provider = "decisions", baseUrl = "https://proxy.example/", model = "m", apiKeyEnv = "MY_KEY", timeout = "5s", passAt = 0.8, failAt = 0.2),
+      env = mapOf("MY_KEY" to "k"),
+    )!!
+    assertThat(resolved).isEqualTo(ResolvedPrecheck("https://proxy.example", "m", "k", 5.seconds, 0.8, 0.2, false, PrecheckProvider.DECISIONS))
+    assertThat(resolve(decisions, PrecheckCliOptions(model = "gpt-x"), openAiKeyed)!!.model).isEqualTo("gpt-x")
+  }
+
+  @Test
+  fun `decisions cli base url drops the key and never reads the environment`() {
+    val resolved = resolvePrecheck(decisions, PrecheckCliOptions(baseUrl = "https://other.example")) { error("env must not be read") }!!
+    assertThat(resolved.apiKey).isNull()
+    assertThat(resolved.model).isEqualTo("gpt-6-luna")
+  }
+
+  @Test
+  fun `a decisions base url other than openai gets no default key`() {
+    val resolved = resolvePrecheck(VerityPrecheckConfig(enabled = true, provider = "decisions", baseUrl = "https://proxy.example"), PrecheckCliOptions()) { error("env must not be read") }!!
+    assertThat(resolved.apiKey).isNull()
+  }
+
+  @Test
+  fun `decisions rejects a missing or unsendable key without leaking it`() {
+    assertRejected(decisions, env = emptyMap())
+    assertFailure { resolve(decisions, env = emptyMap()) }.message().isNotNull().contains("OPENAI_API_KEY")
+    assertRejected(decisions, env = mapOf("OPENAI_API_KEY" to "s3cr3t\r"))
+  }
+
+  @Test
+  fun `an unknown provider is rejected with a precheck prefix`() {
+    assertRejected(VerityPrecheckConfig(enabled = true, provider = "bogus"))
+    assertRejected(VerityPrecheckConfig(enabled = true, provider = "Decisions"))
+  }
+
+  @Test
+  fun `visual-enabled with decisions resolves at any base url but system-one still needs typesafe`() {
+    assertThat(resolve(VerityPrecheckConfig(enabled = true, provider = "decisions", visualEnabled = true), env = openAiKeyed)!!.visual).isEqualTo(true)
+    assertThat(resolve(VerityPrecheckConfig(enabled = true, provider = "decisions", visualEnabled = true, baseUrl = "https://proxy.example"))!!.visual).isEqualTo(true)
+    assertRejected(VerityPrecheckConfig(enabled = true, provider = "system-one", visualEnabled = true, baseUrl = "https://kev.example", model = "m"))
+  }
+
+  @Test
+  fun `decisions toString redacts the key and names the provider`() {
+    assertThat(resolve(decisions, env = openAiKeyed)!!.toString()).all {
+      doesNotContain("s3cr3t")
+      contains("provider=DECISIONS")
+    }
+  }
+
+  @Test
+  fun `provider decodes from yaml`() {
+    assertThat(VerityConfig.fromYaml("precheck:\n  enabled: true\n  provider: decisions\n").precheck?.provider).isEqualTo("decisions")
+  }
 }
