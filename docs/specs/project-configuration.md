@@ -30,6 +30,7 @@ require-context: true
 # Optional and off by default; see "Pre-check" below.
 precheck:
   enabled: true
+  provider: system-one # or decisions
   base-url: https://api.typesafe.ai
   model: jev-latest
   api-key-env: TYPESAFE_API_KEY
@@ -51,35 +52,37 @@ Legacy top-level `provider`, `navigator-model`, `inspector-model`, `navigator-ef
 
 ## Pre-check
 
-An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `visually` loop and wait conditions are pre-checked only when `visual-enabled` is also true (see [Screenshot pre-check](#screenshot-pre-check)). `run --dry-run` and MCP never resolve or call it; dry run reads only the `enabled` and `visual-enabled` flags to label condition tiers.
+An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev) by default, or OpenAI's Decisions API (public beta) with `provider: decisions`; see [Decisions provider](#decisions-provider). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `visually` loop and wait conditions are pre-checked only when `visual-enabled` is also true (see [Screenshot pre-check](#screenshot-pre-check)). `run --dry-run` and MCP never resolve or call it; dry run reads only the `enabled` and `visual-enabled` flags to label condition tiers.
 
 | Key | Default | Notes |
 | --- | --- | --- |
 | `enabled` | `false` | `--precheck` (or `--precheck=false`) overrides it |
-| `base-url` | `https://api.typesafe.ai` | Trailing `/` trimmed. `--precheck-base-url` overrides it |
-| `model` | `jev-latest` for TypeSafe | Required for any other server. `--precheck-model` overrides it |
-| `api-key-env` | `TYPESAFE_API_KEY` for TypeSafe | Name of the environment variable holding the key. No default for other servers, so no key is sent to them |
+| `provider` | `system-one` | `system-one` or `decisions`. Selects the server protocol and the defaults below; it is not inferred from `base-url` and there is no flag or automatic failover |
+| `base-url` | `https://api.typesafe.ai` (`https://api.openai.com` for `decisions`) | Trailing `/` trimmed. `--precheck-base-url` overrides it |
+| `model` | `jev-latest` for TypeSafe (`gpt-6-luna` for `decisions`, at any `base-url`) | Required for any other System One server. `--precheck-model` overrides it |
+| `api-key-env` | `TYPESAFE_API_KEY` for TypeSafe (`OPENAI_API_KEY` for `decisions` at `https://api.openai.com`) | Name of the environment variable holding the key. No default for other servers, so no key is sent to them |
 | `timeout` | `2s` | A positive Kotlin duration such as `500ms` or `2s` |
-| `pass-at` | `0.9` | A probability at or above this passes the condition |
-| `fail-at` | `0.1` | A probability at or below this fails it |
-| `visual-enabled` | `false` | Experimental. Also pre-checks `visually` loop and wait conditions on the current screenshot. Requires `enabled` and the TypeSafe `base-url` |
+| `pass-at` | `0.9` (`0.95` for `decisions`) | A probability at or above this passes the condition |
+| `fail-at` | `0.1` (`0.05` for `decisions`) | A probability at or below this fails it |
+| `visual-enabled` | `false` | Experimental. Also pre-checks `visually` loop and wait conditions on the current screenshot. Requires `enabled`, and either `provider: decisions` or the TypeSafe `base-url` |
 
-Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. The request is `POST <base-url>/v1/systemone` with a single `noul` question. A prose check sends only the accessibility tree and journey memory text. Screenshots are sent only for `visually` checks with `visual-enabled` on.
+Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. With `system-one` the request is `POST <base-url>/v1/systemone` with a single `noul` question. A prose check sends only the accessibility tree and journey memory text. Screenshots are sent only for `visually` checks with `visual-enabled` on.
 
 A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`, or a request the JDK rejects locally) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts, as zeros when the run failed before the first request (for example in setup). A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback and is traced as `outcome=failed-discarded`.
 
 Validation failures are setup failures: exit `3` before a run directory, preflight or device session exists, with a message starting `precheck.`. They are:
 
+- `provider` is not `system-one` or `decisions`;
 - `base-url` is not `https`, or is `http` for anything but `localhost`, `127.0.0.1` or `[::1]`, has no host, or includes credentials, a query or a fragment;
-- `model` is missing for a server other than TypeSafe;
+- `model` is missing for a System One server other than TypeSafe;
 - `timeout` is unparseable or not positive;
 - `pass-at` is not greater than `fail-at`;
-- `visual-enabled` is true and the effective `base-url` (including `--precheck-base-url`) is not `https://api.typesafe.ai`;
+- `visual-enabled` is true, the provider is `system-one` and the effective `base-url` (including `--precheck-base-url`) is not `https://api.typesafe.ai`;
 - the variable named by `api-key-env` is unset, blank or contains a control or non-Latin-1 character.
 
 Thresholds outside `[0, 1]` are accepted. `pass-at: 2` with `fail-at: -1` is a shadow mode: every check is traced and then falls back to the inspector, which produces paired pre-check and inspector answers from one run.
 
-**Key safety.** The key is read only from the variable named by `api-key-env`, and only when the effective `base-url` comes from config or the default. It is sent only as `Authorization: Bearer ...`. `--precheck-base-url` drops it and skips the environment lookup, so a flag cannot redirect a key to another host. Redirects are not followed. The key never appears in an exception, warning, trace line, artifact or stdout, and `ResolvedPrecheck.toString()` redacts it.
+**Key safety.** This applies to both providers. The key is read only from the variable named by `api-key-env`, and only when the effective `base-url` comes from config or the default. It is sent only as `Authorization: Bearer ...`. `--precheck-base-url` drops it and skips the environment lookup, so a flag cannot redirect a key to another host. Redirects are not followed. The key never appears in an exception, warning, trace line, artifact or stdout, and `ResolvedPrecheck.toString()` redacts it.
 
 **Request.** Each check posts one `noul` question to `<base-url>/v1/systemone`:
 
@@ -107,6 +110,8 @@ The condition is sent verbatim. The platform is `Android TV`, `Android` or `iOS`
 
 ### Screenshot pre-check
 
+This section describes the System One request; [Decisions provider](#decisions-provider) covers its screenshot request.
+
 With `visual-enabled: true`, each `visually` loop or wait check captures its screenshot once, exactly as without the pre-check, and asks Jev about that capture before the inspector. A confident pass or fail decides the check with tier `precheck`, keeps the screenshot evidence and records the screenshot in journey memory. An uncertain answer, any error, or an image that cannot be prepared hands the same screenshot to the inspector; it is never recaptured. A visual check always accepts a confident fail, because visual loops never batch. Standalone `[?visual]` assertions are never pre-checked, and dry run labels these conditions `precheck, then visual`.
 
 The screenshot is scaled in memory so its longest side is at most 1568 px, keeping the aspect ratio and never upscaling, and re-encoded as PNG; a 1920x1080 TV capture becomes 1568x882. An image whose short side would be under 280 px, that cannot be read, or whose PNG exceeds 16 MiB is not sent and counts as an error fallback. The request adds the `TypeSafe-Danger-Zone-Images: true` header and a top-level `assets` map holding the image under a fresh UUID, referenced once from `state.screenshot`:
@@ -131,6 +136,39 @@ Reference screenshots from journey memory are not sent. The `P<n> state` trace l
 **Data handling.** Enabling the pre-check sends the rendered accessibility tree and bounded journey-memory text to the configured server on each prose loop or wait check, in addition to what the inspector already receives. With `visual-enabled`, each `visually` loop or wait check also sends its scaled current screenshot and the same journey-memory text to TypeSafe. TypeSafe states that it does not train on customer data and offers zero data retention for enterprise customers; check its current terms. A local server keeps the data on the machine.
 
 **Compatibility and tuning.** The `pass-at`/`fail-at` defaults were calibrated for Jev against the `PROMPT` rendering of the Android TV hierarchy, which is what the pre-check sends since the `PROMPT` profile landed (see [architecture](../architecture.md#hierarchy-rendering)); the calibration traces are recorded in the pull request for [issue #194](https://github.com/chrisbanes/verity/issues/194). The request shape above was chosen by an A/B on one shadow-mode trailer journey run ([issue #204](https://github.com/chrisbanes/verity/issues/204), replay script in [`research/precheck-request-shape`](../../research/precheck-request-shape/replay.py)). At the same 0.9/0.1 thresholds it accepted 30 of 64 checks, up from 21 with a bare condition and string state, with no disagreements with the inspector. Rendering changes can shift probabilities, so re-check after one. Clef and Kev expose the same API by their own claim, but are untested with Verity. A different model needs its own thresholds.
+
+### Decisions provider
+
+`provider: decisions` uses OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions), which is in public beta and may change. The defaults are `base-url: https://api.openai.com`, `model: gpt-6-luna`, `api-key-env: OPENAI_API_KEY`, `pass-at: 0.95`, `fail-at: 0.05` and `timeout: 2s`; each can be overridden through the same keys and flags. The `gpt-6-luna` model default applies at any `base-url`, but the `OPENAI_API_KEY` default applies only at `https://api.openai.com`, so a custom `base-url` sends no key unless `api-key-env` is set. **The 0.95/0.05 thresholds are uncalibrated:** they have not been measured against Decisions, and the feature is opt-in and unqualified. Consider shadow mode (`pass-at: 2`, `fail-at: -1`) first.
+
+Each check posts one `predicate` question to `<base-url>/v1/decisions` with `Content-Type: application/json` and, when a key is configured, `Authorization: Bearer ...`:
+
+```json
+{
+  "model": "gpt-6-luna",
+  "input": [{"role": "user", "content": [
+    {"type": "input_text", "text": "Current accessibility tree:\n<PROMPT hierarchy>"},
+    {"type": "input_text", "text": "Earlier observations (reference only, not proof of the current state):\n<journey memory>"}
+  ]}],
+  "questions": [{
+    "type": "predicate",
+    "name": "condition",
+    "instructions": "Using the current accessibility tree of an Android TV app, what is the probability that this condition currently holds? Earlier observations are reference only, not proof. Condition: <condition>"
+  }]
+}
+```
+
+The earlier-observations part is left out when the journey has no memory yet. A `visually` check (with `visual-enabled`) replaces the tree part with one `input_image` part whose `image_url` is `data:image/png;base64,<the original screenshot file>`, followed by the same optional observations part, and the instructions say `screenshot`. The image is read as is: it is not scaled or re-encoded, and no reference screenshots are sent. A file that cannot be read or is not a PNG is an error fallback, and the inspector gets the same screenshot. No encoded image data appears in traces, warnings, results or the summary.
+
+Only the answer named `condition` is read:
+
+- a `predicate` with a probability in `[0, 1]` goes through the same `pass-at`/`fail-at` rules as System One, including discarding a confident fail when the loop needs batching hints;
+- a `refusal` is never a verdict. It is an uncertain fallback, traced as `outcome=refused`, with no warning;
+- a missing answer, a missing or non-numeric probability, a probability outside `[0, 1]`, a malformed body, an HTTP error or a timeout is an error fallback.
+
+`PrecheckArtifact` records the response's `model` (or the configured one) and the host. Timing records `model_request precheck`, and cancellation or a wait's deadline cancels an in-flight request.
+
+**Data handling.** With `decisions`, the accessibility tree and journey-memory text, and for `visual-enabled` checks the full unscaled screenshot, are sent to OpenAI (or the configured `base-url`) on each pre-check. Check OpenAI's current terms for retention and training.
 
 ## Command behavior
 

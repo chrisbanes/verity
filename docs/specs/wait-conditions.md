@@ -30,6 +30,8 @@ A literal-only wait polls until the text appears (tier `literal`) or the deadlin
 
 With the opt-in [pre-check](project-configuration.md#pre-check) enabled, prose conditions first go to the classifier. A confident pass or fail decides the poll with tier `precheck` and no inspector request; an uncertain answer or any error falls through to the inspector. The request runs inside the wait's deadline: it is checked before and after, and the overall expiry cancels an in-flight request. Hierarchy evidence is saved exactly as for an inspected check, under the poll's `wait-NNN` path.
 
+The classifier is System One by default or OpenAI's Decisions API with `precheck.provider: decisions`, and either request is bounded by the wait's deadline the same way. See [Decisions provider](project-configuration.md#decisions-provider).
+
 With the experimental `precheck.visual-enabled` also on, a `visually` wait asks the pre-check about each poll's screenshot before the inspector, within the same deadline. A confident answer decides the poll with tier `precheck`, keeps the screenshot evidence and records the screenshot in journey memory. Otherwise the inspector evaluates the same screenshot. The temporary capture is deleted on every outcome, including expiry and cancellation. See [screenshot pre-check](project-configuration.md#screenshot-pre-check).
 
 For nonvisual waits, one bounded hierarchy capture supplies the literal, focus and tree checks for that poll. `visually` bypasses those checks and requires a screenshot. Tree and visual inspection use the configured inspector and can incur provider costs. No navigator request is generated for a wait.

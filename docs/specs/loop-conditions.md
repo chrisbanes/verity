@@ -51,6 +51,8 @@ The focus grammar recognises exactly `<target> is focused`, `<target> has focus`
 
 The pre-check never changes the literal or focus tiers, and it never fails a check: a timeout, error or uncertain probability falls back to the `tree` tier unchanged. It saves the same hierarchy evidence as the inspector. In a batched D-pad loop only a confident pass is accepted, because an unmet check needs the inspector's batching hints; a confident fail falls back to the inspector.
 
+The classifier is System One by default or OpenAI's Decisions API with `precheck.provider: decisions`; a Decisions `refusal` counts as an uncertain fallback. See [Decisions provider](project-configuration.md#decisions-provider).
+
 With the experimental `precheck.visual-enabled` also on, a `visually` condition asks the pre-check about the screenshot it has just captured. A confident pass or fail decides the check with tier `precheck` and keeps the screenshot evidence. Otherwise the inspector evaluates that same screenshot; it is never recaptured. Visual loops still check after every body. See [screenshot pre-check](project-configuration.md#screenshot-pre-check).
 
 Choose a literal condition for visible text (quote it to keep it off the model tiers while the screen loads), a recognised focus form for navigation focus, tree inspection for relationships described by the accessibility hierarchy, and `visually` for appearance. Inspector tiers can incur provider costs; deterministic tiers do not request a model.

@@ -82,7 +82,7 @@ An optional fast probability judgement of a loop or wait condition, consulted be
 _Avoid_: Assertion, inspection
 
 **Pre-check provider**:
-The service and protocol that answers pre-checks. It is chosen separately from the model provider that powers navigation and inspection.
+The service and protocol that answers pre-checks: System One (the default) or OpenAI's Decisions API. It is chosen separately from the model provider that powers navigation and inspection.
 _Avoid_: Model provider
 
 ### Outcomes

@@ -246,20 +246,22 @@ class SystemOnePrecheck(
     const val MAX_IMAGE_BYTES = 16 * 1024 * 1024
 
     fun instructions(platform: Platform, condition: String, screenshot: Boolean): String {
-      val app = when (platform) {
-        Platform.ANDROID_TV -> "Android TV"
-        Platform.ANDROID_MOBILE -> "Android"
-        Platform.IOS -> "iOS"
-      }
+      val app = platform.precheckLabel()
       val evidence = if (screenshot) "screenshot" else "accessibility tree"
       return "Using the current $evidence of an $app app, does the screen satisfy this condition? " +
         "Earlier observations are reference only, not proof. Condition: $condition"
     }
-
-    // Redirects stay off so the bearer key is never forwarded to another host.
-    fun defaultSend(config: ResolvedPrecheck): suspend (HttpRequest) -> HttpResponse<String> {
-      val client = HttpClient.newBuilder().connectTimeout(config.timeout.toJavaDuration()).followRedirects(HttpClient.Redirect.NEVER).build()
-      return { request -> client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await() }
-    }
   }
+}
+
+internal fun Platform.precheckLabel() = when (this) {
+  Platform.ANDROID_TV -> "Android TV"
+  Platform.ANDROID_MOBILE -> "Android"
+  Platform.IOS -> "iOS"
+}
+
+// Redirects stay off so the bearer key is never forwarded to another host.
+internal fun defaultSend(config: ResolvedPrecheck): suspend (HttpRequest) -> HttpResponse<String> {
+  val client = HttpClient.newBuilder().connectTimeout(config.timeout.toJavaDuration()).followRedirects(HttpClient.Redirect.NEVER).build()
+  return { request -> client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).await() }
 }

@@ -117,7 +117,7 @@ class RunCommand(
   private val sessionFactory: suspend (Platform, String?, Boolean) -> DeviceSession = DeviceSessionFactory::connect,
   private val clientFactory: (VerityProvider, String) -> LLMClient = { provider, apiKey -> provider.createClient(apiKey) },
   private val environment: (String) -> String? = System::getenv,
-  private val precheckFactory: (ResolvedPrecheck, PrecheckStats, ModelTraceSink?, PhaseTimer, (String) -> Unit) -> ConditionPrecheck = ::SystemOnePrecheck,
+  private val precheckFactory: (ResolvedPrecheck, PrecheckStats, ModelTraceSink?, PhaseTimer, (String) -> Unit) -> ConditionPrecheck = ::createPrecheck,
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -140,8 +140,8 @@ class RunCommand(
   ).convert { it.toBooleanStrict() }
     // Only an attached value (`--precheck=false`) is read, so the journey argument isn't consumed.
     .optionalValue(true, acceptsUnattachedValue = false)
-  private val precheckModel by option("--precheck-model", help = "System One model for --precheck")
-  private val precheckBaseUrl by option("--precheck-base-url", help = "System One server for --precheck; the configured API key is not sent to it")
+  private val precheckModel by option("--precheck-model", help = "Model for --precheck")
+  private val precheckBaseUrl by option("--precheck-base-url", help = "Server for --precheck; the configured API key is not sent to it")
 
   // Set once per run before any device work; null when the pre-check is off.
   private var precheckConfig: ResolvedPrecheck? = null
