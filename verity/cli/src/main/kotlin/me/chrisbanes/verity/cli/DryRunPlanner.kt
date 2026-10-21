@@ -90,6 +90,8 @@ class DryRunPlanner(
   private val context: String = "",
   /** Whether a run would pre-check prose conditions; only labels tiers, nothing is resolved or called. */
   private val precheck: Boolean = false,
+  /** Whether a run would also pre-check `visually` loop and wait conditions; a label only, like [precheck]. */
+  private val visualPrecheck: Boolean = false,
   private val keyActions: List<KeyAction> = emptyList(),
 ) {
   private var navigator: DryRunNavigator? = null
@@ -126,7 +128,7 @@ class DryRunPlanner(
 
   /** The tiers [ConditionEvaluator] takes for [condition], in its evaluation order. */
   private fun conditionTier(condition: String): String = when (ConditionEvaluator.kind(condition)) {
-    ConditionKind.VISUAL -> "visual"
+    ConditionKind.VISUAL -> if (visualPrecheck) "precheck, then visual" else "visual"
     ConditionKind.LITERAL_ONLY -> "literal-only"
     ConditionKind.FOCUS -> "focus"
     ConditionKind.PROSE -> if (precheck) "literal, then precheck, then tree" else "literal, then tree"

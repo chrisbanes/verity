@@ -223,12 +223,18 @@ class DryRunPlannerTest {
       "Ready" to "literal, then tree",
     )
     for (precheck in listOf(false, true)) {
-      val planner = DryRunPlanner(navigatorFactory = { error("must not create navigator") }, precheck = precheck)
-      for ((until, tier) in expected) {
-        val label = if (precheck && tier == "literal, then tree") "literal, then precheck, then tree" else tier
-        val report = planner.plan(resolvedJourney(journey(until)))
-        assertThat(report.segments.mapNotNull { it.wait?.tier ?: it.loop?.tier }).isEqualTo(listOf(label, label))
-        assertThat(DryRunRenderer.renderJourney(report)).contains("Tier: $label")
+      for (visualPrecheck in listOf(false, true)) {
+        val planner = DryRunPlanner(navigatorFactory = { error("must not create navigator") }, precheck = precheck, visualPrecheck = visualPrecheck)
+        for ((until, tier) in expected) {
+          val label = when {
+            precheck && tier == "literal, then tree" -> "literal, then precheck, then tree"
+            visualPrecheck && tier == "visual" -> "precheck, then visual"
+            else -> tier
+          }
+          val report = planner.plan(resolvedJourney(journey(until)))
+          assertThat(report.segments.mapNotNull { it.wait?.tier ?: it.loop?.tier }).isEqualTo(listOf(label, label))
+          assertThat(DryRunRenderer.renderJourney(report)).contains("Tier: $label")
+        }
       }
     }
     val literal = DryRunPlanner(navigatorFactory = { error("must not create navigator") }).plan(resolvedJourney(journey("\"spotlight-item-\"")))

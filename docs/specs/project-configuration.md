@@ -36,6 +36,7 @@ precheck:
   timeout: 2s
   pass-at: 0.9
   fail-at: 0.1
+  visual-enabled: false
 ```
 
 `llm.navigator-model` and `llm.inspector-model` optionally select supported model IDs for the provider. Omitted models use provider defaults.
@@ -50,7 +51,7 @@ Legacy top-level `provider`, `navigator-model`, `inspector-model`, `navigator-ef
 
 ## Pre-check
 
-An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are `visually`, literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `run --dry-run` and MCP never resolve or call it; dry run reads only the enabled flag to label condition tiers.
+An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `visually` loop and wait conditions are pre-checked only when `visual-enabled` is also true (see [Screenshot pre-check](#screenshot-pre-check)). `run --dry-run` and MCP never resolve or call it; dry run reads only the `enabled` and `visual-enabled` flags to label condition tiers.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -61,8 +62,9 @@ An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wa
 | `timeout` | `2s` | A positive Kotlin duration such as `500ms` or `2s` |
 | `pass-at` | `0.9` | A probability at or above this passes the condition |
 | `fail-at` | `0.1` | A probability at or below this fails it |
+| `visual-enabled` | `false` | Experimental. Also pre-checks `visually` loop and wait conditions on the current screenshot. Requires `enabled` and the TypeSafe `base-url` |
 
-Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. The request is `POST <base-url>/v1/systemone` with a single `noul` question; only the accessibility tree and journey memory text are sent, never screenshots.
+Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. The request is `POST <base-url>/v1/systemone` with a single `noul` question. A prose check sends only the accessibility tree and journey memory text. Screenshots are sent only for `visually` checks with `visual-enabled` on.
 
 A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`, or a request the JDK rejects locally) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts, as zeros when the run failed before the first request (for example in setup). A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback and is traced as `outcome=failed-discarded`.
 
@@ -72,6 +74,7 @@ Validation failures are setup failures: exit `3` before a run directory, preflig
 - `model` is missing for a server other than TypeSafe;
 - `timeout` is unparseable or not positive;
 - `pass-at` is not greater than `fail-at`;
+- `visual-enabled` is true and the effective `base-url` (including `--precheck-base-url`) is not `https://api.typesafe.ai`;
 - the variable named by `api-key-env` is unset, blank or contains a control or non-Latin-1 character.
 
 Thresholds outside `[0, 1]` are accepted. `pass-at: 2` with `fail-at: -1` is a shadow mode: every check is traced and then falls back to the inspector, which produces paired pre-check and inspector answers from one run.
@@ -102,7 +105,30 @@ Thresholds outside `[0, 1]` are accepted. `pass-at: 2` with `fail-at: -1` is a s
 
 The condition is sent verbatim. The platform is `Android TV`, `Android` or `iOS`. `earlier_observations` is left out when the journey has no memory yet. Only `answers.condition.noul` is read. The `P<n> state` trace line records the `state` object as sent.
 
-**Data handling.** Enabling the pre-check sends the rendered accessibility tree and bounded journey-memory text to the configured server on each prose loop or wait check, in addition to what the inspector already receives. TypeSafe states that it does not train on customer data and offers zero data retention for enterprise customers; check its current terms. A local server keeps the data on the machine.
+### Screenshot pre-check
+
+With `visual-enabled: true`, each `visually` loop or wait check captures its screenshot once, exactly as without the pre-check, and asks Jev about that capture before the inspector. A confident pass or fail decides the check with tier `precheck`, keeps the screenshot evidence and records the screenshot in journey memory. An uncertain answer, any error, or an image that cannot be prepared hands the same screenshot to the inspector; it is never recaptured. A visual check always accepts a confident fail, because visual loops never batch. Standalone `[?visual]` assertions are never pre-checked, and dry run labels these conditions `precheck, then visual`.
+
+The screenshot is scaled in memory so its longest side is at most 1568 px, keeping the aspect ratio and never upscaling, and re-encoded as PNG; a 1920x1080 TV capture becomes 1568x882. An image whose short side would be under 280 px, that cannot be read, or whose PNG exceeds 16 MiB is not sent and counts as an error fallback. The request adds the `TypeSafe-Danger-Zone-Images: true` header and a top-level `assets` map holding the image under a fresh UUID, referenced once from `state.screenshot`:
+
+```json
+{
+  "model": "jev-latest",
+  "state": {"screenshot": "<uuid>", "earlier_observations": "<journey memory>"},
+  "assets": {"<uuid>": {"type": "image", "format": "png", "data_base64": "<base64>"}},
+  "questions": {
+    "condition": {
+      "type": "noul",
+      "instructions": "Using the current screenshot of an Android TV app, does the screen satisfy this condition? Earlier observations are reference only, not proof. Condition: <condition>",
+      "criteria": {"true": "The current screen satisfies the condition.", "false": "The current screen does not satisfy the condition."}
+    }
+  }
+}
+```
+
+Reference screenshots from journey memory are not sent. The `P<n> state` trace line records only the reference, and no encoded image data appears in traces, warnings, results or the summary. TypeSafe documents image input as experimental and subject to change. The same 0.9/0.1 thresholds were qualified on 38 labelled Android TV screenshots from one app, with no false passes. That evidence is narrow; see [`research/visual-precheck-qualification`](../../research/visual-precheck-qualification/README.md).
+
+**Data handling.** Enabling the pre-check sends the rendered accessibility tree and bounded journey-memory text to the configured server on each prose loop or wait check, in addition to what the inspector already receives. With `visual-enabled`, each `visually` loop or wait check also sends its scaled current screenshot and the same journey-memory text to TypeSafe. TypeSafe states that it does not train on customer data and offers zero data retention for enterprise customers; check its current terms. A local server keeps the data on the machine.
 
 **Compatibility and tuning.** The `pass-at`/`fail-at` defaults were calibrated for Jev against the `PROMPT` rendering of the Android TV hierarchy, which is what the pre-check sends since the `PROMPT` profile landed (see [architecture](../architecture.md#hierarchy-rendering)); the calibration traces are recorded in the pull request for [issue #194](https://github.com/chrisbanes/verity/issues/194). The request shape above was chosen by an A/B on one shadow-mode trailer journey run ([issue #204](https://github.com/chrisbanes/verity/issues/204), replay script in [`research/precheck-request-shape`](../../research/precheck-request-shape/replay.py)). At the same 0.9/0.1 thresholds it accepted 30 of 64 checks, up from 21 with a bare condition and string state, with no disagreements with the inspector. Rendering changes can shift probabilities, so re-check after one. Clef and Kev expose the same API by their own claim, but are untested with Verity. A different model needs its own thresholds.
 

@@ -1,0 +1,411 @@
+{
+  "manifest_sha256": "97f760410d67a76fda00a33f4c2cd4c743c06640a380d7251abdbe7ea8cfbcf5",
+  "run_date": "2026-10-21T07:51:40+00:00",
+  "platform": "Android TV",
+  "requested_model": "jev-latest",
+  "returned_models": [
+    "jev-1.13.0"
+  ],
+  "pass_at": 0.9,
+  "fail_at": 0.1,
+  "timeout_s": 15,
+  "requests_used": 38,
+  "retried": [],
+  "aborted": null,
+  "verdict": "pass",
+  "verdict_reason": "0 false passes over 38 answered requests",
+  "summary": {
+    "spinner-gone": {
+      "items": 12,
+      "false_passes": 0,
+      "false_fails": 0,
+      "ambiguous_accepts": 3,
+      "uncertain": 1,
+      "uncertain_rate": 0.083,
+      "errors": 0,
+      "p50_ms": 305,
+      "p95_ms": 955,
+      "over_2s": 0
+    },
+    "poster-loaded": {
+      "items": 11,
+      "false_passes": 0,
+      "false_fails": 0,
+      "ambiguous_accepts": 2,
+      "uncertain": 5,
+      "uncertain_rate": 0.455,
+      "errors": 0,
+      "p50_ms": 436,
+      "p95_ms": 922,
+      "over_2s": 0
+    },
+    "card-highlighted": {
+      "items": 15,
+      "false_passes": 0,
+      "false_fails": 0,
+      "ambiguous_accepts": 1,
+      "uncertain": 12,
+      "uncertain_rate": 0.8,
+      "errors": 0,
+      "p50_ms": 470,
+      "p95_ms": 933,
+      "over_2s": 0
+    },
+    "overall": {
+      "items": 38,
+      "false_passes": 0,
+      "false_fails": 0,
+      "ambiguous_accepts": 6,
+      "uncertain": 18,
+      "uncertain_rate": 0.474,
+      "errors": 0,
+      "p50_ms": 436,
+      "p95_ms": 933,
+      "over_2s": 0
+    }
+  },
+  "rows": [
+    {
+      "id": "spinner-gone-01",
+      "case": "spinner-gone",
+      "label": "pass",
+      "probability": 0.96,
+      "model": "jev-1.13.0",
+      "latency_ms": 561,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-02",
+      "case": "spinner-gone",
+      "label": "pass",
+      "probability": 0.97,
+      "model": "jev-1.13.0",
+      "latency_ms": 557,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-03",
+      "case": "spinner-gone",
+      "label": "pass",
+      "probability": 0.96,
+      "model": "jev-1.13.0",
+      "latency_ms": 562,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-04",
+      "case": "spinner-gone",
+      "label": "pass",
+      "probability": 0.96,
+      "model": "jev-1.13.0",
+      "latency_ms": 955,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-05",
+      "case": "spinner-gone",
+      "label": "fail",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 282,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-06",
+      "case": "spinner-gone",
+      "label": "fail",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 292,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-07",
+      "case": "spinner-gone",
+      "label": "fail",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 327,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-08",
+      "case": "spinner-gone",
+      "label": "fail",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 281,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-09",
+      "case": "spinner-gone",
+      "label": "ambiguous",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 305,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-10",
+      "case": "spinner-gone",
+      "label": "ambiguous",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 281,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-11",
+      "case": "spinner-gone",
+      "label": "ambiguous",
+      "probability": 0.01,
+      "model": "jev-1.13.0",
+      "latency_ms": 287,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "spinner-gone-12",
+      "case": "spinner-gone",
+      "label": "ambiguous",
+      "probability": 0.87,
+      "model": "jev-1.13.0",
+      "latency_ms": 314,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-01",
+      "case": "poster-loaded",
+      "label": "pass",
+      "probability": 0.98,
+      "model": "jev-1.13.0",
+      "latency_ms": 426,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-02",
+      "case": "poster-loaded",
+      "label": "pass",
+      "probability": 0.97,
+      "model": "jev-1.13.0",
+      "latency_ms": 922,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-03",
+      "case": "poster-loaded",
+      "label": "pass",
+      "probability": 0.98,
+      "model": "jev-1.13.0",
+      "latency_ms": 669,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-04",
+      "case": "poster-loaded",
+      "label": "pass",
+      "probability": 0.97,
+      "model": "jev-1.13.0",
+      "latency_ms": 615,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-05",
+      "case": "poster-loaded",
+      "label": "fail",
+      "probability": 0.74,
+      "model": "jev-1.13.0",
+      "latency_ms": 294,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-06",
+      "case": "poster-loaded",
+      "label": "fail",
+      "probability": 0.74,
+      "model": "jev-1.13.0",
+      "latency_ms": 387,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-07",
+      "case": "poster-loaded",
+      "label": "fail",
+      "probability": 0.8,
+      "model": "jev-1.13.0",
+      "latency_ms": 331,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-08",
+      "case": "poster-loaded",
+      "label": "fail",
+      "probability": 0.59,
+      "model": "jev-1.13.0",
+      "latency_ms": 354,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-09",
+      "case": "poster-loaded",
+      "label": "ambiguous",
+      "probability": 0.65,
+      "model": "jev-1.13.0",
+      "latency_ms": 436,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-10",
+      "case": "poster-loaded",
+      "label": "ambiguous",
+      "probability": 0.97,
+      "model": "jev-1.13.0",
+      "latency_ms": 496,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "poster-loaded-11",
+      "case": "poster-loaded",
+      "label": "ambiguous",
+      "probability": 0.97,
+      "model": "jev-1.13.0",
+      "latency_ms": 506,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-01",
+      "case": "card-highlighted",
+      "label": "pass",
+      "probability": 0.88,
+      "model": "jev-1.13.0",
+      "latency_ms": 933,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-02",
+      "case": "card-highlighted",
+      "label": "pass",
+      "probability": 0.9,
+      "model": "jev-1.13.0",
+      "latency_ms": 365,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-03",
+      "case": "card-highlighted",
+      "label": "pass",
+      "probability": 0.88,
+      "model": "jev-1.13.0",
+      "latency_ms": 470,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-04",
+      "case": "card-highlighted",
+      "label": "pass",
+      "probability": 0.88,
+      "model": "jev-1.13.0",
+      "latency_ms": 493,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-05",
+      "case": "card-highlighted",
+      "label": "pass",
+      "probability": 0.92,
+      "model": "jev-1.13.0",
+      "latency_ms": 460,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-06",
+      "case": "card-highlighted",
+      "label": "pass",
+      "probability": 0.86,
+      "model": "jev-1.13.0",
+      "latency_ms": 644,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-07",
+      "case": "card-highlighted",
+      "label": "fail",
+      "probability": 0.54,
+      "model": "jev-1.13.0",
+      "latency_ms": 443,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-08",
+      "case": "card-highlighted",
+      "label": "fail",
+      "probability": 0.5,
+      "model": "jev-1.13.0",
+      "latency_ms": 607,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-09",
+      "case": "card-highlighted",
+      "label": "fail",
+      "probability": 0.5,
+      "model": "jev-1.13.0",
+      "latency_ms": 834,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-10",
+      "case": "card-highlighted",
+      "label": "fail",
+      "probability": 0.51,
+      "model": "jev-1.13.0",
+      "latency_ms": 526,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-11",
+      "case": "card-highlighted",
+      "label": "fail",
+      "probability": 0.51,
+      "model": "jev-1.13.0",
+      "latency_ms": 504,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-12",
+      "case": "card-highlighted",
+      "label": "fail",
+      "probability": 0.48,
+      "model": "jev-1.13.0",
+      "latency_ms": 426,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-13",
+      "case": "card-highlighted",
+      "label": "ambiguous",
+      "probability": 0.49,
+      "model": "jev-1.13.0",
+      "latency_ms": 322,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-14",
+      "case": "card-highlighted",
+      "label": "ambiguous",
+      "probability": 0.46,
+      "model": "jev-1.13.0",
+      "latency_ms": 344,
+      "sent_size": "1568x882"
+    },
+    {
+      "id": "card-highlighted-15",
+      "case": "card-highlighted",
+      "label": "ambiguous",
+      "probability": 0.05,
+      "model": "jev-1.13.0",
+      "latency_ms": 322,
+      "sent_size": "1568x882"
+    }
+  ]
+}

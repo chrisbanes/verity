@@ -1,13 +1,23 @@
 package me.chrisbanes.verity.cli
 
+import java.awt.RenderingHints
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpTimeoutException
+import java.nio.file.Path
+import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import javax.imageio.ImageIO
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 import kotlin.time.toJavaDuration
 import kotlinx.coroutines.CancellationException
@@ -53,9 +63,10 @@ class PrecheckStats {
 }
 
 /**
- * Asks a System One server (TypeSafe Jev or compatible) whether a prose condition holds on the current tree.
- * Every non-cancellation failure falls back to the inspector by returning null; the API key only ever
- * leaves in the `Authorization` header and never appears in warnings, traces or exceptions.
+ * Asks a System One server (TypeSafe Jev or compatible) whether a condition holds on the current tree or screenshot.
+ * Every non-cancellation failure, including image preparation, falls back to the inspector by returning null; the API
+ * key only ever leaves in the `Authorization` header, and neither it nor image data appears in warnings, traces or exceptions.
+ * Screenshot requests use TypeSafe's experimental image contract (research/visual-precheck-qualification/README.md).
  */
 class SystemOnePrecheck(
   private val config: ResolvedPrecheck,
@@ -74,16 +85,22 @@ class SystemOnePrecheck(
 
   override suspend fun check(state: PrecheckState, condition: String, acceptFail: Boolean): PrecheckVerdict? {
     val id = "P${ids.incrementAndGet()}"
+    // A fresh reference per image, used exactly once: TypeSafe adds a copy of the image for every textual use.
+    val reference = state.screenshot?.let { UUID.randomUUID().toString() }
     val request = SystemOneRequest(
       config.model,
-      SystemOneState(state.hierarchy, state.referenceText.ifEmpty { null }),
-      mapOf("condition" to NoulQuestion("noul", instructions(state.platform, condition), NOUL_CRITERIA)),
+      SystemOneState(state.hierarchy, reference, state.referenceText.ifEmpty { null }),
+      mapOf("condition" to NoulQuestion("noul", instructions(state.platform, condition, screenshot = reference != null), NOUL_CRITERIA)),
     )
     trace("$id start prompt=precheck model=${config.model} host=$host", "$id question $condition", "$id state ${Json.encodeToString(SystemOneState.serializer(), request.state)}")
     val started = TimeSource.Monotonic.markNow()
     fun elapsed() = "duration=${started.elapsedNow().inWholeMilliseconds}ms"
     try {
-      val (probability, model) = timer.phase(PhaseKind.MODEL_REQUEST, "precheck") { query(request) }
+      val (probability, model) = timer.phase(PhaseKind.MODEL_REQUEST, "precheck") {
+        // The assets sit outside the traced state, so image data never reaches the trace.
+        val assets = state.screenshot?.let { mapOf(checkNotNull(reference) to prepareImage(it)) }
+        query(if (assets == null) request else request.copy(assets = assets))
+      }
       val passed = probability >= config.passAt
       val outcome = when {
         passed -> "passed"
@@ -116,6 +133,7 @@ class SystemOnePrecheck(
       val httpRequest = HttpRequest.newBuilder(uri)
         .timeout(config.timeout.toJavaDuration())
         .header("Content-Type", "application/json")
+        .apply { if (request.assets != null) header(IMAGES_HEADER, "true") }
         .apply { config.apiKey?.let { header("Authorization", "Bearer $it") } }
         .POST(HttpRequest.BodyPublishers.ofString(body))
         .build()
@@ -143,21 +161,66 @@ class SystemOnePrecheck(
     return probability to (answer.model?.takeIf { it.isNotBlank() } ?: config.model)
   }
 
+  /** Scales [path] to TypeSafe's image limits and encodes it as base64 PNG, in memory; any failure is [Failure] `image`. */
+  private suspend fun prepareImage(path: Path): ImageAsset = try {
+    withContext(Dispatchers.IO) {
+      val source = ImageIO.read(path.toFile()) ?: throw Failure("image")
+      val scale = min(1.0, MAX_IMAGE_SIDE.toDouble() / max(source.width, source.height))
+      val width = (source.width * scale).roundToInt()
+      val height = (source.height * scale).roundToInt()
+      // Never upscale or crop: an image too thin to scale within the limits is not sent.
+      if (min(width, height) < MIN_IMAGE_SIDE) throw Failure("image")
+      val image = if (scale == 1.0) {
+        source
+      } else {
+        BufferedImage(width, height, if (source.colorModel.hasAlpha()) BufferedImage.TYPE_INT_ARGB else BufferedImage.TYPE_INT_RGB).also { scaled ->
+          val graphics = scaled.createGraphics()
+          try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+            graphics.drawImage(source, 0, 0, width, height, null)
+          } finally {
+            graphics.dispose()
+          }
+        }
+      }
+      val png = ByteArrayOutputStream().also { if (!ImageIO.write(image, "png", it)) throw Failure("image") }
+      // TypeSafe's per-image limit; a 1568 px PNG stays well under it, so this only guards a changed scaling rule.
+      if (png.size() > MAX_IMAGE_BYTES) throw Failure("image")
+      ImageAsset("image", "png", Base64.getEncoder().encodeToString(png.toByteArray()))
+    }
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: Failure) {
+    throw e
+  } catch (_: Exception) {
+    throw Failure("image")
+  }
+
   // Non-cancellable so a racing cancellation cannot drop a diagnostic line; blocking file writes stay off the caller's dispatcher.
   private suspend fun trace(vararg lines: String) {
     val sink = trace ?: return
     withContext(NonCancellable + Dispatchers.IO) { lines.forEach { sink.write("precheck", it) } }
   }
 
+  /** The default [Json] omits null defaults, so a tree request has no `assets` key. */
   @Serializable
-  private class SystemOneRequest(val model: String, val state: SystemOneState, val questions: Map<String, NoulQuestion>)
+  private data class SystemOneRequest(
+    val model: String,
+    val state: SystemOneState,
+    val questions: Map<String, NoulQuestion>,
+    val assets: Map<String, ImageAsset>? = null,
+  )
 
-  /** The default [Json] omits a null [earlierObservations], so a journey without memory sends only the tree. */
+  /** Exactly one of the tree and the screenshot reference is set; the default [Json] omits the other and a null [earlierObservations]. */
   @Serializable
   private class SystemOneState(
-    @SerialName("accessibility_tree") val accessibilityTree: String,
+    @SerialName("accessibility_tree") val accessibilityTree: String? = null,
+    val screenshot: String? = null,
     @SerialName("earlier_observations") val earlierObservations: String? = null,
   )
+
+  @Serializable
+  private class ImageAsset(val type: String, val format: String, @SerialName("data_base64") val dataBase64: String)
 
   @Serializable
   private class NoulQuestion(val type: String, val instructions: String, val criteria: NoulCriteria)
@@ -177,13 +240,19 @@ class SystemOnePrecheck(
     // Jev reads instructions literally, so the request frames the question and its evidence (issue #204 A/B: research/precheck-request-shape).
     val NOUL_CRITERIA = NoulCriteria(yes = "The current screen satisfies the condition.", no = "The current screen does not satisfy the condition.")
 
-    fun instructions(platform: Platform, condition: String): String {
+    const val IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
+    const val MIN_IMAGE_SIDE = 280
+    const val MAX_IMAGE_SIDE = 1568
+    const val MAX_IMAGE_BYTES = 16 * 1024 * 1024
+
+    fun instructions(platform: Platform, condition: String, screenshot: Boolean): String {
       val app = when (platform) {
         Platform.ANDROID_TV -> "Android TV"
         Platform.ANDROID_MOBILE -> "Android"
         Platform.IOS -> "iOS"
       }
-      return "Using the current accessibility tree of an $app app, does the screen satisfy this condition? " +
+      val evidence = if (screenshot) "screenshot" else "accessibility tree"
+      return "Using the current $evidence of an $app app, does the screen satisfy this condition? " +
         "Earlier observations are reference only, not proof. Condition: $condition"
     }
 

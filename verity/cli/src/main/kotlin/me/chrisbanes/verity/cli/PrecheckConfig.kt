@@ -15,6 +15,8 @@ data class VerityPrecheckConfig(
   val timeout: String? = null,
   @SerialName("pass-at") val passAt: Double? = null,
   @SerialName("fail-at") val failAt: Double? = null,
+  /** Experimental: also pre-check `visually` loop and wait conditions with the current screenshot (TypeSafe only). */
+  @SerialName("visual-enabled") val visualEnabled: Boolean? = null,
 )
 
 data class PrecheckCliOptions(
@@ -30,8 +32,10 @@ data class ResolvedPrecheck(
   val timeout: Duration,
   val passAt: Double,
   val failAt: Double,
+  /** Whether `visually` loop and wait conditions are pre-checked with the current screenshot. */
+  val visual: Boolean = false,
 ) {
-  override fun toString(): String = "ResolvedPrecheck(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey == null) "null" else "<redacted>"}, timeout=$timeout, passAt=$passAt, failAt=$failAt)"
+  override fun toString(): String = "ResolvedPrecheck(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey == null) "null" else "<redacted>"}, timeout=$timeout, passAt=$passAt, failAt=$failAt, visual=$visual)"
 }
 
 const val TYPESAFE_BASE_URL = "https://api.typesafe.ai"
@@ -57,6 +61,8 @@ fun resolvePrecheck(
   val baseUrl = (cli.baseUrl ?: config?.baseUrl ?: TYPESAFE_BASE_URL).trimEnd('/')
   validateBaseUrl(baseUrl)
   val typeSafe = baseUrl == TYPESAFE_BASE_URL
+  val visual = config?.visualEnabled ?: false
+  require(!visual || typeSafe) { "precheck.visual-enabled requires base-url $TYPESAFE_BASE_URL" }
 
   val model = cli.model ?: config?.model ?: TYPESAFE_DEFAULT_MODEL.takeIf { typeSafe }
   require(!model.isNullOrBlank()) { "precheck.model is required unless base-url is $TYPESAFE_BASE_URL" }
@@ -85,7 +91,7 @@ fun resolvePrecheck(
   val failAt = config?.failAt ?: 0.1
   require(passAt > failAt) { "precheck.pass-at must be greater than precheck.fail-at" }
 
-  return ResolvedPrecheck(baseUrl, model, apiKey, timeout, passAt, failAt)
+  return ResolvedPrecheck(baseUrl, model, apiKey, timeout, passAt, failAt, visual)
 }
 
 private fun validateBaseUrl(baseUrl: String) {
