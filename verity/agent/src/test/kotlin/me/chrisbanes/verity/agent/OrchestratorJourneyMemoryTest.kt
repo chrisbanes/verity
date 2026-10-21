@@ -23,6 +23,7 @@ import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.FocusNodeArtifact
 import me.chrisbanes.verity.core.result.TrailGranularity
 import me.chrisbanes.verity.core.result.TrailOrigin
@@ -103,12 +104,14 @@ class OrchestratorJourneyMemoryTest {
     navigatorReply: String = flowOfThree,
     recorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder,
     nowNanos: () -> Long = System::nanoTime,
+    visualPrecheck: ConditionPrecheck? = null,
   ) = Orchestrator(
     session,
     navigatorFactory = { NavigatorAgent("unused") { _, _ -> modelReply(navigatorReply) } },
     inspectorFactory = inspector::agent,
     artifactRecorder = recorder,
     nowNanos = nowNanos,
+    visualPrecheck = visualPrecheck,
   )
 
   private fun journey(platform: Platform, vararg steps: JourneyStep) = Journey("j", "com.example.app", platform, steps.toList())
@@ -265,6 +268,49 @@ class OrchestratorJourneyMemoryTest {
           listOf<Byte>(1, 2),
           listOf<Byte>(1, 2),
         )
+      } finally {
+        directory.toFile().deleteRecursively()
+      }
+    }
+  }
+
+  @Test
+  fun `a visual pre-check decides waits and loops, records their screenshots, and never sees assertions`() = runTest {
+    withContext(Dispatchers.Default) {
+      val directory = Files.createTempDirectory("memory-visual-precheck")
+      try {
+        val replies = ArrayDeque(listOf(true, false, false, true))
+        val states = mutableListOf<PrecheckState>()
+        val conditions = mutableListOf<String>()
+        val precheck = ConditionPrecheck { state, condition, _ ->
+          states += state
+          conditions += condition
+          val passed = replies.removeFirst()
+          PrecheckVerdict(passed, if (passed) 0.99 else 0.01, "jev-1.13.0", "api.typesafe.ai")
+        }
+        val session = Session(Platform.ANDROID_TV)
+        val inspector = Inspector()
+        val result = orchestrator(session, inspector, recorder = FixedScreenshotRecorder(directory.resolve("current.png")), visualPrecheck = precheck).run(
+          journey(
+            Platform.ANDROID_TV,
+            JourneyStep.Assert("One", AssertMode.VISUAL),
+            JourneyStep.Wait("visually Ready", 10),
+            JourneyStep.Loop("Press D-pad down", "visually the row is ready", 5),
+            JourneyStep.Assert("Two", AssertMode.VISUAL),
+          ),
+        )
+
+        assertThat(result.passed).isEqualTo(true)
+        val (_, wait, loop) = result.segments
+        assertThat(wait.wait?.tier).isEqualTo(ConditionTier.PRECHECK)
+        assertThat(loop.loop?.tier).isEqualTo(ConditionTier.PRECHECK)
+        assertThat(conditions).isEqualTo(listOf("Ready", "the row is ready", "the row is ready", "the row is ready"))
+        assertThat(states.map { it.hierarchy }).isEqualTo(listOf<String?>(null, null, null, null))
+        // Unbatched: one press between consecutive loop checks.
+        assertThat(session.events.count { it == "key" || it == "flow" }).isEqualTo(2)
+        // Only the two assertions reach the inspector; the second sees the first and the latest pre-checked screenshots.
+        assertThat(inspector.calls.map { it.kind }).isEqualTo(listOf("visual", "visual"))
+        assertThat(inspector.calls[1].referenceBytes).isEqualTo(listOf<Byte>(1, 5))
       } finally {
         directory.toFile().deleteRecursively()
       }

@@ -84,7 +84,7 @@ class ConditionPrecheckTest {
     assertThat(inspector.calls).isEqualTo(0)
     assertThat(fake.states.single()).all {
       prop(PrecheckState::platform).isEqualTo(Platform.ANDROID_MOBILE)
-      prop(PrecheckState::hierarchy).contains("Home")
+      prop(PrecheckState::hierarchy).isNotNull().contains("Home")
       prop(PrecheckState::referenceText).isEqualTo("R")
     }
     assertThat(fake.conditions.single()).isEqualTo("the page is ready")
@@ -111,6 +111,13 @@ class ConditionPrecheckTest {
       assertThat(result.precheck).isNull()
       assertThat(inspector.calls).isEqualTo(1)
     }
+  }
+
+  @Test
+  fun `a pre-check state carries exactly one of a hierarchy and a screenshot`() {
+    assertFailsWith<IllegalArgumentException> { PrecheckState(Platform.ANDROID_TV, "tree", screenshot = java.nio.file.Path.of("s.png")) }
+    assertFailsWith<IllegalArgumentException> { PrecheckState(Platform.ANDROID_TV, null) }
+    assertThat(PrecheckState(Platform.ANDROID_TV, null, screenshot = java.nio.file.Path.of("s.png")).hierarchy).isNull()
   }
 
   @Test

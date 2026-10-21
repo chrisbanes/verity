@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
+import me.chrisbanes.verity.agent.ConditionPrecheck
 import me.chrisbanes.verity.agent.InspectorAgent
 import me.chrisbanes.verity.agent.JourneyResult
 import me.chrisbanes.verity.agent.ModelBackendFailure
@@ -116,6 +117,7 @@ class RunCommand(
   private val sessionFactory: suspend (Platform, String?, Boolean) -> DeviceSession = DeviceSessionFactory::connect,
   private val clientFactory: (VerityProvider, String) -> LLMClient = { provider, apiKey -> provider.createClient(apiKey) },
   private val environment: (String) -> String? = System::getenv,
+  private val precheckFactory: (ResolvedPrecheck, PrecheckStats, ModelTraceSink?, PhaseTimer, (String) -> Unit) -> ConditionPrecheck = ::SystemOnePrecheck,
 ) : CliktCommand(name = "run") {
   override fun help(context: Context): String = "Execute a journey file against a connected device"
 
@@ -409,6 +411,7 @@ class RunCommand(
         context = projectContext.text,
         keyActions = projectContext.keyActions,
         precheck = precheckEnabled(config.precheck, PrecheckCliOptions(precheck)),
+        visualPrecheck = precheckEnabled(config.precheck, PrecheckCliOptions(precheck)) && config.precheck?.visualEnabled == true,
         // DryRunPlanner memoizes the navigator, so the backend is acquired at most once.
         navigatorFactory = {
           createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform, { trace = it }) { backend = it }
@@ -782,7 +785,7 @@ class RunCommand(
       echo("Inspector model: ${inspectorModel.id}")
       val client = precheckConfig?.let { config ->
         val stats = PrecheckStats().also { precheckStats = it }
-        SystemOnePrecheck(config, stats, preflight.trace, timer, warn = { message -> echo(message, err = true) })
+        precheckFactory(config, stats, preflight.trace, timer) { message -> echo(message, err = true) }
       }
       precheckConfig?.let { echo("Pre-check: ${it.model} at ${URI(it.baseUrl).authority}") }
       projectContext.describe(contextDir, requireContext) { "  - ${it.displayPath()}" }.forEach { echo(it) }
@@ -811,6 +814,7 @@ class RunCommand(
               artifactRecorder = artifactRecorder,
               timer = timer,
               precheck = client,
+              visualPrecheck = client?.takeIf { precheckConfig?.visual == true },
               keyActions = projectContext.keyActions,
             )
             orchestrator.run(resolved.journey)

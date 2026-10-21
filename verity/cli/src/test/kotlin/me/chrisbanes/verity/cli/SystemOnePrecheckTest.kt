@@ -13,10 +13,15 @@ import assertk.assertions.isNull
 import assertk.assertions.isTrue
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import java.awt.image.BufferedImage
 import java.net.InetSocketAddress
+import java.nio.file.Files
+import java.nio.file.Path
+import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
@@ -47,6 +52,7 @@ private const val CRITERIA = """{"true":"The current screen satisfies the condit
 class SystemOnePrecheckTest {
   private class Fixture(val server: HttpServer) {
     val requests = CopyOnWriteArrayList<Triple<String, String?, String>>()
+    val imagesHeaders = CopyOnWriteArrayList<String>()
     val release = CountDownLatch(1)
 
     @Volatile var respond: (HttpExchange) -> Pair<Int, String> = { 200 to ok(0.95) }
@@ -58,6 +64,7 @@ class SystemOnePrecheckTest {
       val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
       val fixture = Fixture(server)
       server.createContext("/") { exchange ->
+        fixture.imagesHeaders += exchange.requestHeaders.getFirst("TypeSafe-Danger-Zone-Images") ?: "absent"
         fixture.requests += Triple(
           "${exchange.requestMethod} ${exchange.requestURI.path} ${exchange.requestHeaders.getFirst("Content-Type")}",
           exchange.requestHeaders.getFirst("Authorization"),
@@ -98,6 +105,85 @@ class SystemOnePrecheckTest {
       ),
     )
     assertThat(stats.accepted).isEqualTo(1)
+    assertThat(f.imagesHeaders.single()).isEqualTo("absent")
+  }
+
+  private fun png(dir: Path, width: Int, height: Int): Path = dir.resolve("${width}x$height.png").also {
+    ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", it.toFile())
+  }
+
+  private suspend fun <T> withTempDir(block: suspend (Path) -> T): T {
+    val dir = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-systemone") }
+    try {
+      return block(dir)
+    } finally {
+      withContext(Dispatchers.IO) { dir.toFile().deleteRecursively() }
+    }
+  }
+
+  @Test
+  fun `a screenshot is scaled, sent once as a referenced asset with the images header, and kept out of the trace`() = withServer { f ->
+    withTempDir { dir ->
+      val lines = CopyOnWriteArrayList<String>()
+      val timer = RecordingPhaseTimer()
+      val stats = PrecheckStats()
+      val client = SystemOnePrecheck(config(f), stats, trace = { _, text -> lines += text }, timer = timer)
+
+      val verdict = client.check(PrecheckState(Platform.ANDROID_TV, null, "R", screenshot = png(dir, 1920, 1080)), "the loading spinner is gone", acceptFail = true)
+
+      assertThat(verdict?.passed).isEqualTo(true)
+      assertThat(stats.accepted).isEqualTo(1)
+      assertThat(f.imagesHeaders.single()).isEqualTo("true")
+      val (_, auth, body) = f.requests.single()
+      assertThat(auth).isEqualTo("Bearer s3cr3t")
+      val json = Json.parseToJsonElement(body).jsonObject
+      val state = json.getValue("state").jsonObject
+      assertThat(state.keys).isEqualTo(setOf("screenshot", "earlier_observations"))
+      assertThat(state.getValue("earlier_observations").jsonPrimitive.content).isEqualTo("R")
+      val reference = state.getValue("screenshot").jsonPrimitive.content
+      // Referenced exactly once: TypeSafe adds a copy of the image for each textual use.
+      assertThat(body.split(reference).size - 1).isEqualTo(2)
+      val asset = json.getValue("assets").jsonObject.also { assertThat(it.keys).isEqualTo(setOf(reference)) }.getValue(reference).jsonObject
+      assertThat(asset.getValue("type").jsonPrimitive.content).isEqualTo("image")
+      assertThat(asset.getValue("format").jsonPrimitive.content).isEqualTo("png")
+      val data = asset.getValue("data_base64").jsonPrimitive.content
+      val image = ImageIO.read(Base64.getDecoder().decode(data).inputStream())
+      assertThat(image.width to image.height).isEqualTo(1568 to 882)
+      val question = json.getValue("questions").jsonObject.getValue("condition").jsonObject
+      assertThat(question.getValue("instructions").jsonPrimitive.content).isEqualTo(
+        "Using the current screenshot of an Android TV app, does the screen satisfy this condition? Earlier observations are reference only, not proof. Condition: the loading spinner is gone",
+      )
+      assertThat(Json.parseToJsonElement(question.getValue("criteria").toString())).isEqualTo(Json.parseToJsonElement(CRITERIA))
+      assertThat(body).doesNotContain("accessibility_tree")
+
+      assertThat(lines[2]).isEqualTo("""P1 state {"screenshot":"$reference","earlier_observations":"R"}""")
+      assertThat(lines.none { data.take(64) in it || "s3cr3t" in it || "data_base64" in it }).isTrue()
+      assertThat(timer.report().render()).contains("model_request precheck x1")
+    }
+  }
+
+  @Test
+  fun `an image that cannot be prepared is an error fallback that sends nothing`() = withServer { f ->
+    withTempDir { dir ->
+      val warnings = mutableListOf<String>()
+      val lines = CopyOnWriteArrayList<String>()
+      val stats = PrecheckStats()
+      val client = SystemOnePrecheck(config(f), stats, trace = { _, text -> lines += text }, warn = { warnings += it })
+      val notImage = dir.resolve("not-image.png").also { withContext(Dispatchers.IO) { Files.writeString(it, "NOT-AN-IMAGE") } }
+
+      for (path in listOf(png(dir, 4000, 200), png(dir, 200, 200), notImage, dir.resolve("missing.png"))) {
+        assertThat(client.check(PrecheckState(Platform.ANDROID_TV, null, screenshot = path), "C", acceptFail = true)).isNull()
+      }
+
+      assertThat(f.requests).hasSize(0)
+      assertThat(stats.errorFallbacks).isEqualTo(4)
+      assertThat(warnings.single()).all {
+        contains("(image)")
+        doesNotContain("NOT-AN-IMAGE")
+        doesNotContain(dir.toString())
+      }
+      assertThat(lines.filter { "failure" in it }.all { it.endsWith(" image") }).isTrue()
+    }
   }
 
   @Test

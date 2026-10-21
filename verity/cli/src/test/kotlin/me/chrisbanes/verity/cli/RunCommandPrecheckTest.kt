@@ -11,16 +11,28 @@ import assertk.assertions.isNull
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.testing.test
 import com.sun.net.httpserver.HttpServer
+import java.awt.image.BufferedImage
 import java.io.File
 import java.net.InetSocketAddress
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpHeaders
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.file.Path
+import java.util.Optional
+import javax.imageio.ImageIO
+import javax.net.ssl.SSLSession
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
+import kotlin.time.Duration
 import me.chrisbanes.verity.agent.modelReply
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.core.preflight.PreflightReport
 import me.chrisbanes.verity.core.result.PrecheckSummaryArtifact
 import me.chrisbanes.verity.core.result.SuiteArtifactSummary
+import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 
 class RunCommandPrecheckTest {
@@ -56,6 +68,73 @@ class RunCommandPrecheckTest {
       block(server.address.port)
     } finally {
       server.stop(0)
+    }
+  }
+
+  /** A session whose screenshots are real 1920x1080 TV-sized PNGs. */
+  private class ScreenshotSession(private val delegate: DeviceSession = FakeDeviceSession(Platform.ANDROID_TV)) : DeviceSession by delegate {
+    override suspend fun captureScreenshot(output: Path) {
+      ImageIO.write(BufferedImage(1920, 1080, BufferedImage.TYPE_INT_RGB), "png", output.toFile())
+    }
+
+    override suspend fun captureScreenshot(output: Path, timeout: Duration) = captureScreenshot(output)
+  }
+
+  private fun response(body: String) = object : HttpResponse<String> {
+    override fun statusCode() = 200
+    override fun request(): HttpRequest = error("unused")
+    override fun previousResponse() = Optional.empty<HttpResponse<String>>()
+    override fun headers(): HttpHeaders = HttpHeaders.of(emptyMap()) { _, _ -> true }
+    override fun body() = body
+    override fun sslSession() = Optional.empty<SSLSession>()
+    override fun uri(): URI = error("unused")
+    override fun version() = HttpClient.Version.HTTP_1_1
+  }
+
+  /** Runs a visual wait against TypeSafe's base URL with a fake key, answering pre-checks with 0.95 in memory. */
+  private fun runVisualWait(precheck: VerityPrecheckConfig, args: String = ""): Triple<com.github.ajalt.clikt.testing.CliktCommandTestResult, List<HttpRequest>, List<String>> {
+    val dir = createTempDirectory("verity-pc-visual-run").toFile()
+    try {
+      val sent = java.util.concurrent.CopyOnWriteArrayList<HttpRequest>()
+      val backend = Backend()
+      val command = RunCommand(
+        loadConfig = { VerityConfig(precheck = precheck) },
+        preflightChecker = { _, _, _, _ -> preflight(backend) },
+        sessionFactory = { _, _, _ -> ScreenshotSession() },
+        environment = { if (it == "TYPESAFE_API_KEY") "fake-key" else null },
+        precheckFactory = { config, stats, trace, timer, warn ->
+          SystemOnePrecheck(config, stats, trace, timer, warn) { request ->
+            sent += request
+            response("""{"model":"jev-1.13.0","answers":{"condition":{"type":"noul","noul":0.95}}}""")
+          }
+        },
+      )
+      val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${File(dir, "output").path} run $args ${journey(dir, "Wait until visually the loading spinner is gone").path}")
+      return Triple(result, sent.toList(), backend.requests.map { it.promptName })
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `an opted-in visual wait is decided by the pre-check without a visual inspection`() {
+    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, visualEnabled = true))
+
+    assertThat(result.statusCode).isEqualTo(0)
+    assertThat(result.output).contains("Pre-check: accepted 1, uncertain fallbacks 0, error fallbacks 0")
+    assertThat(prompts).isEmpty()
+    assertThat(sent.single().headers().firstValue("TypeSafe-Danger-Zone-Images").orElse(null)).isEqualTo("true")
+    assertThat(sent.single().uri().toString()).isEqualTo("https://api.typesafe.ai/v1/systemone")
+  }
+
+  @Test
+  fun `a visual wait is inspected as before without visual-enabled or with the pre-check off`() {
+    for ((precheck, args) in listOf(VerityPrecheckConfig(enabled = true) to "", VerityPrecheckConfig(enabled = true, visualEnabled = true) to "--precheck=false")) {
+      val (result, sent, prompts) = runVisualWait(precheck, args)
+
+      assertThat(result.statusCode).isEqualTo(0)
+      assertThat(sent).isEmpty()
+      assertThat(prompts).isEqualTo(listOf("visual-eval"))
     }
   }
 
@@ -117,6 +196,35 @@ class RunCommandPrecheckTest {
       assertThat(result.statusCode).isEqualTo(3)
       assertThat(result.output).contains("precheck.base-url")
       assertThat(calls).isEqualTo(0)
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `visual-enabled with a non-typesafe base url exits setup before a device session or run directory`() {
+    val dir = createTempDirectory("verity-pc-visual").toFile()
+    try {
+      var calls = 0
+      val output = File(dir, "output")
+      val command = RunCommand(
+        loadConfig = { VerityConfig(precheck = VerityPrecheckConfig(enabled = true, baseUrl = "http://127.0.0.1:1", model = "m", visualEnabled = true)) },
+        preflightChecker = { _, _, _, _ ->
+          calls++
+          error("preflight must not run")
+        },
+        sessionFactory = { _, _, _ ->
+          calls++
+          error("no session")
+        },
+      )
+
+      val result = Verity().subcommands(command).test("--output-path ${output.path} run ${journey(dir, "Wait until visually the loading spinner is gone").path}")
+
+      assertThat(result.statusCode).isEqualTo(3)
+      assertThat(result.output).contains("precheck.visual-enabled")
+      assertThat(calls).isEqualTo(0)
+      assertThat(output.exists()).isEqualTo(false)
     } finally {
       dir.deleteRecursively()
     }

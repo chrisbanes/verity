@@ -33,6 +33,8 @@ class ConditionEvaluator(
   private val onInspectedScreenshot: suspend (Path) -> Unit = {},
   /** Opt-in fast classifier consulted for tree-tier conditions before the inspector; null leaves every path unchanged. */
   private val precheck: ConditionPrecheck? = null,
+  /** Opt-in fast classifier consulted for visual conditions on the captured screenshot before the inspector; null leaves every path unchanged. */
+  private val visualPrecheck: ConditionPrecheck? = null,
 ) {
   /**
    * [loopHints] asks a tree-tier inspector for the optional batching fields; see [InspectorAgent.LOOP_HINTS].
@@ -40,7 +42,7 @@ class ConditionEvaluator(
    */
   suspend fun evaluate(condition: String, context: InspectionContext = InspectionContext(), loopHints: Boolean = false, tree: HierarchyNode? = null): ConditionEvaluation {
     require(condition.isNotBlank()) { "Condition must not be blank" }
-    val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot)
+    val inspection = ScreenInspection(session, inspector, artifactRecorder, segmentIndex, temporaryScreenshot = temporaryScreenshot, verifyScreenshot = verifyScreenshot, onInspectedScreenshot = onInspectedScreenshot, visualPrecheck = visualPrecheck)
     val captureTree: suspend () -> HierarchyNode = if (tree != null) ({ tree }) else session::captureHierarchyTree
     return evaluateOn(condition, context, inspection, captureTree, loopHints) {}
   }
@@ -48,7 +50,7 @@ class ConditionEvaluator(
   internal suspend fun evaluate(condition: String, context: InspectionContext, deadline: EvaluationDeadline, checkIndex: Int): ConditionEvaluation {
     deadline.checkpoint()
     require(condition.isNotBlank()) { "Condition must not be blank" }
-    val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot, onInspectedScreenshot)
+    val inspection = ScreenInspection(session, inspector, artifactRecorder.forWaitCheck(checkIndex), segmentIndex, deadline, temporaryScreenshot, verifyScreenshot, onInspectedScreenshot, visualPrecheck)
     return evaluateOn(condition, context, inspection, { session.captureHierarchyTree(deadline.remaining()) }, loopHints = false, deadline::checkpoint)
   }
 
@@ -63,7 +65,8 @@ class ConditionEvaluator(
   ): ConditionEvaluation {
     visualDescription(condition)?.let { description ->
       val evaluation = inspection.visual(description, context)
-      return ConditionEvaluation(evaluation.verdict, ConditionTier.VISUAL, evaluation.evidence)
+      val tier = if (evaluation.precheck != null) ConditionTier.PRECHECK else ConditionTier.VISUAL
+      return ConditionEvaluation(evaluation.verdict, tier, evaluation.evidence, precheck = evaluation.precheck)
     }
     val literalOnly = LiteralConditionParser.parse(condition)
     val tree = captureTree()
@@ -134,6 +137,8 @@ data class ConditionEvaluation(
 internal data class InspectionEvaluation(
   val verdict: InspectionVerdict,
   val evidence: List<EvidenceArtifact> = emptyList(),
+  /** Set when a visual pre-check decided the verdict instead of the inspector. */
+  val precheck: PrecheckArtifact? = null,
 )
 
 /** Current-state capture and optional artifact persistence shared by assertions and conditions. */
@@ -147,6 +152,8 @@ internal class ScreenInspection(
   private val verifyScreenshot: suspend (Path) -> Unit = ::requireScreenshot,
   /** Called with the inspected screenshot while it still exists, after the verdict and any deadline checkpoint. */
   private val onInspectedScreenshot: suspend (Path) -> Unit = {},
+  /** Consulted on the captured screenshot in [visual] before the inspector; standalone assertions never pass one. */
+  private val visualPrecheck: ConditionPrecheck? = null,
 ) {
   suspend fun tree(description: String, context: InspectionContext = InspectionContext()): InspectionEvaluation {
     val hierarchy = session.captureHierarchy(HierarchyFilter.PROMPT)
@@ -162,22 +169,28 @@ internal class ScreenInspection(
 
   /** A confident pre-check verdict, or null to fall back to the inspector. Never throws except for cancellation and the deadline. */
   suspend fun precheck(precheck: ConditionPrecheck, hierarchy: String, description: String, context: InspectionContext, acceptFail: Boolean): ConditionEvaluation? {
+    val verdict = ask(precheck, PrecheckState(session.platform, hierarchy, context.referenceText), description, acceptFail) ?: return null
+    return ConditionEvaluation(verdict.toInspectionVerdict(), ConditionTier.PRECHECK, saveHierarchyEvidence(hierarchy), precheck = verdict.toArtifact())
+  }
+
+  private suspend fun ask(precheck: ConditionPrecheck, state: PrecheckState, description: String, acceptFail: Boolean): PrecheckVerdict? {
     deadline?.checkpoint()
     val verdict = try {
-      precheck.check(PrecheckState(session.platform, hierarchy, context.referenceText), description, acceptFail)
+      precheck.check(state, description, acceptFail)
     } catch (e: CancellationException) {
       throw e
     } catch (_: Exception) {
       null
     }
     deadline?.checkpoint()
-    if (verdict == null) return null
-    return ConditionEvaluation(
-      InspectionVerdict(verdict.passed, String.format(Locale.ROOT, "Pre-check probability %.2f (%s)", verdict.probability, verdict.model)),
-      ConditionTier.PRECHECK,
-      saveHierarchyEvidence(hierarchy),
-      precheck = PrecheckArtifact(verdict.probability, verdict.model, verdict.host),
-    )
+    return verdict
+  }
+
+  /** The visual pre-check's confident verdict on [screenshot], or the inspector's: the same capture either way, never a recapture. */
+  private suspend fun inspectScreenshot(screenshot: Path, description: String, context: InspectionContext): Pair<InspectionVerdict, PrecheckArtifact?> {
+    val accepted = visualPrecheck?.let { ask(it, PrecheckState(session.platform, null, context.referenceText, screenshot = screenshot), description, acceptFail = true) }
+    if (accepted != null) return accepted.toInspectionVerdict() to accepted.toArtifact()
+    return inspector.evaluateVisual(screenshot, description, context, deadline?.onModelFailure) to null
   }
 
   private suspend fun saveHierarchyEvidence(hierarchy: String): List<EvidenceArtifact> {
@@ -217,31 +230,38 @@ internal class ScreenInspection(
       if (captured) {
         verifyScreenshot(artifact.path)
         deadline?.checkpoint()
-        val verdict = inspector.evaluateVisual(artifact.path, description, context, deadline?.onModelFailure)
+        val (verdict, precheck) = inspectScreenshot(artifact.path, description, context)
         deadline?.checkpoint()
         onInspectedScreenshot(artifact.path)
-        return InspectionEvaluation(verdict, listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)))
+        return InspectionEvaluation(verdict, listOf(EvidenceArtifact(EvidenceType.SCREENSHOT, artifact.relativePath)), precheck)
       }
     }
+    // The injected temporary-screenshot runner returns only a verdict, so the pre-check artifact leaves through this local.
+    var precheck: PrecheckArtifact? = null
     val verdict = temporaryScreenshot { path ->
       deadline?.checkpoint()
       captureScreenshot(path)
       deadline?.checkpoint()
       verifyScreenshot(path)
       deadline?.checkpoint()
-      val verdict = inspector.evaluateVisual(path, description, context, deadline?.onModelFailure)
+      val (verdict, accepted) = inspectScreenshot(path, description, context)
+      precheck = accepted
       deadline?.checkpoint()
       onInspectedScreenshot(path)
       verdict
     }
     deadline?.checkpoint()
-    return InspectionEvaluation(verdict)
+    return InspectionEvaluation(verdict, precheck = precheck)
   }
 
   private suspend fun captureScreenshot(path: Path) {
     if (deadline == null) session.captureScreenshot(path) else session.captureScreenshot(path, deadline.remaining())
   }
 }
+
+private fun PrecheckVerdict.toInspectionVerdict() = InspectionVerdict(passed, String.format(Locale.ROOT, "Pre-check probability %.2f (%s)", probability, model))
+
+private fun PrecheckVerdict.toArtifact() = PrecheckArtifact(probability, model, host)
 
 private suspend fun withTemporaryScreenshot(inspect: suspend (Path) -> InspectionVerdict): InspectionVerdict = withContext(Dispatchers.IO) {
   val tempFile = Files.createTempFile("verity-screenshot-", ".png")

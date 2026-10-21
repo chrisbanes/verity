@@ -60,6 +60,8 @@ class Orchestrator(
   private val nowNanos: () -> Long = System::nanoTime,
   private val timer: PhaseTimer = NoOpPhaseTimer,
   private val precheck: ConditionPrecheck? = null,
+  /** Consulted only by visual loop and wait conditions; standalone visual assertions never use it. */
+  private val visualPrecheck: ConditionPrecheck? = null,
   private val keyActions: List<KeyAction> = emptyList(),
 ) {
   suspend fun run(journey: Journey): JourneyResult {
@@ -116,7 +118,7 @@ class Orchestrator(
     memory: JourneyMemory,
   ): SegmentResult {
     segment.wait?.let { wait ->
-      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck)
+      val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segment.index, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck, visualPrecheck = visualPrecheck)
       // Every poll sees the wait's starting references, even though polls keep recording newer screenshots.
       val result = memory.withFrozenContext(ConditionEvaluator.isVisual(wait.until)) { context ->
         ConditionWaiter(evaluator, nowNanos).await(wait.until, wait.timeoutSeconds.seconds, context)
@@ -367,7 +369,7 @@ class Orchestrator(
     val fastPathInteractions = InteractionMapper.forPlatform(platform, keyActions).mapAll(instructions)
     val visual = ConditionEvaluator.isVisual(loop.until)
     val direction = FocusStepPlanner.batchDirection(fastPathInteractions, platform)?.takeIf { ConditionEvaluator.canBatchPresses(loop.until) }
-    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck)
+    val evaluator = ConditionEvaluator(session, inspector, artifactRecorder, segmentIndex, onInspectedScreenshot = memory::recordScreenshot, precheck = precheck, visualPrecheck = visualPrecheck)
     suspend fun check(tree: HierarchyNode? = null) = evaluator.evaluate(loop.until, memory.inspectionContext(visual), loopHints = direction != null, tree = tree)
     var evaluation = check()
     var completedBodies = 0

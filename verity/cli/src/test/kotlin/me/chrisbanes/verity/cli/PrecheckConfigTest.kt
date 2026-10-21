@@ -124,4 +124,21 @@ class PrecheckConfigTest {
   fun `toString redacts the key`() {
     assertThat(resolve()!!.toString()).doesNotContain("s3cr3t")
   }
+
+  @Test
+  fun `visual-enabled resolves only with the typesafe base url`() {
+    assertThat(resolve(VerityPrecheckConfig(enabled = true, visualEnabled = true))!!.visual).isEqualTo(true)
+    assertThat(resolve()!!.visual).isEqualTo(false)
+    assertThat(resolve(VerityPrecheckConfig(enabled = false, visualEnabled = true, baseUrl = "https://kev.example"), env = emptyMap())).isNull()
+    assertFailure { resolve(VerityPrecheckConfig(enabled = true, visualEnabled = true, baseUrl = "https://kev.example", model = "m")) }
+      .message().isNotNull().startsWith("precheck.visual-enabled")
+    assertFailure { resolve(VerityPrecheckConfig(enabled = true, visualEnabled = true), PrecheckCliOptions(baseUrl = "http://127.0.0.1:1")) }
+      .message().isNotNull().startsWith("precheck.visual-enabled")
+  }
+
+  @Test
+  fun `visual-enabled decodes from yaml`() {
+    val config = VerityConfig.fromYaml("precheck:\n  enabled: true\n  visual-enabled: true\n")
+    assertThat(config.precheck?.visualEnabled).isEqualTo(true)
+  }
 }
