@@ -81,7 +81,7 @@ fun resolvePrecheck(
   require(!visual || decisions || baseUrl == TYPESAFE_BASE_URL) { "precheck.visual-enabled requires base-url $TYPESAFE_BASE_URL" }
 
   val model = cli.model ?: config?.model ?: if (decisions) DECISIONS_MODEL else TYPESAFE_DEFAULT_MODEL.takeIf { atDefaultHost }
-  require(!model.isNullOrBlank()) { "precheck.model is required unless base-url is $TYPESAFE_BASE_URL" }
+  require(!model.isNullOrBlank()) { if (decisions) "precheck.model must not be blank" else "precheck.model is required unless base-url is $TYPESAFE_BASE_URL" }
 
   val defaultKeyEnv = (if (decisions) OPENAI_API_KEY_ENV else TYPESAFE_API_KEY_ENV).takeIf { atDefaultHost }
   val apiKey = if (cli.baseUrl != null) {

@@ -192,6 +192,7 @@ class PrecheckConfigTest {
   fun `an unknown provider is rejected with a precheck prefix`() {
     assertRejected(VerityPrecheckConfig(enabled = true, provider = "bogus"))
     assertRejected(VerityPrecheckConfig(enabled = true, provider = "Decisions"))
+    assertFailure { resolve(VerityPrecheckConfig(enabled = true, provider = "decisions", model = ""), env = openAiKeyed) }.message().isNotNull().startsWith("precheck.model")
   }
 
   @Test
