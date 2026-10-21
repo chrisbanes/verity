@@ -173,7 +173,7 @@ class SystemOnePrecheck(
       val image = if (scale == 1.0) {
         source
       } else {
-        BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB).also { scaled ->
+        BufferedImage(width, height, if (source.colorModel.hasAlpha()) BufferedImage.TYPE_INT_ARGB else BufferedImage.TYPE_INT_RGB).also { scaled ->
           val graphics = scaled.createGraphics()
           try {
             graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)

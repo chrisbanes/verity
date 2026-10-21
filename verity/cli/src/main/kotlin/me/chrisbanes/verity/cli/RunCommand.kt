@@ -407,11 +407,12 @@ class RunCommand(
     var trace: ModelTrace? = null
     var primary: Throwable? = null
     try {
+      val precheckOn = precheckEnabled(config.precheck, PrecheckCliOptions(precheck))
       val planner = DryRunPlanner(
         context = projectContext.text,
         keyActions = projectContext.keyActions,
-        precheck = precheckEnabled(config.precheck, PrecheckCliOptions(precheck)),
-        visualPrecheck = precheckEnabled(config.precheck, PrecheckCliOptions(precheck)) && config.precheck?.visualEnabled == true,
+        precheck = precheckOn,
+        visualPrecheck = precheckOn && config.precheck?.visualEnabled == true,
         // DryRunPlanner memoizes the navigator, so the backend is acquired at most once.
         navigatorFactory = {
           createDryRunNavigator(parent, config, resolved, path, journeys.first().journey.platform, { trace = it }) { backend = it }

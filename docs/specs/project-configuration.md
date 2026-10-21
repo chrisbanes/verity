@@ -126,7 +126,7 @@ The screenshot is scaled in memory so its longest side is at most 1568 px, keepi
 }
 ```
 
-Reference screenshots from journey memory are not sent. The `P<n> state` trace line records only the reference, and image data never appears in traces, warnings or artifacts. TypeSafe documents image input as experimental and subject to change. The same 0.9/0.1 thresholds were qualified on 38 labelled Android TV screenshots from one app, with no false passes. That evidence is narrow; see [`research/visual-precheck-qualification`](../../research/visual-precheck-qualification/README.md).
+Reference screenshots from journey memory are not sent. The `P<n> state` trace line records only the reference, and no encoded image data appears in traces, warnings, results or the summary. TypeSafe documents image input as experimental and subject to change. The same 0.9/0.1 thresholds were qualified on 38 labelled Android TV screenshots from one app, with no false passes. That evidence is narrow; see [`research/visual-precheck-qualification`](../../research/visual-precheck-qualification/README.md).
 
 **Data handling.** Enabling the pre-check sends the rendered accessibility tree and bounded journey-memory text to the configured server on each prose loop or wait check, in addition to what the inspector already receives. With `visual-enabled`, each `visually` loop or wait check also sends its scaled current screenshot and the same journey-memory text to TypeSafe. TypeSafe states that it does not train on customer data and offers zero data retention for enterprise customers; check its current terms. A local server keeps the data on the machine.
 
