@@ -438,7 +438,7 @@ internal class CodexModelBackend private constructor(
 
         "context_compaction" -> if (value["encrypted_content"] != null && value["encrypted_content"] != JsonNull && (value["encrypted_content"] as? JsonPrimitive)?.isString != true) reject()
 
-        "compaction_trigger" -> Unit
+        "compaction_trigger", "additional_tools" -> Unit
 
         else -> reject()
       }
