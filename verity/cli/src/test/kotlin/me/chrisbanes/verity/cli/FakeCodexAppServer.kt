@@ -633,6 +633,15 @@ internal object FakeCodexAppServer {
               put("content", JsonArray(emptyList()))
             }
             if (type == "reasoning") put("summary", JsonArray(emptyList()))
+            if (type == "additional_tools") {
+              put("role", "developer")
+              put(
+                "tools",
+                Json.parseToJsonElement(
+                  """[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}]}]""",
+                ),
+              )
+            }
             if (type == "compaction") put("encrypted_content", "synthetic")
             if (type == "agentMessage") {
               put("text", text)

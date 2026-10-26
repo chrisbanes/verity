@@ -405,11 +405,24 @@ class CodexModelBackendTest {
   }
 
   @Test
+  fun `additional tools declaration permits final answer without interrupting the turn`() = runTest {
+    withContext(Dispatchers.Default) {
+      fixture("model-raw-additional_tools") { fake, backend ->
+        val reply = backend.execute(request("inspector-tree"))
+        assertThat(reply.finishReason).isEqualTo("stop")
+        val captured = Json.parseToJsonElement(reply.textContent()).jsonObject
+        assertThat(captured.getValue("thread").jsonObject["baseInstructions"]).isEqualTo(JsonPrimitive("system-inspector-tree"))
+        assertThat(fake.capturedFrames().count { it["method"] == JsonPrimitive("turn/interrupt") }).isEqualTo(0)
+      }
+    }
+  }
+
+  @Test
   fun `all raw calls outputs output-only and unknown executable variants permanently reject`() = runTest {
     withContext(Dispatchers.Default) {
       listOf("custom_tool_call", "custom_tool_call_output", "function_call", "function_call_output", "local_shell_call", "web_search_call", "tool_search_call", "tool_search_output", "image_generation_call", "configuration_update", "agent_message", "other", "unknown_call").forEach { type ->
         fixture("model-raw-$type") { fake, backend ->
-          assertFailsWith<CodexFailure> { backend.execute(request()) }
+          assertThat(assertFailsWith<CodexFailure> { backend.execute(request()) }.kind).isEqualTo(CodexFailureKind.PROTOCOL)
           assertThat(fake.capturedFrames().count { it["method"] == JsonPrimitive("turn/interrupt") }).isEqualTo(1)
         }
       }
