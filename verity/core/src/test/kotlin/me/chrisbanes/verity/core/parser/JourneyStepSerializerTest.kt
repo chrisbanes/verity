@@ -39,12 +39,12 @@ class JourneyStepSerializerTest {
   }
 
   @Test
-  fun `parses generic assertion with inferred mode - short text`() {
+  fun `parses generic assertion with inferred mode - short text defaults to tree`() {
     val step = JourneyStepParser.parse("[?] Home")
     assertThat(step).isInstanceOf<JourneyStep.Assert>()
     val assert = step as JourneyStep.Assert
     assertThat(assert.description).isEqualTo("Home")
-    assertThat(assert.mode).isEqualTo(AssertMode.VISIBLE)
+    assertThat(assert.mode).isEqualTo(AssertMode.TREE)
   }
 
   @Test
@@ -55,10 +55,16 @@ class JourneyStepSerializerTest {
   }
 
   @Test
-  fun `parses generic assertion with visual keywords`() {
-    val step = JourneyStepParser.parse("[?] Backdrop image is visible")
+  fun `parses generic assertion with appearance cue as visual`() {
+    val step = JourneyStepParser.parse("[?] Backdrop color is dark")
     assertThat(step).isInstanceOf<JourneyStep.Assert>()
     assertThat((step as JourneyStep.Assert).mode).isEqualTo(AssertMode.VISUAL)
+  }
+
+  @Test
+  fun `generic assertion with only a visual noun stays tree`() {
+    val step = JourneyStepParser.parse("[?] Backdrop image is visible")
+    assertThat((step as JourneyStep.Assert).mode).isEqualTo(AssertMode.TREE)
   }
 
   @Test

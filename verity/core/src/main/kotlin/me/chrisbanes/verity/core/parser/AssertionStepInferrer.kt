@@ -10,10 +10,14 @@ object AssertionStepInferrer {
     RegexOption.IGNORE_CASE,
   )
 
-  fun infer(text: String): JourneyStep.Assert? {
+  /** An explicit `visually` wins; otherwise [resolveMode] picks the mode from the description. */
+  fun infer(
+    text: String,
+    resolveMode: (String) -> AssertMode = AssertModeInferrer::infer,
+  ): JourneyStep.Assert? {
     val match = PATTERN.matchEntire(text.trim()) ?: return null
     val description = match.groupValues[2].trim()
-    val mode = if (match.groups[1] != null) AssertMode.VISUAL else AssertModeInferrer.infer(description)
+    val mode = if (match.groups[1] != null) AssertMode.VISUAL else resolveMode(description)
     return JourneyStep.Assert(description = description, mode = mode)
   }
 }

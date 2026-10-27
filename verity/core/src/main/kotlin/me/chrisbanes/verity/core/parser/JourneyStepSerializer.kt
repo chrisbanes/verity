@@ -76,11 +76,7 @@ object JourneyStepParser {
     LoopStepInferrer.infer(trimmed)?.let { return it }
 
     // 5. Assertion inference (NL keywords)
-    AssertionStepInferrer.infer(trimmed)?.let { inferred ->
-      // The inferrer's mode already includes the "visually" keyword, which a re-inference would lose.
-      if (assertionStrategy == AssertionStrategy.INFER) return inferred
-      return inferred.copy(mode = assertionStrategy.resolveMode(inferred.description))
-    }
+    AssertionStepInferrer.infer(trimmed) { assertionStrategy.resolveMode(it) }?.let { return it }
 
     // 6. Default: Action
     return JourneyStep.Action(instruction = trimmed)
