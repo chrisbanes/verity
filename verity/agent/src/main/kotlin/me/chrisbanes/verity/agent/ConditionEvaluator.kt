@@ -169,7 +169,7 @@ internal class ScreenInspection(
     return InspectionEvaluation(inspector.evaluateTree(hierarchy, description, context, deadline?.onModelFailure, loopHints), evidence)
   }
 
-  /** A confident pre-check verdict, or null to fall back to the inspector. Never throws except for cancellation and the deadline. */
+  /** A confident pre-check decision, the inspector's verdict on the same rendering when a pass is confirmed, or null to fall back to the inspector. Throws only what an inspector check throws. */
   suspend fun precheck(precheck: ConditionPrecheck, hierarchy: String, description: String, context: InspectionContext, loopHints: Boolean): ConditionEvaluation? {
     // A loop that wants batching hints needs the inspector's verdict for an unmet check, so only a pass may be taken early.
     val verdict = ask(precheck, PrecheckState(session.platform, hierarchy, context.referenceText), description, acceptFail = !loopHints) ?: return null
