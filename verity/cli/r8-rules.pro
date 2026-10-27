@@ -99,6 +99,8 @@
 -dontwarn com.google.auto.value.**
 -dontwarn io.opentelemetry.api.incubator.**
 -dontwarn io.opentelemetry.sdk.extension.incubator.**
+# OpenTelemetry's optional declarative-config API is referenced only after a classpath availability check.
+-dontwarn io.opentelemetry.sdk.autoconfigure.declarativeconfig.**
 # Micrometer context-propagation integration, used only when that library is present.
 -dontwarn io.micrometer.context.**
 # Netty's optional native OpenSSL binding (netty-tcnative) used only when present.

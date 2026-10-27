@@ -47,15 +47,15 @@ it does not remove dependency classes or alter device architecture slices.
 | Shaded Netty tcnative / epoll | macOS ARM64 tcnative | Linux x86-64 tcnative and epoll | All seven payloads |
 | JNA `com/sun/jna/<platform>` | `darwin-aarch64` | `linux-x86-64` | All 26 payloads, including AIX XCOFF |
 | Truffle `engine/libtruffleattach/<os>/<arch>` | `darwin/aarch64` | `linux/amd64` | All five groups |
-| Selenium Manager | Complete macOS fat binary | Linux executable | All three OS binaries |
+| Selenium Manager | Complete macOS fat binary | Linux x86-64 executable | All OS/architecture binaries, including Linux ARM64 |
 | `maestro-app.apk`, `maestro-server.apk` | Both, unchanged | Both, unchanged | Both, unchanged |
 | `driver-iPhoneSimulator`, `driver-iphoneos` | Both complete groups | Neither group | Both complete groups |
 
 The two Netty namespaces use mapped library names in `META-INF/native`;
 epoll filenames imply Linux without an OS token. JNA uses its platform resource
 prefix. Truffle needs each selected binary and its `files` and `sha256` siblings.
-Selenium selects by OS, so its complete macOS binary is retained. Generic
-native-image reflection/JNI/resource declarations remain intact, including
+Selenium selects by OS and, on Linux, CPU architecture; its complete macOS fat
+binary is retained. Generic native-image reflection/JNI/resource declarations remain intact, including
 optional patterns mentioning other platforms. Such declarations are distinct
 from platform payloads and group-specific sidecars.
 
