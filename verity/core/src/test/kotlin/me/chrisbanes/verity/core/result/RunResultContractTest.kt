@@ -301,6 +301,7 @@ class RunResultContractTest {
 
     val loop = LoopArtifact("Home", 2, ConditionTier.TREE, "r")
     assertThat(json.encodeToString(LoopArtifact.serializer(), loop)).doesNotContain("precheck")
+    assertThat(json.encodeToString(PrecheckArtifact.serializer(), artifact)).doesNotContain("outcome")
     val decided = loop.copy(tier = ConditionTier.PRECHECK, precheck = artifact)
     assertThat(json.decodeFromString(LoopArtifact.serializer(), json.encodeToString(LoopArtifact.serializer(), decided))).isEqualTo(decided)
 
@@ -309,10 +310,23 @@ class RunResultContractTest {
     val waitDecided = wait.copy(tier = ConditionTier.PRECHECK, precheck = artifact)
     assertThat(json.decodeFromString(WaitArtifact.serializer(), json.encodeToString(WaitArtifact.serializer(), waitDecided))).isEqualTo(waitDecided)
 
+    val confirmed = loop.copy(precheck = artifact.copy(outcome = PrecheckOutcome.CONFIRMED))
+    val confirmedJson = json.encodeToString(LoopArtifact.serializer(), confirmed)
+    assertThat(confirmedJson).contains("\"outcome\":\"confirmed\"")
+    assertThat(json.decodeFromString(LoopArtifact.serializer(), confirmedJson)).isEqualTo(confirmed)
+    val overruled = wait.copy(precheck = artifact.copy(outcome = PrecheckOutcome.OVERRULED))
+    val overruledJson = json.encodeToString(WaitArtifact.serializer(), overruled)
+    assertThat(overruledJson).contains("\"outcome\":\"overruled\"")
+    assertThat(json.decodeFromString(WaitArtifact.serializer(), overruledJson)).isEqualTo(overruled)
+
+    // Results written before confirmation existed carry neither the outcome nor the new counts.
+    assertThat(json.decodeFromString(PrecheckArtifact.serializer(), """{"probability":0.97,"model":"jev-latest","host":"api.typesafe.ai"}""")).isEqualTo(artifact)
+    assertThat(json.decodeFromString(PrecheckSummaryArtifact.serializer(), """{"accepted":3,"uncertainFallbacks":1,"errorFallbacks":0}""")).isEqualTo(PrecheckSummaryArtifact(3, 1, 0))
+
     val summary = SuiteArtifactSummary(formatVersion = 1, timestamp = "t", inputPath = "j", status = ArtifactStatus.PASSED, total = 0, passed = 0, failed = 0)
     assertThat(json.encodeToString(summary)).doesNotContain("precheck")
     val counted = summary.copy(precheck = PrecheckSummaryArtifact(3, 1, 0))
-    assertThat(json.encodeToString(counted)).contains("\"precheck\":{\"accepted\":3,\"uncertainFallbacks\":1,\"errorFallbacks\":0}")
+    assertThat(json.encodeToString(counted)).contains("\"precheck\":{\"accepted\":3,\"uncertainFallbacks\":1,\"errorFallbacks\":0,\"confirmed\":0,\"overruled\":0}")
     assertThat(json.decodeFromString<SuiteArtifactSummary>(json.encodeToString(counted))).isEqualTo(counted)
   }
 

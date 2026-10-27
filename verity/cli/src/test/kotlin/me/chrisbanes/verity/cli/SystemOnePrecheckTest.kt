@@ -6,6 +6,7 @@ import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isLessThan
 import assertk.assertions.isNotNull
@@ -39,6 +40,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import me.chrisbanes.verity.agent.PrecheckState
 import me.chrisbanes.verity.agent.PrecheckVerdict
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.PrecheckSummaryArtifact
 import me.chrisbanes.verity.core.timing.RecordingPhaseTimer
 
 private fun ok(p: String, model: String = "jev-1.13.0") = """{"model":"$model","answers":{"condition":{"type":"noul","noul":$p}}}"""
@@ -86,7 +88,7 @@ class SystemOnePrecheckTest {
     }
   }
 
-  private fun config(f: Fixture, apiKey: String? = "s3cr3t") = ResolvedPrecheck("http://127.0.0.1:${f.port}", "jev-latest", apiKey, 500.milliseconds, 0.9, 0.1)
+  private fun config(f: Fixture, apiKey: String? = "s3cr3t") = ResolvedPrecheck("http://127.0.0.1:${f.port}", "jev-latest", apiKey, 500.milliseconds, 0.9, 0.1, confirmPass = false)
 
   @Test
   fun `confident pass posts the system one request and counts it accepted`() = withServer { f ->
@@ -95,7 +97,7 @@ class SystemOnePrecheckTest {
 
     val verdict = client.check(S, "C", acceptFail = true)
 
-    assertThat(verdict).isEqualTo(PrecheckVerdict(true, 0.95, "jev-1.13.0", "127.0.0.1:${f.port}"))
+    assertThat(verdict).isEqualTo(PrecheckVerdict(true, 0.95, "jev-1.13.0", "127.0.0.1:${f.port}", traceId = "P1"))
     val (line, _, body) = f.requests.single()
     assertThat(line).isEqualTo("POST /v1/systemone application/json")
     // No earlier observations: the state carries only the tree.
@@ -203,6 +205,43 @@ class SystemOnePrecheckTest {
   }
 
   private fun JsonObject.instructions() = getValue("questions").jsonObject.getValue("condition").jsonObject.getValue("instructions").jsonPrimitive.content
+
+  @Test
+  fun `a pass to be confirmed is not accepted, and the inspector's answer is counted and traced`() = withServer { f ->
+    val stats = PrecheckStats()
+    val lines = CopyOnWriteArrayList<String>()
+    val client = SystemOnePrecheck(config(f).copy(confirmPass = true), stats, trace = { _, text -> lines += text })
+
+    val first = client.check(S, "C", acceptFail = true)!!
+    val second = client.check(S, "C", acceptFail = true)!!
+
+    assertThat(client.confirmsPass).isTrue()
+    assertThat(first.traceId).isEqualTo("P1")
+    assertThat(stats.accepted).isEqualTo(0)
+    client.confirmation(first, confirmed = true)
+    client.confirmation(second, confirmed = false)
+    assertThat(stats.confirmed).isEqualTo(1)
+    assertThat(stats.overruled).isEqualTo(1)
+    assertThat(stats.accepted).isEqualTo(0)
+    assertThat(lines.filter { "confirmation" in it }).isEqualTo(listOf("P1 confirmation outcome=confirmed", "P2 confirmation outcome=overruled"))
+    assertThat(stats.render()).isEqualTo("Pre-check: accepted 0, confirmed 1, overruled 1, uncertain fallbacks 0, error fallbacks 0")
+    assertThat(stats.snapshot()).isEqualTo(PrecheckSummaryArtifact(0, 0, 0, confirmed = 1, overruled = 1))
+  }
+
+  @Test
+  fun `with confirm-pass off a pass counts accepted, and confident fails still do with it on`() = withServer { f ->
+    val off = PrecheckStats()
+    val client = SystemOnePrecheck(config(f), off)
+    client.check(S, "C", acceptFail = true)
+    assertThat(client.confirmsPass).isFalse()
+    assertThat(off.accepted).isEqualTo(1)
+
+    f.respond = { 200 to ok(0.05) }
+    val on = PrecheckStats()
+    SystemOnePrecheck(config(f).copy(confirmPass = true), on).check(S, "C", acceptFail = true)
+    assertThat(on.accepted).isEqualTo(1)
+    assertThat(on.confirmed + on.overruled).isEqualTo(0)
+  }
 
   @Test
   fun `confident fail returns a failed verdict`() = withServer { f ->

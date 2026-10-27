@@ -46,10 +46,14 @@ class PrecheckStats {
   private val acceptedCount = AtomicInteger()
   private val uncertainCount = AtomicInteger()
   private val errorCount = AtomicInteger()
+  private val confirmedCount = AtomicInteger()
+  private val overruledCount = AtomicInteger()
 
   val accepted: Int get() = acceptedCount.get()
   val uncertainFallbacks: Int get() = uncertainCount.get()
   val errorFallbacks: Int get() = errorCount.get()
+  val confirmed: Int get() = confirmedCount.get()
+  val overruled: Int get() = overruledCount.get()
 
   internal fun accepted() = acceptedCount.incrementAndGet()
 
@@ -57,9 +61,12 @@ class PrecheckStats {
 
   internal fun error() = errorCount.incrementAndGet()
 
-  fun snapshot() = PrecheckSummaryArtifact(accepted, uncertainFallbacks, errorFallbacks)
+  /** Counts the inspector's answer to a pass; neither outcome is `accepted`, which means decided without an inspector request. */
+  internal fun confirmation(confirmed: Boolean) = if (confirmed) confirmedCount.incrementAndGet() else overruledCount.incrementAndGet()
 
-  fun render() = "Pre-check: accepted $accepted, uncertain fallbacks $uncertainFallbacks, error fallbacks $errorFallbacks"
+  fun snapshot() = PrecheckSummaryArtifact(accepted, uncertainFallbacks, errorFallbacks, confirmed, overruled)
+
+  fun render() = "Pre-check: accepted $accepted, confirmed $confirmed, overruled $overruled, uncertain fallbacks $uncertainFallbacks, error fallbacks $errorFallbacks"
 }
 
 /**
@@ -114,8 +121,9 @@ class SystemOnePrecheck(
         stats.uncertain()
         return null
       }
-      stats.accepted()
-      return PrecheckVerdict(passed, probability, model, host)
+      // A pass the inspector will confirm is decided by the inspector, so it is counted by `confirmation` instead.
+      if (!(passed && config.confirmPass)) stats.accepted()
+      return PrecheckVerdict(passed, probability, model, host, traceId = id)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Failure) {
@@ -124,6 +132,13 @@ class SystemOnePrecheck(
       if (warned.compareAndSet(false, true)) warn("Warning: pre-check request to $host failed (${e.kind}); falling back to the inspector")
       return null
     }
+  }
+
+  override val confirmsPass: Boolean get() = config.confirmPass
+
+  override suspend fun confirmation(verdict: PrecheckVerdict, confirmed: Boolean) {
+    stats.confirmation(confirmed)
+    trace("${verdict.traceId} confirmation outcome=${if (confirmed) "confirmed" else "overruled"}")
   }
 
   private suspend fun query(request: SystemOneRequest): Pair<Double, String> {

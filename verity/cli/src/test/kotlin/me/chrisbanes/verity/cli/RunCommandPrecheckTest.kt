@@ -38,11 +38,13 @@ import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 
 class RunCommandPrecheckTest {
-  private class Backend : ModelRequestBackend {
+  /** Answers each inspector request with the next of [passes] (the last repeats), or throws [failure]. */
+  private class Backend(private val passes: List<Boolean> = listOf(true), private val failure: Throwable? = null) : ModelRequestBackend {
     val requests = mutableListOf<ModelRequest>()
     override suspend fun execute(request: ModelRequest): Message.Assistant {
       requests += request
-      return modelReply("""{"passed":true,"reasoning":"inspected"}""")
+      failure?.let { throw it }
+      return modelReply("""{"passed":${passes[minOf(requests.size, passes.size) - 1]},"reasoning":"inspected"}""")
     }
 
     override suspend fun close() = Unit
@@ -130,22 +132,32 @@ class RunCommandPrecheckTest {
   }
 
   @Test
-  fun `an opted-in visual wait is decided by the pre-check without a visual inspection`() {
-    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, visualEnabled = true))
+  fun `an opted-in visual wait with confirm-pass off is decided by the pre-check without a visual inspection`() {
+    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, visualEnabled = true, confirmPass = false))
 
     assertThat(result.statusCode).isEqualTo(0)
-    assertThat(result.output).contains("Pre-check: accepted 1, uncertain fallbacks 0, error fallbacks 0")
+    assertThat(result.output).contains("Pre-check: accepted 1, confirmed 0, overruled 0, uncertain fallbacks 0, error fallbacks 0")
     assertThat(prompts).isEmpty()
     assertThat(sent.single().headers().firstValue("TypeSafe-Danger-Zone-Images").orElse(null)).isEqualTo("true")
     assertThat(sent.single().uri().toString()).isEqualTo("https://api.typesafe.ai/v1/systemone")
   }
 
   @Test
-  fun `an opted-in visual wait with the decisions provider reaches the decisions client`() {
-    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, provider = "decisions", visualEnabled = true), keyEnv = "OPENAI_API_KEY")
+  fun `an opted-in visual wait confirms the pre-check pass with one visual inspection by default`() {
+    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, visualEnabled = true))
 
     assertThat(result.statusCode).isEqualTo(0)
-    assertThat(result.output).contains("Pre-check: accepted 1, uncertain fallbacks 0, error fallbacks 0")
+    assertThat(result.output).contains("Pre-check: accepted 0, confirmed 1, overruled 0, uncertain fallbacks 0, error fallbacks 0")
+    assertThat(prompts).isEqualTo(listOf("visual-eval"))
+    assertThat(sent.size).isEqualTo(1)
+  }
+
+  @Test
+  fun `an opted-in visual wait with the decisions provider reaches the decisions client`() {
+    val (result, sent, prompts) = runVisualWait(VerityPrecheckConfig(enabled = true, provider = "decisions", visualEnabled = true, confirmPass = false), keyEnv = "OPENAI_API_KEY")
+
+    assertThat(result.statusCode).isEqualTo(0)
+    assertThat(result.output).contains("Pre-check: accepted 1, confirmed 0, overruled 0, uncertain fallbacks 0, error fallbacks 0")
     assertThat(prompts).isEmpty()
     val request = sent.single()
     assertThat(request.uri().toString()).isEqualTo("https://api.openai.com/v1/decisions")
@@ -201,7 +213,7 @@ class RunCommandPrecheckTest {
     }
   }
 
-  private fun enabledConfig(port: Int) = VerityConfig(precheck = VerityPrecheckConfig(enabled = true, baseUrl = "http://127.0.0.1:$port", model = "m"))
+  private fun enabledConfig(port: Int, confirmPass: Boolean? = null) = VerityConfig(precheck = VerityPrecheckConfig(enabled = true, baseUrl = "http://127.0.0.1:$port", model = "m", confirmPass = confirmPass))
 
   private fun summaryOf(output: File) = kotlinx.serialization.json.Json.decodeFromString<SuiteArtifactSummary>(output.walkTopDown().first { it.name == "summary.json" }.readText())
 
@@ -294,22 +306,30 @@ class RunCommandPrecheckTest {
   }
 
   @Test
-  fun `dry run ignores the pre-check entirely`() {
+  fun `dry run ignores the pre-check entirely, including confirm-pass`() {
     val dir = createTempDirectory("verity-pc-dry").toFile()
     try {
-      val command = RunCommand(environment = { error("dry run must not read the environment") })
+      val file = journey(dir, "Wait until ready").path
+      fun dryRun(precheck: VerityPrecheckConfig?, flag: String = "--precheck"): String {
+        val command = RunCommand(loadConfig = { VerityConfig(precheck = precheck) }, environment = { error("dry run must not read the environment") })
+        val result = Verity().subcommands(command).test("--output-path ${dir.path}/output run --dry-run $flag $file")
+        assertThat(result.statusCode).isEqualTo(0)
+        return result.output
+      }
 
-      val result = Verity().subcommands(command).test("--output-path ${dir.path}/output run --dry-run --precheck ${journey(dir, "Wait until ready").path}")
-
-      assertThat(result.statusCode).isEqualTo(0)
-      assertThat(result.output).doesNotContain("Pre-check")
+      val baseline = dryRun(null)
+      assertThat(baseline).doesNotContain("Pre-check")
+      assertThat(dryRun(VerityPrecheckConfig(confirmPass = false))).isEqualTo(baseline)
+      assertThat(dryRun(VerityPrecheckConfig(confirmPass = true))).isEqualTo(baseline)
     } finally {
       dir.deleteRecursively()
     }
   }
 
+  private fun journeyJson(output: File) = output.walkTopDown().first { it.name.endsWith(".json") && it.name != "summary.json" }.readText().filterNot { it.isWhitespace() }
+
   @Test
-  fun `an enabled pre-check decides the wait, skips the inspector and reports counts in output, timing and summary`() {
+  fun `by default a confident pass is confirmed by one inspector request and reported in output, timing, summary and journey`() {
     val dir = createTempDirectory("verity-pc-run").toFile()
     try {
       withClassifier("0.95") { port ->
@@ -324,16 +344,90 @@ class RunCommandPrecheckTest {
         val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run --timing ${journey(dir, "Wait until the page is ready").path}")
 
         assertThat(result.statusCode).isEqualTo(0)
-        val counts = "Pre-check: accepted 1, uncertain fallbacks 0, error fallbacks 0"
+        val counts = "Pre-check: accepted 0, confirmed 1, overruled 0, uncertain fallbacks 0, error fallbacks 0"
         assertThat(result.output.split(counts).size - 1).isEqualTo(2)
         assertThat(result.output).contains("Pre-check: m at 127.0.0.1:$port")
         assertThat(result.output).contains("model_request precheck x1")
+        assertThat(result.output).contains("model_request tree-eval x1")
         assertThat(result.output.lines().indexOfFirst { it == counts }).isEqualTo(result.output.lines().indexOfFirst { it.startsWith("Failed:") } + 1)
+        assertThat(backend.requests.map { it.promptName }).isEqualTo(listOf("tree-eval"))
+        assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 0, 0, confirmed = 1))
+        val json = journeyJson(output)
+        assertThat(json).contains("\"tier\":\"tree\"")
+        assertThat(json).contains("\"model\":\"jev-1.13.0\"")
+        assertThat(json).contains("\"outcome\":\"confirmed\"")
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `with confirm-pass off a confident pass decides the wait, skips the inspector and reports counts in output, timing and summary`() {
+    val dir = createTempDirectory("verity-pc-run-off").toFile()
+    try {
+      withClassifier("0.95") { port ->
+        val backend = Backend()
+        val output = File(dir, "output")
+        val command = RunCommand(
+          loadConfig = { enabledConfig(port, confirmPass = false) },
+          preflightChecker = { _, _, _, _ -> preflight(backend) },
+          sessionFactory = { _, _, _ -> session() },
+        )
+
+        val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run --timing ${journey(dir, "Wait until the page is ready").path}")
+
+        assertThat(result.statusCode).isEqualTo(0)
+        val counts = "Pre-check: accepted 1, confirmed 0, overruled 0, uncertain fallbacks 0, error fallbacks 0"
+        assertThat(result.output.split(counts).size - 1).isEqualTo(2)
+        assertThat(result.output).contains("model_request precheck x1")
         assertThat(backend.requests).isEmpty()
         assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(1, 0, 0))
-        val journeyJson = output.walkTopDown().first { it.name.endsWith(".json") && it.name != "summary.json" }.readText().filterNot { it.isWhitespace() }
-        assertThat(journeyJson).contains("\"tier\":\"precheck\"")
-        assertThat(journeyJson).contains("\"model\":\"jev-1.13.0\"")
+        val json = journeyJson(output)
+        assertThat(json).contains("\"tier\":\"precheck\"")
+        assertThat(json).contains("\"model\":\"jev-1.13.0\"")
+        assertThat(json).doesNotContain("outcome")
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `an inspector that overrules a pass keeps the wait polling until a pass is confirmed`() {
+    val dir = createTempDirectory("verity-pc-overruled").toFile()
+    try {
+      withClassifier("0.95") { port ->
+        val backend = Backend(passes = listOf(false, true))
+        val output = File(dir, "output")
+        val command = RunCommand(loadConfig = { enabledConfig(port) }, preflightChecker = { _, _, _, _ -> preflight(backend) }, sessionFactory = { _, _, _ -> session() })
+
+        val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run ${journey(dir, "Wait until the page is ready").path}")
+
+        assertThat(result.statusCode).isEqualTo(0)
+        assertThat(result.output).contains("Pre-check: accepted 0, confirmed 1, overruled 1, uncertain fallbacks 0, error fallbacks 0")
+        assertThat(backend.requests.size).isEqualTo(2)
+        assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 0, 0, confirmed = 1, overruled = 1))
+        assertThat(journeyJson(output)).contains("\"outcome\":\"confirmed\"")
+      }
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun `a model failure while confirming a pass exits with the model failure status`() {
+    val dir = createTempDirectory("verity-pc-confirm-failure").toFile()
+    try {
+      withClassifier("0.95") { port ->
+        val backend = Backend(failure = IllegalStateException("backend down"))
+        val output = File(dir, "output")
+        val command = RunCommand(loadConfig = { enabledConfig(port) }, preflightChecker = { _, _, _, _ -> preflight(backend) }, sessionFactory = { _, _, _ -> session() })
+
+        val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run ${journey(dir, "Wait until the page is ready").path}")
+
+        assertThat(result.statusCode).isEqualTo(5)
+        assertThat(backend.requests.size).isEqualTo(1)
       }
     } finally {
       dir.deleteRecursively()
@@ -352,7 +446,7 @@ class RunCommandPrecheckTest {
         val result = Verity().subcommands(command).test("--provider openai --openai-auth chatgpt --output-path ${output.path} run ${journey(dir, "Wait until the page is ready").path}")
 
         assertThat(result.statusCode).isEqualTo(0)
-        assertThat(result.output).contains("Pre-check: accepted 0, uncertain fallbacks 1, error fallbacks 0")
+        assertThat(result.output).contains("Pre-check: accepted 0, confirmed 0, overruled 0, uncertain fallbacks 1, error fallbacks 0")
         assertThat(backend.requests.map { it.promptName }).isEqualTo(listOf("tree-eval"))
         assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 1, 0))
       }
@@ -374,7 +468,7 @@ class RunCommandPrecheckTest {
 
         assertThat(result.statusCode).isEqualTo(0)
         assertThat(result.stderr).contains("Warning: pre-check request to 127.0.0.1:$port failed (HTTP 500)")
-        assertThat(result.output).contains("Pre-check: accepted 0, uncertain fallbacks 0, error fallbacks 1")
+        assertThat(result.output).contains("Pre-check: accepted 0, confirmed 0, overruled 0, uncertain fallbacks 0, error fallbacks 1")
         assertThat(backend.requests.map { it.promptName }).isEqualTo(listOf("tree-eval"))
         assertThat(summaryOf(output).precheck).isEqualTo(PrecheckSummaryArtifact(0, 0, 1))
       }

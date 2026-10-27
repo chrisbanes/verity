@@ -121,6 +121,16 @@ class PrecheckConfigTest {
   }
 
   @Test
+  fun `confirm-pass defaults to true, can be switched off and decodes from yaml`() {
+    assertThat(resolve()!!.confirmPass).isEqualTo(true)
+    assertThat(resolve(VerityPrecheckConfig(enabled = true, confirmPass = false))!!.confirmPass).isEqualTo(false)
+    assertThat(resolve(VerityPrecheckConfig(enabled = true, provider = "decisions", confirmPass = true), env = mapOf("OPENAI_API_KEY" to "k"))!!.confirmPass).isEqualTo(true)
+    assertThat(VerityConfig.fromYaml("precheck:\n  enabled: true\n  confirm-pass: false\n").precheck?.confirmPass).isEqualTo(false)
+    assertThat(VerityConfig.fromYaml("precheck:\n  enabled: true\n").precheck?.confirmPass).isNull()
+    assertFailure { VerityConfig.fromYaml("precheck:\n  confirm-pass: maybe\n") }
+  }
+
+  @Test
   fun `toString redacts the key`() {
     assertThat(resolve()!!.toString()).doesNotContain("s3cr3t")
   }

@@ -20,6 +20,7 @@ import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.PrecheckArtifact
+import me.chrisbanes.verity.core.result.PrecheckOutcome
 import me.chrisbanes.verity.device.DeviceSession
 
 /** Exactly one check: no actions, polling, delay or accumulated journey state. */
@@ -65,8 +66,10 @@ class ConditionEvaluator(
   ): ConditionEvaluation {
     visualDescription(condition)?.let { description ->
       val evaluation = inspection.visual(description, context)
-      val tier = if (evaluation.precheck != null) ConditionTier.PRECHECK else ConditionTier.VISUAL
-      return ConditionEvaluation(evaluation.verdict, tier, evaluation.evidence, precheck = evaluation.precheck)
+      // A pre-check pass the inspector confirmed or overruled was decided by the inspector.
+      val precheck = evaluation.precheck
+      val tier = if (precheck != null && precheck.outcome == null) ConditionTier.PRECHECK else ConditionTier.VISUAL
+      return ConditionEvaluation(evaluation.verdict, tier, evaluation.evidence, precheck = precheck)
     }
     val literalOnly = LiteralConditionParser.parse(condition)
     val tree = captureTree()
@@ -77,8 +80,7 @@ class ConditionEvaluator(
       return focusEvaluation(target, FocusDetector.containsFocused(tree, target, checkpoint), tree)
     }
     val hierarchy = HierarchyRenderer.render(tree, HierarchyFilter.PROMPT, checkpoint)
-    // A loop that wants batching hints needs the inspector's verdict for an unmet check, so only a pass may be taken early.
-    precheck?.let { inspection.precheck(it, hierarchy, condition, context, acceptFail = !loopHints) }?.let { return it.copy(tree = tree) }
+    precheck?.let { inspection.precheck(it, hierarchy, condition, context, loopHints) }?.let { return it.copy(tree = tree) }
     val evaluation = inspection.inspectTree(hierarchy, condition, context, loopHints)
     return ConditionEvaluation(evaluation.verdict, ConditionTier.TREE, evaluation.evidence, tree)
   }
@@ -130,14 +132,14 @@ data class ConditionEvaluation(
   val evidence: List<EvidenceArtifact> = emptyList(),
   /** The tree this check read; null for the visual tier. */
   val tree: HierarchyNode? = null,
-  /** Set only for [ConditionTier.PRECHECK]. */
+  /** Set when a pre-check answered; [PrecheckArtifact.outcome] is set when the inspector then confirmed or overruled its pass. */
   val precheck: PrecheckArtifact? = null,
 )
 
 internal data class InspectionEvaluation(
   val verdict: InspectionVerdict,
   val evidence: List<EvidenceArtifact> = emptyList(),
-  /** Set when a visual pre-check decided the verdict instead of the inspector. */
+  /** Set when a visual pre-check answered; [PrecheckArtifact.outcome] is set when the inspector confirmed or overruled its pass. */
   val precheck: PrecheckArtifact? = null,
 )
 
@@ -168,9 +170,17 @@ internal class ScreenInspection(
   }
 
   /** A confident pre-check verdict, or null to fall back to the inspector. Never throws except for cancellation and the deadline. */
-  suspend fun precheck(precheck: ConditionPrecheck, hierarchy: String, description: String, context: InspectionContext, acceptFail: Boolean): ConditionEvaluation? {
-    val verdict = ask(precheck, PrecheckState(session.platform, hierarchy, context.referenceText), description, acceptFail) ?: return null
-    return ConditionEvaluation(verdict.toInspectionVerdict(), ConditionTier.PRECHECK, saveHierarchyEvidence(hierarchy), precheck = verdict.toArtifact())
+  suspend fun precheck(precheck: ConditionPrecheck, hierarchy: String, description: String, context: InspectionContext, loopHints: Boolean): ConditionEvaluation? {
+    // A loop that wants batching hints needs the inspector's verdict for an unmet check, so only a pass may be taken early.
+    val verdict = ask(precheck, PrecheckState(session.platform, hierarchy, context.referenceText), description, acceptFail = !loopHints) ?: return null
+    if (!(verdict.passed && precheck.confirmsPass)) {
+      return ConditionEvaluation(verdict.toInspectionVerdict(), ConditionTier.PRECHECK, saveHierarchyEvidence(hierarchy), precheck = verdict.toArtifact())
+    }
+    // The ordinary inspector check on the same rendering; a failure, deadline or cancellation propagates and the pass is never a fallback.
+    val inspected = inspectTree(hierarchy, description, context, loopHints)
+    val passed = inspected.verdict.passed
+    precheck.confirmation(verdict, passed)
+    return ConditionEvaluation(inspected.verdict, ConditionTier.TREE, inspected.evidence, precheck = verdict.toArtifact(outcome(passed)))
   }
 
   private suspend fun ask(precheck: ConditionPrecheck, state: PrecheckState, description: String, acceptFail: Boolean): PrecheckVerdict? {
@@ -186,11 +196,17 @@ internal class ScreenInspection(
     return verdict
   }
 
-  /** The visual pre-check's confident verdict on [screenshot], or the inspector's: the same capture either way, never a recapture. */
+  /** The visual pre-check's confident verdict, or the inspector's: the same capture either way, never a recapture. */
   private suspend fun inspectScreenshot(screenshot: Path, description: String, context: InspectionContext): Pair<InspectionVerdict, PrecheckArtifact?> {
-    val accepted = visualPrecheck?.let { ask(it, PrecheckState(session.platform, null, context.referenceText, screenshot = screenshot), description, acceptFail = true) }
-    if (accepted != null) return accepted.toInspectionVerdict() to accepted.toArtifact()
-    return inspector.evaluateVisual(screenshot, description, context, deadline?.onModelFailure) to null
+    val precheck = visualPrecheck
+    val accepted = precheck?.let { ask(it, PrecheckState(session.platform, null, context.referenceText, screenshot = screenshot), description, acceptFail = true) }
+    val inspect = suspend { inspector.evaluateVisual(screenshot, description, context, deadline?.onModelFailure) }
+    if (precheck == null || accepted == null) return inspect() to null
+    if (!(accepted.passed && precheck.confirmsPass)) return accepted.toInspectionVerdict() to accepted.toArtifact()
+    // A failure, deadline or cancellation during confirmation propagates; the pass is never a fallback.
+    val verdict = inspect()
+    precheck.confirmation(accepted, verdict.passed)
+    return verdict to accepted.toArtifact(outcome(verdict.passed))
   }
 
   private suspend fun saveHierarchyEvidence(hierarchy: String): List<EvidenceArtifact> {
@@ -261,7 +277,9 @@ internal class ScreenInspection(
 
 private fun PrecheckVerdict.toInspectionVerdict() = InspectionVerdict(passed, String.format(Locale.ROOT, "Pre-check probability %.2f (%s)", probability, model))
 
-private fun PrecheckVerdict.toArtifact() = PrecheckArtifact(probability, model, host)
+private fun PrecheckVerdict.toArtifact(outcome: PrecheckOutcome? = null) = PrecheckArtifact(probability, model, host, outcome)
+
+private fun outcome(confirmed: Boolean) = if (confirmed) PrecheckOutcome.CONFIRMED else PrecheckOutcome.OVERRULED
 
 private suspend fun withTemporaryScreenshot(inspect: suspend (Path) -> InspectionVerdict): InspectionVerdict = withContext(Dispatchers.IO) {
   val tempFile = Files.createTempFile("verity-screenshot-", ".png")
