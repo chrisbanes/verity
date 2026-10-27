@@ -1,7 +1,6 @@
 package me.chrisbanes.verity.agent
 
 import me.chrisbanes.verity.core.hierarchy.FocusObservation
-import me.chrisbanes.verity.core.hierarchy.observeFocus
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
@@ -50,7 +49,7 @@ internal suspend fun DeviceSession.executeOrdered(
       is Interaction.KeyPress -> pressAndSettle(focusObserver, direction = true, focus, visual) { pressKey(action.keyName) }
       else -> error("Unexpected direct action: $action")
     }
-    focus = settled.focus ?: settled.tree?.let(::observeFocus)
+    focus = settled.settledFocus()
     previousDirect = true
   }
   flush()

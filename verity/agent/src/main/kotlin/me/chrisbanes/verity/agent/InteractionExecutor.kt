@@ -1,6 +1,6 @@
 package me.chrisbanes.verity.agent
 
-import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.device.DeviceSession
@@ -12,18 +12,20 @@ class InteractionExecutor(
   private val appId: String,
   private val focusObserver: FocusChangeObserver = FocusChangeObserver(),
 ) {
-  /** Returns the settled hierarchy after a key press that settled on stability, else null. */
-  suspend fun execute(interaction: Interaction, visual: Boolean = false): HierarchyNode? {
+  // The previous press's settled focus, so a run of presses skips each pre-press capture. Any
+  // non-key interaction or a press without a settled focus leaves it null.
+  private var baseline: FocusObservation? = null
+
+  /** Returns the key press's settle, with neither focus nor tree for a non-key interaction. */
+  internal suspend fun execute(interaction: Interaction, visual: Boolean = false): KeySettleResult {
     val flow = ActionFlow(appId, listOf(interaction))
     validateActionFlow(flow, session)
+    val before = baseline
+    baseline = null
     when (interaction) {
-      is Interaction.KeyPress -> return session.pressAndSettle(focusObserver, interaction.isDirection(), visual = visual) {
-        session.pressKey(interaction.keyName)
-      }.tree
+      is Interaction.KeyPress -> return settle(interaction.isDirection(), before, visual) { session.pressKey(interaction.keyName) }
 
-      is Interaction.KeyCode -> return session.pressAndSettle(focusObserver, interaction.isDirection(), visual = visual) {
-        session.pressKey(interaction.keycode, interaction.longPress)
-      }.tree
+      is Interaction.KeyCode -> return settle(interaction.isDirection(), before, visual) { session.pressKey(interaction.keycode, interaction.longPress) }
 
       else -> {
         val result = session.executeActions(flow)
@@ -33,6 +35,8 @@ class InteractionExecutor(
     if (interaction !is Interaction.WaitForAnimation && interaction !is Interaction.WaitUntilVisible) {
       session.waitForAnimationToEnd()
     }
-    return null
+    return KeySettleResult(null, null)
   }
+
+  private suspend fun settle(direction: Boolean, before: FocusObservation?, visual: Boolean, press: suspend () -> Unit): KeySettleResult = session.pressAndSettle(focusObserver, direction, before, visual, press).also { baseline = it.settledFocus() }
 }

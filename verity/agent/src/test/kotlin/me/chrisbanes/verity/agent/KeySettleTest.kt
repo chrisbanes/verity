@@ -44,7 +44,7 @@ class KeySettleTest {
     return fake
   }
 
-  private suspend fun TestScope.run(session: DeviceSession, interaction: Interaction, visual: Boolean = false) = InteractionExecutor(session, "app", observer()).execute(interaction, visual)
+  private suspend fun TestScope.run(session: DeviceSession, interaction: Interaction, visual: Boolean = false) = InteractionExecutor(session, "app", observer()).execute(interaction, visual).tree
 
   private val down = Interaction.KeyPress("Remote Dpad Down")
   private val center = Interaction.KeyPress("Remote Dpad Center")

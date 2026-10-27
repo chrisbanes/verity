@@ -3,6 +3,7 @@ package me.chrisbanes.verity.agent
 import kotlin.time.Duration.Companion.seconds
 import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.observeFocus
 import me.chrisbanes.verity.core.interaction.Interaction
 import me.chrisbanes.verity.core.model.Platform
 import me.chrisbanes.verity.device.DeviceSession
@@ -20,6 +21,9 @@ internal fun Interaction.KeyCode.isDirection() = !longPress && keycode in DIRECT
 
 /** [focus] is set after an observed focus change; [tree] is the final capture of a stable settle. */
 internal data class KeySettleResult(val focus: FocusObservation?, val tree: HierarchyNode?)
+
+/** The focus this settle ended on: the observed change, else the stable tree's focus; null when it observed neither. */
+internal fun KeySettleResult.settledFocus(): FocusObservation? = focus ?: tree?.let(::observeFocus)
 
 /**
  * Runs [press] exactly once, then settles. A [visual] settle needs pixel stability, so it always
