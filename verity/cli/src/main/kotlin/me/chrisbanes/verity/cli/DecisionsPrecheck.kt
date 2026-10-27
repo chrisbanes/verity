@@ -104,8 +104,9 @@ class DecisionsPrecheck(
         stats.uncertain()
         return null
       }
-      stats.accepted()
-      return PrecheckVerdict(passed, probability, answer.model, host)
+      // A pass the inspector will confirm is decided by the inspector, so it is counted by `confirmation` instead.
+      if (!(passed && config.confirmPass)) stats.accepted()
+      return PrecheckVerdict(passed, probability, answer.model, host, traceId = id)
     } catch (e: CancellationException) {
       throw e
     } catch (e: Failure) {
@@ -114,6 +115,13 @@ class DecisionsPrecheck(
       if (warned.compareAndSet(false, true)) warn("Warning: pre-check request to $host failed (${e.kind}); falling back to the inspector")
       return null
     }
+  }
+
+  override val confirmsPass: Boolean get() = config.confirmPass
+
+  override suspend fun confirmation(verdict: PrecheckVerdict, confirmed: Boolean) {
+    stats.confirmation(confirmed)
+    trace("${verdict.traceId} confirmation outcome=${if (confirmed) "confirmed" else "overruled"}")
   }
 
   private suspend fun query(platform: Platform, condition: String, parts: List<Part>): Answer {

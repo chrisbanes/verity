@@ -244,10 +244,12 @@ class Orchestrator(
     visual: Boolean = false,
   ): HierarchyNode? {
     validateActionFlow(ActionFlow(appId, interactions), session)
+    // One executor for the group: consecutive D-pad presses share its focus baseline.
+    val executor = InteractionExecutor(session, appId)
     var settled: HierarchyNode? = null
     // Mapping is one interaction per instruction, so the two lists align.
     interactions.forEachIndexed { index, interaction ->
-      settled = executeWithScrollToFind(interaction, instructions[index], appId, navigator, memory, source, visual)
+      settled = executeWithScrollToFind(interaction, instructions[index], executor, navigator, memory, source, visual)
     }
     return settled
   }
@@ -255,17 +257,15 @@ class Orchestrator(
   private suspend fun executeWithScrollToFind(
     interaction: Interaction,
     instruction: String,
-    appId: String,
+    executor: InteractionExecutor,
     navigator: NavigatorAgent,
     memory: JourneyMemory,
     source: TrailSource,
     visual: Boolean,
   ): HierarchyNode? {
-    val executor = InteractionExecutor(session, appId)
-
-    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction)) {
+    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction), afterFocus = { it.settledFocus() }) {
       executor.execute(executed, visual)
-    }
+    }.tree
 
     // For interactions that don't target a named element, just execute directly
     val targetText = when (interaction) {
@@ -402,6 +402,7 @@ class Orchestrator(
       val focusObserver = FocusChangeObserver()
       val seen = mutableListOf<FocusObservation>()
       // Cleared on the first edge, wrap or unmet on-screen prediction; every later body is checked.
+      // An estimated batch ignores unchanged focus, since the inspector's value moves while focus does not.
       var batching = true
       validateActionFlow(ActionFlow(appId, fastPathInteractions), session)
       while (completedBodies < loop.max) {
@@ -414,17 +415,26 @@ class Orchestrator(
         try {
           var baseline: FocusObservation? = null
           while (pressed < size) {
-            val result = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
+            val result = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions, afterFocus = { it.settledFocus() }) {
               session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }
             }
             settled = result.tree
             val after = result.focus
             pressed++
             completedBodies++
-            // No change means an edge or a failed observation; returning to an earlier focus means a wrap.
-            if (after == null || seen.any { !hasFocusChanged(it, after) }) {
+            // Returning to an earlier focus means a wrap; no change means an edge or a failed observation.
+            if (after != null && seen.any { !hasFocusChanged(it, after) }) {
               batching = false
               break
+            }
+            if (after == null) {
+              if (prediction?.estimated != true) {
+                batching = false
+                break
+              }
+              // shortcut: an estimated batch cannot detect a value edge, bounded by the estimate; upgrade if wasted presses show up in run artifacts
+              baseline = result.tree?.let(::observeFocus) ?: baseline
+              continue
             }
             seen += after
             baseline = after
@@ -465,8 +475,11 @@ class Orchestrator(
     return result()
   }
 
-  /** [target] is the on-screen target's node path, in [observeFocus] form, or null when off-screen. */
-  private class BatchPrediction(val presses: Int, val target: String? = null)
+  /**
+   * [target] is the on-screen target's node path, in [observeFocus] form, or null when off-screen.
+   * [estimated] marks a count taken from the inspector's `estimatedIterations` rather than from geometry.
+   */
+  private class BatchPrediction(val presses: Int, val target: String? = null, val estimated: Boolean = false)
 
   /** Equal paths, or one is an ancestor of the other (a focused card around a target label, say). */
   private fun String.isRelatedPath(other: String): Boolean {
@@ -500,7 +513,7 @@ class Orchestrator(
 
       null -> null
     }
-    return byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it) }
+    return byTarget ?: verdict.estimatedIterations?.let { BatchPrediction(it, estimated = true) }
   }
 
   private suspend fun evaluateAssertion(

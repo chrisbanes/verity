@@ -23,15 +23,23 @@ import me.chrisbanes.verity.core.model.AssertMode
 import me.chrisbanes.verity.core.model.Journey
 import me.chrisbanes.verity.core.model.JourneyStep
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.model.VerdictTarget
 import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.PrecheckArtifact
+import me.chrisbanes.verity.core.result.PrecheckOutcome
+import me.chrisbanes.verity.device.DeviceSession
 import me.chrisbanes.verity.device.FakeDeviceSession
 
 class ConditionPrecheckTest {
-  private class Fake(private val reply: suspend (acceptFail: Boolean) -> PrecheckVerdict?) : ConditionPrecheck {
+  private class Fake(override val confirmsPass: Boolean = false, private val reply: suspend (acceptFail: Boolean) -> PrecheckVerdict?) : ConditionPrecheck {
     val states = mutableListOf<PrecheckState>()
     val conditions = mutableListOf<String>()
     val acceptFail = mutableListOf<Boolean>()
+    val confirmations = mutableListOf<Boolean>()
+
+    override suspend fun confirmation(verdict: PrecheckVerdict, confirmed: Boolean) {
+      confirmations += confirmed
+    }
 
     override suspend fun check(state: PrecheckState, condition: String, acceptFail: Boolean): PrecheckVerdict? {
       states += state
@@ -43,12 +51,15 @@ class ConditionPrecheckTest {
 
   private fun verdict(passed: Boolean) = PrecheckVerdict(passed, if (passed) 0.97 else 0.03, "jev-latest", "api.typesafe.ai")
 
-  private class Inspector(passed: Boolean = true) {
+  private class Inspector(passed: Boolean = true, extra: String = "", private val onTree: suspend () -> Unit = {}) {
     var calls = 0
+    val messages = mutableListOf<String>()
     val agent = InspectorAgent(
-      evaluateTreeContent = { _, _, _ ->
+      evaluateTreeContent = { _, message, _ ->
         calls++
-        inspectionReply("""{"passed":$passed,"reasoning":"inspected"}""")
+        messages += message
+        onTree()
+        inspectionReply("""{"passed":$passed,"reasoning":"inspected"$extra}""")
       },
       evaluateVisualContent = { _, _, _, _ ->
         calls++
@@ -60,8 +71,8 @@ class ConditionPrecheckTest {
   /** A tree that lacks the prose condition text, so the literal tier cannot answer. */
   private fun session(platform: Platform = Platform.ANDROID_MOBILE) = FakeDeviceSession(platform, hierarchyProvider = { HierarchyNode(attributes = mapOf("text" to "Home")) })
 
-  private fun evaluator(precheck: ConditionPrecheck?, inspector: Inspector, recorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder) = ConditionEvaluator(
-    session(),
+  private fun evaluator(precheck: ConditionPrecheck?, inspector: Inspector, recorder: JourneyArtifactRecorder = NoOpJourneyArtifactRecorder, session: DeviceSession = session()) = ConditionEvaluator(
+    session,
     inspector.agent,
     recorder,
     temporaryScreenshot = { it(java.nio.file.Path.of("virtual.png")) },
@@ -104,7 +115,7 @@ class ConditionPrecheckTest {
   fun `no confident verdict and pre-check errors fall back to the inspector`() = runTest {
     for (reply in listOf<suspend (Boolean) -> PrecheckVerdict?>({ null }, { error("boom") })) {
       val inspector = Inspector()
-      val result = evaluator(Fake(reply), inspector).evaluate("the page is ready")
+      val result = evaluator(Fake(reply = reply), inspector).evaluate("the page is ready")
 
       assertThat(result.tier).isEqualTo(ConditionTier.TREE)
       assertThat(result.verdict.reasoning).isEqualTo("inspected")
@@ -191,6 +202,142 @@ class ConditionPrecheckTest {
     assertThat(result.lastEvaluation?.evidence?.single()?.path).isEqualTo("wait-000/hierarchy.txt")
     assertThat(paths).isEqualTo(listOf(0))
     assertThat(inspector.calls).isEqualTo(0)
+  }
+
+  private val confirmedArtifact = PrecheckArtifact(0.97, "jev-latest", "api.typesafe.ai", PrecheckOutcome.CONFIRMED)
+
+  @Test
+  fun `a confirmed pass is decided by the inspector on the same hierarchy with one capture and one evidence save`() = runTest {
+    var captures = 0
+    val saved = mutableListOf<String>()
+    val recorder = object : JourneyArtifactRecorder {
+      override suspend fun saveHierarchy(segmentIndex: Int, hierarchy: String): String? {
+        saved += hierarchy
+        return "hierarchy.txt"
+      }
+    }
+    val session = FakeDeviceSession(Platform.ANDROID_MOBILE, hierarchyProvider = {
+      captures++
+      HierarchyNode(attributes = mapOf("text" to "Home"))
+    })
+    val fake = Fake(confirmsPass = true) { verdict(true) }
+    val inspector = Inspector(passed = true)
+
+    val result = evaluator(fake, inspector, recorder, session).evaluate("the page is ready")
+
+    assertThat(result.tier).isEqualTo(ConditionTier.TREE)
+    assertThat(result.verdict.passed).isTrue()
+    assertThat(result.verdict.reasoning).isEqualTo("inspected")
+    assertThat(result.precheck).isEqualTo(confirmedArtifact)
+    assertThat(result.evidence).isNotEmpty()
+    assertThat(inspector.calls).isEqualTo(1)
+    assertThat(inspector.messages.single()).contains(fake.states.single().hierarchy!!)
+    assertThat(captures).isEqualTo(1)
+    assertThat(saved).isEqualTo(listOf(fake.states.single().hierarchy!!))
+    assertThat(fake.confirmations).isEqualTo(listOf(true))
+  }
+
+  @Test
+  fun `an overruled pass is an unmet inspector check and a loop request carries the inspector hints`() = runTest {
+    val fake = Fake(confirmsPass = true) { verdict(true) }
+    val inspector = Inspector(passed = false, extra = ""","target":"notVisible"""")
+
+    val result = evaluator(fake, inspector).evaluate("the page is ready", loopHints = true)
+
+    assertThat(result.tier).isEqualTo(ConditionTier.TREE)
+    assertThat(result.verdict.passed).isFalse()
+    assertThat(result.verdict.target).isEqualTo(VerdictTarget.NotVisible)
+    assertThat(result.precheck).isEqualTo(confirmedArtifact.copy(outcome = PrecheckOutcome.OVERRULED))
+    assertThat(inspector.messages.single()).contains(InspectorAgent.LOOP_HINTS)
+    assertThat(fake.acceptFail).isEqualTo(listOf(false))
+    assertThat(fake.confirmations).isEqualTo(listOf(false))
+  }
+
+  @Test
+  fun `a wait keeps polling after an overruled pass and ends on a confirmed one`() = runTest {
+    var inspections = 0
+    val inspector = InspectorAgent(
+      evaluateTreeContent = { _, _, _ ->
+        inspections++
+        inspectionReply("""{"passed":${inspections > 1},"reasoning":"inspected"}""")
+      },
+      evaluateVisualContent = { _, _, _, _ -> error("unexpected visual") },
+    )
+    val fake = Fake(confirmsPass = true) { verdict(true) }
+    val evaluator = ConditionEvaluator(session(), inspector, precheck = fake)
+    val waiter = ConditionWaiter(evaluator) { testScheduler.currentTime * 1_000_000 }
+
+    val result = waiter.await("the page is ready", 10.seconds)
+
+    assertThat(result.satisfied).isTrue()
+    assertThat(result.checks).isEqualTo(2)
+    assertThat(result.lastEvaluation?.tier).isEqualTo(ConditionTier.TREE)
+    assertThat(result.lastEvaluation?.precheck?.outcome).isEqualTo(PrecheckOutcome.CONFIRMED)
+    assertThat(fake.confirmations).isEqualTo(listOf(false, true))
+  }
+
+  @Test
+  fun `a precheck that does not opt in keeps deciding a pass alone`() = runTest {
+    val inspector = Inspector()
+    val result = evaluator(Fake(confirmsPass = false) { verdict(true) }, inspector).evaluate("the page is ready")
+
+    assertThat(result.tier).isEqualTo(ConditionTier.PRECHECK)
+    assertThat(result.precheck?.outcome).isNull()
+    assertThat(inspector.calls).isEqualTo(0)
+  }
+
+  @Test
+  fun `a confirming precheck never confirms a fail, an unsure answer or an error`() = runTest {
+    val replies = listOf<suspend (Boolean) -> PrecheckVerdict?>({ verdict(false) }, { null }, { error("boom") })
+    val expectedTiers = listOf(ConditionTier.PRECHECK, ConditionTier.TREE, ConditionTier.TREE)
+    replies.zip(expectedTiers).forEach { (reply, tier) ->
+      val fake = Fake(confirmsPass = true, reply)
+      val inspector = Inspector()
+
+      val result = evaluator(fake, inspector).evaluate("the page is ready")
+
+      assertThat(result.tier).isEqualTo(tier)
+      assertThat(result.precheck?.outcome).isNull()
+      assertThat(inspector.calls).isEqualTo(if (tier == ConditionTier.PRECHECK) 0 else 1)
+      assertThat(fake.confirmations).isEmpty()
+    }
+
+    val discarding = Fake(confirmsPass = true) { acceptFail -> verdict(false).takeIf { acceptFail } }
+    val inspector = Inspector(passed = false)
+    val hinted = evaluator(discarding, inspector).evaluate("the page is ready", loopHints = true)
+    assertThat(hinted.tier).isEqualTo(ConditionTier.TREE)
+    assertThat(hinted.precheck).isNull()
+    assertThat(inspector.calls).isEqualTo(1)
+    assertThat(discarding.confirmations).isEmpty()
+  }
+
+  @Test
+  fun `a model failure or cancellation while confirming propagates without a confirmation or a precheck fallback`() = runTest {
+    for (failure in listOf<Throwable>(IllegalStateException("request failed"), CancellationException("stop"))) {
+      val fake = Fake(confirmsPass = true) { verdict(true) }
+      val inspector = InspectorAgent(
+        evaluateTreeContent = { _, _, _ -> throw failure },
+        evaluateVisualContent = { _, _, _, _ -> error("unexpected visual") },
+      )
+
+      val thrown = assertFailsWith<Throwable> { ConditionEvaluator(session(), inspector, precheck = fake).evaluate("the page is ready") }
+
+      assertThat(thrown).isInstanceOf(if (failure is CancellationException) CancellationException::class else ModelFailureException::class)
+      assertThat(fake.confirmations).isEmpty()
+    }
+  }
+
+  @Test
+  fun `a wait deadline that passes while confirming times the wait out without accepting the pass`() = runTest {
+    val fake = Fake(confirmsPass = true) { verdict(true) }
+    val inspector = Inspector(onTree = { awaitCancellation() })
+    val waiter = ConditionWaiter(evaluator(fake, inspector)) { testScheduler.currentTime * 1_000_000 }
+
+    val result = waiter.await("the page is ready", 2.seconds)
+
+    assertThat(result.satisfied).isFalse()
+    assertThat(result.lastEvaluation?.precheck).isNull()
+    assertThat(fake.confirmations).isEmpty()
   }
 
   @Test

@@ -6,6 +6,7 @@ import assertk.assertions.contains
 import assertk.assertions.doesNotContain
 import assertk.assertions.hasSize
 import assertk.assertions.isEqualTo
+import assertk.assertions.isFalse
 import assertk.assertions.isInstanceOf
 import assertk.assertions.isNotNull
 import assertk.assertions.isNull
@@ -40,6 +41,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import me.chrisbanes.verity.agent.PrecheckState
 import me.chrisbanes.verity.agent.PrecheckVerdict
 import me.chrisbanes.verity.core.model.Platform
+import me.chrisbanes.verity.core.result.PrecheckSummaryArtifact
 import me.chrisbanes.verity.core.timing.RecordingPhaseTimer
 
 private fun ok(probability: String, model: String = "gpt-6-luna-2026") = """{"model":"$model","answers":[{"type":"predicate","name":"condition","probability":$probability}]}"""
@@ -83,7 +85,7 @@ class DecisionsPrecheckTest {
     }
   }
 
-  private fun config(f: Fixture, apiKey: String? = "s3cr3t") = ResolvedPrecheck("http://127.0.0.1:${f.port}", "gpt-6-luna", apiKey, 500.milliseconds, 0.95, 0.05, provider = PrecheckProvider.DECISIONS)
+  private fun config(f: Fixture, apiKey: String? = "s3cr3t") = ResolvedPrecheck("http://127.0.0.1:${f.port}", "gpt-6-luna", apiKey, 500.milliseconds, 0.95, 0.05, provider = PrecheckProvider.DECISIONS, confirmPass = false)
 
   private fun png(dir: Path, width: Int, height: Int): Path = dir.resolve("${width}x$height.png").also {
     ImageIO.write(BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", it.toFile())
@@ -108,7 +110,7 @@ class DecisionsPrecheckTest {
     val verdict = client.check(PrecheckState(Platform.IOS, "TREE", referenceText = "R"), "the row is ready", acceptFail = true)
     client.check(PrecheckState(Platform.ANDROID_MOBILE, "TREE"), "the row is ready", acceptFail = true)
 
-    assertThat(verdict).isEqualTo(PrecheckVerdict(true, 0.97, "gpt-6-luna-2026", "127.0.0.1:${f.port}"))
+    assertThat(verdict).isEqualTo(PrecheckVerdict(true, 0.97, "gpt-6-luna-2026", "127.0.0.1:${f.port}", traceId = "P1"))
     assertThat(stats.accepted).isEqualTo(2)
     val (line, auth, body) = f.requests.first()
     assertThat(line).isEqualTo("POST /v1/decisions application/json")
@@ -124,6 +126,41 @@ class DecisionsPrecheckTest {
     val second = Json.parseToJsonElement(f.requests.last().third).jsonObject
     assertThat(second.getValue("input").jsonArray.single().jsonObject.getValue("content").jsonArray).hasSize(1)
     assertThat(second.instructions()).contains("of an Android app,")
+  }
+
+  @Test
+  fun `a pass to be confirmed is not accepted, and the inspector's answer is counted and traced`() = withServer { f ->
+    val stats = PrecheckStats()
+    val lines = CopyOnWriteArrayList<String>()
+    val client = DecisionsPrecheck(config(f).copy(confirmPass = true), stats, trace = { _, text -> lines += text })
+
+    val first = client.check(T, "C", acceptFail = true)!!
+    val second = client.check(T, "C", acceptFail = true)!!
+
+    assertThat(client.confirmsPass).isTrue()
+    assertThat(first.traceId).isEqualTo("P1")
+    assertThat(stats.accepted).isEqualTo(0)
+    client.confirmation(first, confirmed = true)
+    client.confirmation(second, confirmed = false)
+    assertThat(stats.confirmed).isEqualTo(1)
+    assertThat(stats.overruled).isEqualTo(1)
+    assertThat(lines.filter { "confirmation" in it }).isEqualTo(listOf("P1 confirmation outcome=confirmed", "P2 confirmation outcome=overruled"))
+    assertThat(stats.render()).isEqualTo("Pre-check: accepted 0, confirmed 1, overruled 1, uncertain fallbacks 0, error fallbacks 0")
+  }
+
+  @Test
+  fun `with confirm-pass off a pass counts accepted, and confident fails still do with it on`() = withServer { f ->
+    val off = PrecheckStats()
+    val client = DecisionsPrecheck(config(f), off)
+    client.check(T, "C", acceptFail = true)
+    assertThat(client.confirmsPass).isFalse()
+    assertThat(off.accepted).isEqualTo(1)
+
+    f.respond = { 200 to ok(0.02) }
+    val on = PrecheckStats()
+    DecisionsPrecheck(config(f).copy(confirmPass = true), on).check(T, "C", acceptFail = true)
+    assertThat(on.accepted).isEqualTo(1)
+    assertThat(on.confirmed + on.overruled).isEqualTo(0)
   }
 
   @Test
@@ -177,7 +214,7 @@ class DecisionsPrecheckTest {
   @Test
   fun `a confident fail returns a failed verdict`() = withServer { f ->
     f.respond = { 200 to ok(0.02) }
-    assertThat(DecisionsPrecheck(config(f), PrecheckStats()).check(T, "C", acceptFail = true)).isEqualTo(PrecheckVerdict(false, 0.02, "gpt-6-luna-2026", "127.0.0.1:${f.port}"))
+    assertThat(DecisionsPrecheck(config(f), PrecheckStats()).check(T, "C", acceptFail = true)).isEqualTo(PrecheckVerdict(false, 0.02, "gpt-6-luna-2026", "127.0.0.1:${f.port}", traceId = "P1"))
   }
 
   @Test

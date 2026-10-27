@@ -1667,9 +1667,9 @@ class OrchestratorTest {
     assertThat(result.passed).isTrue()
     assertThat(result.segments.single().loop?.iterations).isEqualTo(1)
     assertThat(session.pressedKeys).containsExactly("Remote Dpad Center")
-    // Four settle captures (T1, T2, Tdone, Tdone) and the trail's after-capture; the check captures nothing.
+    // Four settle captures (T1, T2, Tdone, Tdone); the trail's after focus comes from the settle and the check captures nothing.
     val afterPress = session.events.dropWhile { it != "name:Remote Dpad Center" }.drop(1)
-    assertThat(afterPress).isEqualTo(List(5) { "capture" })
+    assertThat(afterPress).isEqualTo(List(4) { "capture" })
   }
 
   @Test

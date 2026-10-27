@@ -19,6 +19,8 @@ data class VerityPrecheckConfig(
   @SerialName("visual-enabled") val visualEnabled: Boolean? = null,
   /** `system-one` (default) or `decisions`; each provider has its own defaults. */
   val provider: String? = null,
+  /** Default true: the inspector evaluates the same evidence once before a confident pass can end a loop or wait. */
+  @SerialName("confirm-pass") val confirmPass: Boolean? = null,
 )
 
 data class PrecheckCliOptions(
@@ -39,8 +41,10 @@ data class ResolvedPrecheck(
   /** Whether `visually` loop and wait conditions are pre-checked with the current screenshot. */
   val visual: Boolean = false,
   val provider: PrecheckProvider = PrecheckProvider.SYSTEM_ONE,
+  /** Whether the inspector confirms a confident pass on the same evidence before it ends a loop or wait. */
+  val confirmPass: Boolean = true,
 ) {
-  override fun toString(): String = "ResolvedPrecheck(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey == null) "null" else "<redacted>"}, timeout=$timeout, passAt=$passAt, failAt=$failAt, visual=$visual, provider=$provider)"
+  override fun toString(): String = "ResolvedPrecheck(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey == null) "null" else "<redacted>"}, timeout=$timeout, passAt=$passAt, failAt=$failAt, visual=$visual, provider=$provider, confirmPass=$confirmPass)"
 }
 
 const val TYPESAFE_BASE_URL = "https://api.typesafe.ai"
@@ -108,7 +112,7 @@ fun resolvePrecheck(
   val failAt = config?.failAt ?: if (decisions) 0.05 else 0.1
   require(passAt > failAt) { "precheck.pass-at must be greater than precheck.fail-at" }
 
-  return ResolvedPrecheck(baseUrl, model, apiKey, timeout, passAt, failAt, visual, provider)
+  return ResolvedPrecheck(baseUrl, model, apiKey, timeout, passAt, failAt, visual, provider, config?.confirmPass ?: true)
 }
 
 private fun validateBaseUrl(baseUrl: String) {

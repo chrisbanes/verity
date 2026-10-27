@@ -72,7 +72,7 @@ class RunCommandSmokeTest {
 
     val result = orchestrator.run(journey)
 
-    // The journey has: press d-pad down (fast path), then [?] Home (visible assertion)
+    // The journey has: press d-pad down (fast path), then [?visible] Home (visible assertion)
     // "Home" is in the hierarchy, so it should pass
     assertThat(result.passed).isTrue()
     assertThat(result.segments.size).isEqualTo(1)

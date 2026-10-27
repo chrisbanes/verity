@@ -4,5 +4,5 @@ platform: ios
 steps:
   - Scroll down
   - Scroll down
-  - "[?] Battery"
+  - "[?visible] Battery"
   - Swipe right

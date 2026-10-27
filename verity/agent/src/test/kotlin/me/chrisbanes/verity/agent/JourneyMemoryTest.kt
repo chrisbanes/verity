@@ -19,6 +19,7 @@ import kotlin.test.assertFailsWith
 import kotlin.time.Duration
 import kotlinx.coroutines.test.runTest
 import me.chrisbanes.verity.core.hierarchy.HierarchyNode
+import me.chrisbanes.verity.core.hierarchy.observeFocus
 import me.chrisbanes.verity.core.model.ActionFlow
 import me.chrisbanes.verity.core.model.FlowResult
 import me.chrisbanes.verity.core.model.Platform
@@ -80,6 +81,44 @@ class JourneyMemoryTest {
       assertThat(entry.succeeded).isTrue()
       assertThat(entry.focusBefore).isEqualTo(listOf(FocusNodeArtifact("/0", "menu:home")))
       assertThat(entry.focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "menu:settings")))
+    }
+  }
+
+  @Test
+  fun `afterFocus from the result replaces the after capture`() {
+    val session = FakeSession { focused("menu:home") }
+    withMemory(session) { memory, _ ->
+      memory.recordExecution<Unit>(source, TrailGranularity.INTERACTION, listOf("Press D-pad down"), afterFocus = { observeFocus(focused("menu:settings")) }) { }
+      val entry = memory.trail().entries.single()
+      assertThat(session.captures).isEqualTo(1)
+      assertThat(entry.focusBefore).isEqualTo(listOf(FocusNodeArtifact("/0", "menu:home")))
+      assertThat(entry.focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "menu:settings")))
+    }
+  }
+
+  @Test
+  fun `afterFocus without an observation falls back to the after capture`() {
+    val session = FakeSession { focused("menu:home") }
+    withMemory(session) { memory, _ ->
+      memory.recordExecution<Unit>(source, TrailGranularity.INTERACTION, listOf("Press select"), afterFocus = { null }) { }
+      assertThat(session.captures).isEqualTo(2)
+      assertThat(memory.trail().entries.single().focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "menu:home")))
+    }
+  }
+
+  @Test
+  fun `afterFocus is ignored when the block fails`() {
+    val session = FakeSession { focused("menu:home") }
+    withMemory(session) { memory, _ ->
+      assertFailsWith<InteractionExecutionFailure> {
+        memory.recordExecution<Unit>(source, TrailGranularity.INTERACTION, listOf("Tap"), afterFocus = { observeFocus(focused("menu:settings")) }) {
+          throw InteractionExecutionFailure(FlowResult(false, "boom"))
+        }
+      }
+      val entry = memory.trail().entries.single()
+      assertThat(session.captures).isEqualTo(2)
+      assertThat(entry.succeeded).isFalse()
+      assertThat(entry.focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "menu:home")))
     }
   }
 

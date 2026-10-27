@@ -52,9 +52,17 @@ class AssertionStepInferrerTest {
 
   @Test
   fun `inferred mode uses AssertModeInferrer`() {
-    val result = AssertionStepInferrer.infer("Verify backdrop image is visible")
+    val result = AssertionStepInferrer.infer("Verify button color is red")
     assertThat(result).isNotNull()
     assertThat(result!!.mode).isEqualTo(AssertMode.VISUAL)
+  }
+
+  @Test
+  fun `injected resolver picks the mode and visually bypasses it`() {
+    assertThat(AssertionStepInferrer.infer("Verify Home is shown") { AssertMode.FOCUSED }!!.mode)
+      .isEqualTo(AssertMode.FOCUSED)
+    assertThat(AssertionStepInferrer.infer("Verify visually that Home is shown") { error("not called") }!!.mode)
+      .isEqualTo(AssertMode.VISUAL)
   }
 
   @Test

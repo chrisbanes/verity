@@ -38,6 +38,7 @@ precheck:
   pass-at: 0.9
   fail-at: 0.1
   visual-enabled: false
+  confirm-pass: true
 ```
 
 `llm.navigator-model` and `llm.inspector-model` optionally select supported model IDs for the provider. Omitted models use provider defaults.
@@ -52,7 +53,7 @@ Legacy top-level `provider`, `navigator-model`, `inspector-model`, `navigator-ef
 
 ## Pre-check
 
-An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev) by default, or OpenAI's Decisions API (public beta) with `provider: decisions`; see [Decisions provider](#decisions-provider). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `visually` loop and wait conditions are pre-checked only when `visual-enabled` is also true (see [Screenshot pre-check](#screenshot-pre-check)). `run --dry-run` and MCP never resolve or call it; dry run reads only the `enabled` and `visual-enabled` flags to label condition tiers.
+An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wait-conditions.md) conditions before the inspector is asked. It targets [TypeSafe](https://docs.typesafe.ai)'s System One API (Jev) by default, or OpenAI's Decisions API (public beta) with `provider: decisions`; see [Decisions provider](#decisions-provider). Nothing changes unless `precheck.enabled` is true or `run --precheck` is passed. Assertions are never pre-checked, and neither are literal or focus conditions, nor quoted literal-only conditions (see [loop conditions](loop-conditions.md#one-current-state-check)), even when their text is missing. `visually` loop and wait conditions are pre-checked only when `visual-enabled` is also true (see [Screenshot pre-check](#screenshot-pre-check)). `run --dry-run` and MCP never resolve or call it; dry run reads only the `enabled` and `visual-enabled` flags to label condition tiers, and does not read or validate `confirm-pass`.
 
 | Key | Default | Notes |
 | --- | --- | --- |
@@ -64,11 +65,12 @@ An opt-in classifier that answers prose [loop](loop-conditions.md) and [wait](wa
 | `timeout` | `2s` | A positive Kotlin duration such as `500ms` or `2s` |
 | `pass-at` | `0.9` (`0.95` for `decisions`) | A probability at or above this passes the condition |
 | `fail-at` | `0.1` (`0.05` for `decisions`) | A probability at or below this fails it |
+| `confirm-pass` | `true` | A confident pass on a loop or wait condition is confirmed by one inspector check on the same evidence before it ends the loop or wait; `false` lets a confident pass decide alone. Config key only, no flag; confident fails and uncertain answers are never confirmed |
 | `visual-enabled` | `false` | Experimental. Also pre-checks `visually` loop and wait conditions on the current screenshot. Requires `enabled`, and either `provider: decisions` or the TypeSafe `base-url` |
 
 Precedence is CLI, then config, then these defaults. While `enabled` is false the rest of the section is not validated. With `system-one` the request is `POST <base-url>/v1/systemone` with a single `noul` question. A prose check sends only the accessibility tree and journey memory text. Screenshots are sent only for `visually` checks with `visual-enabled` on.
 
-A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`, or a request the JDK rejects locally) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. The run prints `Pre-check: accepted N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts, as zeros when the run failed before the first request (for example in setup). A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback and is traced as `outcome=failed-discarded`.
+A probability between `fail-at` and `pass-at` is an *uncertain fallback*, and every failure (timeout, HTTP error, malformed body, probability outside `[0, 1]`, or a request the JDK rejects locally) is an *error fallback*. Either way the inspector answers exactly as it would without the pre-check, so the pre-check never fails a step. The first error prints one `Warning: pre-check request to <host> failed (<kind>); falling back to the inspector` line to stderr. `--timing` records each request as `model_request precheck`, and `--model-trace` records `P<n>` lines for each request and its outcome, including fallbacks. With `confirm-pass` on, a confident pass is checked by the inspector on the same evidence: that request is an ordinary inspector request in `--timing`, the pass is counted as `confirmed` or `overruled` instead of `accepted`, and the trace gains `P<n> confirmation outcome=confirmed` or `outcome=overruled`; `accepted` keeps meaning decided without an inspector request, and neither new count is an uncertain fallback. A confirmation that never completes (model failure, wait deadline, cancellation) counts nothing. The run prints `Pre-check: accepted N, confirmed N, overruled N, uncertain fallbacks N, error fallbacks N`, after the suite result and after the `--timing` report, and the run summary carries the same counts, as zeros when the run failed before the first request (for example in setup). A loop that may press several times per check (see [batched D-pad loops](loop-conditions.md#batched-d-pad-loops)) accepts only a confident pass, because an unmet check needs the inspector's batching hints; a confident fail in such a loop counts as an uncertain fallback and is traced as `outcome=failed-discarded`.
 
 Validation failures are setup failures: exit `3` before a run directory, preflight or device session exists, with a message starting `precheck.`. They are:
 
@@ -112,7 +114,7 @@ The condition is sent verbatim. The platform is `Android TV`, `Android` or `iOS`
 
 This section describes the System One request; [Decisions provider](#decisions-provider) covers its screenshot request.
 
-With `visual-enabled: true`, each `visually` loop or wait check captures its screenshot once, exactly as without the pre-check, and asks Jev about that capture before the inspector. A confident pass or fail decides the check with tier `precheck`, keeps the screenshot evidence and records the screenshot in journey memory. An uncertain answer, any error, or an image that cannot be prepared hands the same screenshot to the inspector; it is never recaptured. A visual check always accepts a confident fail, because visual loops never batch. Standalone `[?visual]` assertions are never pre-checked, and dry run labels these conditions `precheck, then visual`.
+With `visual-enabled: true`, each `visually` loop or wait check captures its screenshot once, exactly as without the pre-check, and asks Jev about that capture before the inspector. A confident fail decides the check with tier `precheck`, keeps the screenshot evidence and records the screenshot in journey memory. A confident pass is confirmed by default (`confirm-pass`): the inspector evaluates the same screenshot once and decides with tier `visual`, and an overruled pass leaves the check unmet; with `confirm-pass: false` a confident pass decides with tier `precheck`. An uncertain answer, any error, or an image that cannot be prepared hands the same screenshot to the inspector; it is never recaptured. A visual check always accepts a confident fail, because visual loops never batch. Standalone `[?visual]` assertions are never pre-checked, and dry run labels these conditions `precheck, then visual`.
 
 The screenshot is scaled in memory so its longest side is at most 1568 px, keeping the aspect ratio and never upscaling, and re-encoded as PNG; a 1920x1080 TV capture becomes 1568x882. An image whose short side would be under 280 px, that cannot be read, or whose PNG exceeds 16 MiB is not sent and counts as an error fallback. The request adds the `TypeSafe-Danger-Zone-Images: true` header and a top-level `assets` map holding the image under a fresh UUID, referenced once from `state.screenshot`:
 
@@ -184,9 +186,9 @@ MCP tool arguments take precedence over server defaults. `open_session` requires
 
 ## Assertion strategy
 
-Accepted values are `infer`, `visible`, `focused`, `tree`, and `visual`. `infer` chooses a mode from the assertion text; the other values select that mode for assertions without an explicit mode.
+Accepted values are `infer`, `visible`, `focused`, `tree`, and `visual`. `infer` chooses `TREE` or `VISUAL` from appearance cues in the assertion text (`TREE` unless it looks, or mentions color, gradient, blur, opacity, shadow or animation); the other values select that mode for assertions without an explicit mode.
 
-Explicit prefixes stay authoritative: `[?visual] Poster is shown` remains visual even under `visible`. `[?] Poster is shown` and `Verify Poster is shown` follow the configured strategy. Choose an explicit mode when that particular expectation needs a different basis of evaluation from the project default.
+Explicit modes stay authoritative: a `[?mode]` prefix such as `[?visual] Poster is shown` remains visual even under `visible`, and a natural-language `visually` such as `Check visually that the poster is shown` stays visual even under `tree`. `[?] Poster is shown` and `Verify Poster is shown` follow the configured strategy. Choose an explicit mode when that particular expectation needs a different basis of evaluation from the project default.
 
 ## Validation
 
@@ -200,7 +202,7 @@ For normal `run`, config loading/resolution and output validation failures are s
 
 - [VerityConfig](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/VerityConfig.kt) and [ResolvedProjectConfig](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/ResolvedProjectConfig.kt): schema, compatibility, and precedence.
 - [Verity](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/Verity.kt), [ListCommand](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/ListCommand.kt), and [McpCommand](../../verity/cli/src/main/kotlin/me/chrisbanes/verity/cli/McpCommand.kt): options and command wiring.
-- [VerityConfigTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/VerityConfigTest.kt), [ConfigResolverTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/ConfigResolverTest.kt), and [AssertionStrategyParserTest](../../verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertionStrategyParserTest.kt): parsing, precedence, and explicit modes.
+- [VerityConfigTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/VerityConfigTest.kt), [ConfigResolverTest](../../verity/cli/src/test/kotlin/me/chrisbanes/verity/cli/ConfigResolverTest.kt), and [AssertionStrategyParserTest](../../verity/core/src/test/kotlin/me/chrisbanes/verity/core/parser/AssertionStrategyParserTest.kt): parsing, precedence, and explicit modes (`[?mode]` prefixes and `visually`).
 
 ## OpenAI authentication
 

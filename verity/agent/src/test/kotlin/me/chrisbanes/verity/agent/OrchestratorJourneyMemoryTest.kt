@@ -28,6 +28,7 @@ import me.chrisbanes.verity.core.result.FocusNodeArtifact
 import me.chrisbanes.verity.core.result.TrailGranularity
 import me.chrisbanes.verity.core.result.TrailOrigin
 import me.chrisbanes.verity.device.DeviceSession
+import me.chrisbanes.verity.device.HierarchyStabilityObserver
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class OrchestratorJourneyMemoryTest {
@@ -380,9 +381,38 @@ class OrchestratorJourneyMemoryTest {
   }
 
   @Test
+  fun `consecutive d-pad presses reuse the settled focus as baseline and trail after`() = runTest {
+    val session = Session(Platform.ANDROID_TV)
+    val result = orchestrator(session).run(
+      journey(Platform.ANDROID_TV, JourneyStep.Action("Press D-pad down"), JourneyStep.Action("Press D-pad right")),
+    )
+
+    assertThat(result.passed).isEqualTo(true)
+    // Press 1: trail before, baseline, key, change. Press 2: trail before, key, change; no baseline and no trail after.
+    assertThat(session.events).isEqualTo(listOf("capture", "capture", "key", "capture", "capture", "key", "capture"))
+    assertThat(result.trail!!.entries.map { it.focusAfter }).isEqualTo(
+      listOf(listOf(FocusNodeArtifact("/0", "focus:1")), listOf(FocusNodeArtifact("/0", "focus:2"))),
+    )
+  }
+
+  @Test
+  fun `stable settle supplies the trail after focus from its tree`() = runTest {
+    val session = Session(Platform.ANDROID_TV)
+    val result = orchestrator(session).run(journey(Platform.ANDROID_TV, JourneyStep.Action("Press select")))
+
+    assertThat(result.passed).isEqualTo(true)
+    // Trail before, then two equal settle captures; the trail after reuses the stable tree.
+    assertThat(session.events).isEqualTo(listOf("capture", "key", "capture", "capture"))
+    assertThat(result.trail!!.entries.single().focusAfter).isEqualTo(listOf(FocusNodeArtifact("/0", "focus:1")))
+  }
+
+  @Test
   fun `unsupported bounded capture leaves focus unknown without changing the outcome`() = runTest {
     val session = object : DeviceSession by Session(Platform.ANDROID_TV) {
       override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode = throw UnsupportedOperationException("no bounded capture")
+
+      // Delegation would settle through the inner session's working capture, which a real unsupported session lacks.
+      override suspend fun awaitStableHierarchy(budget: Duration) = HierarchyStabilityObserver().await(this, budget)
     }
     val result = orchestrator(session).run(journey(Platform.ANDROID_TV, JourneyStep.Action("Press D-pad down")))
 

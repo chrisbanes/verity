@@ -45,7 +45,7 @@ data class LoopArtifact(
   val reasoning: String,
   /** Bodies completed before each check after the first, for batched D-pad loops only; sums to [iterations]. */
   val pressesPerCheck: List<Int>? = null,
-  /** Present only when the pre-check decided the final condition check. */
+  /** Present only when a pre-check answered the final condition check; its `outcome` is set when the inspector decided it. */
   val precheck: PrecheckArtifact? = null,
 )
 
@@ -57,7 +57,7 @@ data class WaitArtifact(
   val checks: Int,
   val tier: ConditionTier? = null,
   val reasoning: String = "",
-  /** Present only when the pre-check decided the final condition check. */
+  /** Present only when a pre-check answered the final condition check; its `outcome` is set when the inspector decided it. */
   val precheck: PrecheckArtifact? = null,
 )
 
@@ -225,7 +225,7 @@ enum class ConditionTier {
   @SerialName("visual")
   VISUAL,
 
-  /** Decided by the opt-in pre-check classifier instead of the inspector; see [PrecheckArtifact]. */
+  /** Decided by the opt-in pre-check classifier alone, with no inspector confirmation; see [PrecheckArtifact]. */
   @SerialName("precheck")
   PRECHECK,
 }

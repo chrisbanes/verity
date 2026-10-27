@@ -2,6 +2,7 @@ package me.chrisbanes.verity.agent
 
 import assertk.assertFailure
 import assertk.assertThat
+import assertk.assertions.hasSize
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isInstanceOf
@@ -131,6 +132,56 @@ class InteractionExecutorTest {
       assertThat(session.waitCount).isEqualTo(0)
       assertThat(session.executedActionFlows).isEqualTo(emptyList())
     }
+  }
+
+  /** Focus follows the press count; every capture is counted. */
+  private class CountingTv {
+    var captures = 0
+    val session: FakeDeviceSession = FakeDeviceSession(Platform.ANDROID_TV, hierarchyProvider = {
+      captures++
+      HierarchyNode(attributes = mapOf("resource-id" to "node-${session.pressedKeys.size}"), states = setOf("focused"))
+    })
+
+    /** Captures spent by [block]. */
+    suspend fun count(block: suspend () -> Unit): Int {
+      val start = captures
+      block()
+      return captures - start
+    }
+  }
+
+  private val down = Interaction.KeyPress("Remote Dpad Down")
+
+  @Test
+  fun `second consecutive d-pad press reuses the previous settled focus as its baseline`() = runTest {
+    val tv = CountingTv()
+    val executor = InteractionExecutor(tv.session, APP_ID)
+    assertThat(tv.count { executor.execute(down) }).isEqualTo(2)
+    assertThat(tv.count { executor.execute(down) }).isEqualTo(1)
+  }
+
+  @Test
+  fun `a non-key action between presses resets the baseline`() = runTest {
+    val tv = CountingTv()
+    val executor = InteractionExecutor(tv.session, APP_ID)
+    val first = tv.count { executor.execute(down) }
+    executor.execute(Interaction.TapOnText("OK"))
+    assertThat(tv.count { executor.execute(down) }).isEqualTo(first)
+  }
+
+  @Test
+  fun `visual and non-TV presses never carry a baseline`() = runTest {
+    val tv = CountingTv()
+    val visual = InteractionExecutor(tv.session, APP_ID)
+    visual.execute(down, visual = true)
+    // A visual settle observes no focus, so the next press must capture its own baseline.
+    assertThat(tv.count { visual.execute(down) }).isEqualTo(2)
+
+    val mobile = RecordingDeviceSession()
+    val executor = createExecutor(mobile)
+    assertThat(executor.execute(down)).isEqualTo(KeySettleResult(null, null))
+    assertThat(executor.execute(down)).isEqualTo(KeySettleResult(null, null))
+    assertThat(mobile.pressedKeys).hasSize(2)
   }
 
   private companion object {
