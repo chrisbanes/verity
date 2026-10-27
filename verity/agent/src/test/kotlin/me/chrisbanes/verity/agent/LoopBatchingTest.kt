@@ -10,6 +10,7 @@ import assertk.assertions.isTrue
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
+import kotlin.time.Duration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -36,6 +37,13 @@ class LoopBatchingTest {
     fake = FakeDeviceSession(platform, hierarchyProvider = { tree(fake.pressedKeys.size).also { lastTree = it } })
     return fake
   }
+
+  /** One focused seekbar whose elapsed-time label changes per press while focus never does. */
+  private fun seekbar(presses: Int) = HierarchyNode(
+    attributes = mapOf("resource-id" to "seekbar", "bounds" to "[0,0][300,100]"),
+    states = setOf("focused", "clickable"),
+    children = listOf(HierarchyNode(mapOf("text" to "00:$presses", "bounds" to "[10,10][290,40]"))),
+  )
 
   /** Focus moves one card per press over cards 0..[last], stopping at the end. */
   private fun linear(last: Int = 9, platform: Platform = Platform.ANDROID_TV) = session(platform) { list(0..last, minOf(it, last)) }
@@ -183,13 +191,81 @@ class LoopBatchingTest {
     assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(5))
   }
 
-  @Test fun `an edge stops the batch early and later bodies are checked one at a time`() = runTest {
+  @Test fun `an estimated batch at an edge spends at most the estimate`() = runTest {
     val session = linear(last = 3)
     val inspector = Inspector { """{"passed":false,"reasoning":"no","estimatedIterations":5}""" }
     val segment = run(session, "the playback is near the end", 5, inspector)
     assertThat(segment.passed).isFalse()
-    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(4, 1))
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(5))
     assertThat(session.pressedKeys.size).isEqualTo(5)
+  }
+
+  @Test fun `an estimate keeps a batch going while focus stays put`() = runTest {
+    val session = session { seekbar(it) }
+    val inspector = Inspector { call -> if (call == 1) """{"passed":false,"reasoning":"no","estimatedIterations":5}""" else """{"passed":true,"reasoning":"done"}""" }
+    val segment = run(session, "the elapsed time is within the last 15 seconds", 20, inspector)
+    assertThat(segment.passed).isTrue()
+    assertThat(session.pressedKeys.size).isEqualTo(5)
+    assertThat(inspector.messages.size).isEqualTo(2)
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(5))
+  }
+
+  @Test fun `an unmet check after an estimated batch plans again from its own tree`() = runTest {
+    val session = session { seekbar(it) }
+    val inspector = Inspector { call ->
+      when (call) {
+        1 -> """{"passed":false,"reasoning":"no","estimatedIterations":2}"""
+        2 -> """{"passed":false,"reasoning":"no","estimatedIterations":1}"""
+        else -> """{"passed":true,"reasoning":"done"}"""
+      }
+    }
+    val segment = run(session, "the elapsed time is within the last 15 seconds", 20, inspector)
+    assertThat(segment.passed).isTrue()
+    assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(2, 1))
+    assertThat(session.pressedKeys.size).isEqualTo(3)
+    assertThat(inspector.messages[1]).contains("00:2")
+  }
+
+  @Test fun `geometric predictions still end batching on unchanged focus`() = runTest {
+    // Focus stays on card 0, so a target card 6 (with an estimate that must lose) and notVisible both press once per check.
+    val cases = listOf(
+      list(0..9, 0) to """{"passed":false,"reasoning":"no","target":"[0,600][300,700]","estimatedIterations":5}""",
+      list(0..3, 0) to """{"passed":false,"reasoning":"no","target":"notVisible"}""",
+    )
+    for ((tree, reply) in cases) {
+      val segment = run(session { tree }, "the focused card is Card 6", 2, Inspector { reply })
+      assertThat(segment.loop?.pressesPerCheck).isEqualTo(listOf(1, 1))
+    }
+  }
+
+  @Test fun `unchanged presses in an estimated batch reuse the last known focus as baseline`() = runTest {
+    val session = session { seekbar(it) }
+    val events = mutableListOf<String>()
+    // Delegation keeps the settle's own captures uncounted: only the focus and trail captures are logged.
+    val device = object : DeviceSession by session {
+      override suspend fun pressKey(keyName: String) {
+        events += "key"
+        session.pressKey(keyName)
+      }
+
+      override suspend fun captureHierarchyTree(timeout: Duration): HierarchyNode {
+        events += "capture"
+        return session.captureHierarchyTree(timeout)
+      }
+
+      override suspend fun awaitStableHierarchy(budget: Duration) = session.awaitStableHierarchy(budget).also { events += "stable" }
+
+      override suspend fun captureScreenshot(output: Path) {
+        withContext(Dispatchers.IO) { Files.write(output, byteArrayOf(1)) }
+      }
+    }
+    val navigator = NavigatorAgent("unused") { _, _ -> modelReply(error("unexpected navigator")) }
+    val inspector = Inspector { call -> if (call == 1) """{"passed":false,"reasoning":"no","estimatedIterations":3}""" else """{"passed":true,"reasoning":"done"}""" }
+    val journey = Journey("batch", "app", Platform.ANDROID_TV, listOf(JourneyStep.Loop("Press D-pad down", "the elapsed time is within the last 15 seconds", 20)))
+    Orchestrator(device, { navigator }, { inspector.agent }).run(journey)
+    // Captures between a press's settle and the next press: the trail's after and before only, no fresh focus baseline.
+    val gaps = events.joinToString(" ").split("stable").drop(1).dropLast(1).map { it.trim().split(" ").takeWhile { e -> e != "key" }.count { e -> e == "capture" } }
+    assertThat(gaps).isEqualTo(listOf(2, 2))
   }
 
   @Test fun `an edge press's settled tree answers the following check without a capture`() = runTest {
