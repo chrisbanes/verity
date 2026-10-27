@@ -3,8 +3,8 @@ app: com.apple.Preferences
 platform: ios
 steps:
   - Tap General
-  - "[?] About"
+  - "[?visible] About"
   - Tap About
-  - "[?] Name"
+  - "[?visible] Name"
   - Swipe right
-  - "[?] About"
+  - "[?visible] About"

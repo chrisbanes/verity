@@ -4,18 +4,25 @@ import me.chrisbanes.verity.core.model.AssertMode
 
 object AssertModeInferrer {
 
-  private val VISUAL_KEYWORDS = setOf(
-    "color", "colour", "highlight", "image", "icon", "animation",
-    "gradient", "blur", "backdrop", "thumbnail", "poster", "artwork",
-    "badge", "logo", "overlay", "opacity", "shadow", "border",
+  private val LOOK_WORDS = setOf("look", "looks", "looked")
+
+  private val APPEARANCE_STEMS = listOf(
+    "color",
+    "colour",
+    "gradient",
+    "blur",
+    "opacity",
+    "shadow",
+    "animat",
   )
 
   fun infer(description: String): AssertMode {
-    val lower = description.lowercase()
-    val words = lower.split("\\s+".toRegex()).filter { it.isNotEmpty() }
+    val words = description.lowercase().split("\\s+".toRegex())
+      .map { word -> word.trim { !it.isLetterOrDigit() } }
 
-    if (words.any { it in VISUAL_KEYWORDS }) return AssertMode.VISUAL
-    if (words.size <= 3) return AssertMode.VISIBLE
-    return AssertMode.TREE
+    val isVisual = words.any { word ->
+      word in LOOK_WORDS || APPEARANCE_STEMS.any { word.startsWith(it) }
+    }
+    return if (isVisual) AssertMode.VISUAL else AssertMode.TREE
   }
 }

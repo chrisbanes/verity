@@ -1555,7 +1555,7 @@ class RunCommandTest {
         dir = dir,
         name = "fast.journey.yaml",
         journeyName = "Fast dry journey",
-        steps = listOf("press d-pad down", "[?] Home"),
+        steps = listOf("press d-pad down", "[?visible] Home"),
       )
 
       val result = Verity()
@@ -1586,7 +1586,7 @@ class RunCommandTest {
         dir = dir,
         name = "fast-invalid-provider.journey.yaml",
         journeyName = "Fast invalid provider dry run",
-        steps = listOf("press d-pad down", "[?] Home"),
+        steps = listOf("press d-pad down", "[?visible] Home"),
       )
 
       val result = Verity()
@@ -1618,7 +1618,7 @@ class RunCommandTest {
         dir = dir,
         name = "slow-invalid-provider.journey.yaml",
         journeyName = "Slow invalid provider dry run",
-        steps = listOf("open the profile drawer", "[?] Home"),
+        steps = listOf("open the profile drawer", "[?visible] Home"),
       )
 
       val result = Verity()
@@ -1657,7 +1657,7 @@ class RunCommandTest {
         dir = dir,
         name = "slow-invalid-nested-model.journey.yaml",
         journeyName = "Slow invalid nested model dry run",
-        steps = listOf("open the profile drawer", "[?] Home"),
+        steps = listOf("open the profile drawer", "[?visible] Home"),
       )
 
       val result = Verity()
@@ -2333,7 +2333,7 @@ class RunCommandTest {
       platform: $platform
 
       steps:
-        - "[?] Home"
+        - "[?visible] Home"
       """.trimIndent(),
     )
     return file

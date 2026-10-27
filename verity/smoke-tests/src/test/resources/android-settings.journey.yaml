@@ -3,7 +3,7 @@ app: com.android.settings
 platform: android
 steps:
   - Tap Network & internet
-  - "[?] Internet"
+  - "[?visible] Internet"
   - Press back
   - Scroll down
-  - "[?] System"
+  - "[?visible] System"

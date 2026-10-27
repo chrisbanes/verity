@@ -163,7 +163,7 @@ steps:
 
 | Syntax | Meaning |
 |--------|---------|
-| `[?] text` | Assert with mode inferred by heuristics |
+| `[?] text` | Assert with mode inferred from appearance cues (`TREE` by default, `VISUAL` for appearance wording) |
 | `[?visible] text` | Deterministic substring match (free) |
 | `[?focused] text` | Lenient focus detection (free) |
 | `[?tree] text` | Accessibility tree + LLM evaluation |
@@ -177,15 +177,16 @@ Steps are parsed through a 6-stage priority chain:
 2. **`[?]` prefix** — Assert with mode chosen by `AssertModeInferrer`
 3. **Wait inference** — anchored `Wait until <condition>`, with default 20 or positive whole-second limit
 4. **Loop inference** — NL pattern: `<verb> ... until <condition>`
-5. **Assertion inference** — NL keywords: "Verify...", "Ensure...", "Confirm...", "Check..."; "Verify visually..." forces a visual assertion
+5. **Assertion inference** — NL keywords: "Verify...", "Ensure...", "Confirm...", "Check..."; "Verify visually..." forces a visual assertion under every assertion strategy
 6. **Default** — Action
 
 ### Assert Mode Inference
 
-The `AssertModeInferrer` selects the cheapest sufficient mode:
-- Contains visual keywords (color, colour, highlight, image, icon, animation, gradient, blur, backdrop, thumbnail, poster, artwork, badge, logo, overlay, opacity, shadow, border) → `VISUAL`
-- 3 words or fewer, no visual keywords → `VISIBLE`
-- Everything else → `TREE`
+The `AssertModeInferrer` chooses between `TREE` and `VISUAL` from appearance cues only:
+- Any word (lowercased, surrounding punctuation ignored) that is `look`, `looks` or `looked`, or that starts with `color`, `colour`, `gradient`, `blur`, `opacity`, `shadow` or `animat` → `VISUAL`
+- Everything else, including empty text → `TREE`
+
+Nouns such as image, icon, poster or thumbnail are not cues, and neither is `appears` alone. Inference never picks `VISIBLE` or `FOCUSED`; write `[?visible]` for a literal text search. An explicit `visually` in `Verify|Ensure|Confirm|Check [visually] ...` bypasses the configured assertion strategy and is always `VISUAL`; other `[?]` and natural-language assertions follow the strategy.
 
 ### Loop Inference
 
@@ -678,7 +679,7 @@ VerityMcpServer
 
 ## Design Principles
 
-1. **Cost-aware assertions**: Free deterministic checks before cheap text LLM before expensive vision LLM. The `AssertModeInferrer` and `[?]` syntax make the cheapest mode the default path.
+1. **Cost-aware assertions**: Free deterministic checks before cheap text LLM before expensive vision LLM. `[?visible]` selects the free text check explicitly; inference defaults to `TREE` and never silently picks `VISIBLE`.
 
 2. **Interaction mapping**: Recognised actions bypass LLM flow generation. Off-screen named targets may still require navigator reasoning to find them.
 

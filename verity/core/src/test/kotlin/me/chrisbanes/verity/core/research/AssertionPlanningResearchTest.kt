@@ -21,14 +21,14 @@ import me.chrisbanes.verity.core.model.AssertMode
 class AssertionPlanningResearchTest {
 
   @Test
-  fun `current baseline keeps the complete parser description as its target`() {
+  fun `current baseline plans an inferred tree assertion without a literal target`() {
     val corpus = AssertionPlanningResearch.loadCorpus(corpusPath())
     val textCase = corpus.cases.single { it.id == "text-03" }
 
     val check = AssertionPlanningResearch.currentPlan(textCase).check
 
-    assertThat(check.mode).isEqualTo(AssertMode.VISIBLE)
-    assertThat(check.target).isEqualTo("Internet is visible")
+    assertThat(check.mode).isEqualTo(AssertMode.TREE)
+    assertThat(check.target).isEqualTo(null)
     assertThat(check.originalExpectation.intent).isEqualTo("The Internet row is displayed.")
   }
 
@@ -45,10 +45,10 @@ class AssertionPlanningResearchTest {
       "authority-06" to AssertMode.FOCUSED,
       "authority-07" to AssertMode.TREE,
       "authority-08" to AssertMode.VISUAL,
-      "text-01" to AssertMode.VISIBLE,
-      "text-03" to AssertMode.VISIBLE,
-      "visual-01" to AssertMode.VISUAL,
-      "negation-04" to AssertMode.VISUAL,
+      "text-01" to AssertMode.TREE,
+      "text-03" to AssertMode.TREE,
+      "visual-03" to AssertMode.VISUAL,
+      "negation-04" to AssertMode.TREE,
     )
 
     for ((caseId, expectedMode) in expectedModes) {
@@ -58,19 +58,17 @@ class AssertionPlanningResearchTest {
 
     val inferredHome = AssertionPlanningResearch.currentPlan(byId.getValue("text-01")).check
     assertThat(inferredHome.originalExpectation.parsedDescription).isEqualTo("Home")
-    assertThat(inferredHome.target).isEqualTo("Home")
+    assertThat(inferredHome.target).isEqualTo(null)
     assertThat(byId.getValue("text-01").provenance.fixedStrategy).isEqualTo(null)
     val authoredVisualConflict = AssertionPlanningResearch.currentPlan(byId.getValue("authority-04")).check
     assertThat(authoredVisualConflict.target == null).isEqualTo(true)
     assertThat(authoredVisualConflict.originalExpectation.parsedDescription)
       .isEqualTo("Backdrop image loads")
-    val inferredVisual = AssertionPlanningResearch.currentPlan(byId.getValue("visual-01")).check
+    val inferredVisual = AssertionPlanningResearch.currentPlan(byId.getValue("visual-03")).check
     assertThat(inferredVisual.target).isEqualTo(null)
-    assertThat(inferredVisual.originalExpectation.parsedDescription).isEqualTo("Backdrop image loads")
-    assertThat(AssertionPlanningResearch.currentPlan(byId.getValue("negation-04")).check.mode)
-      .isEqualTo(AssertMode.VISUAL)
-    val inferredVisible = AssertionPlanningResearch.currentPlan(byId.getValue("text-03")).check
-    assertThat(inferredVisible.target).isEqualTo("Internet is visible")
+    assertThat(inferredVisual.originalExpectation.parsedDescription).isEqualTo("Button color is red")
+    val inferredTree = AssertionPlanningResearch.currentPlan(byId.getValue("text-03")).check
+    assertThat(inferredTree.target).isEqualTo(null)
   }
 
   @Test

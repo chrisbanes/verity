@@ -44,9 +44,9 @@ class JourneyLoaderTest {
     val input = javaClass.classLoader.getResourceAsStream("journeys/sample.journey.yaml")!!
     val journey = JourneyLoader.fromYaml(input.bufferedReader().readText())
 
-    // "[?] Home" → short text → VISIBLE
-    assertThat((journey.steps[1] as JourneyStep.Assert).mode).isEqualTo(AssertMode.VISIBLE)
-    // "[?] Detail page shows title" → long text → TREE
+    // "[?] Home" → no appearance cue → TREE
+    assertThat((journey.steps[1] as JourneyStep.Assert).mode).isEqualTo(AssertMode.TREE)
+    // "[?] Detail page shows title" → no appearance cue → TREE
     assertThat((journey.steps[4] as JourneyStep.Assert).mode).isEqualTo(AssertMode.TREE)
     // "[?visual] Backdrop image loads" → pinned VISUAL
     assertThat((journey.steps[5] as JourneyStep.Assert).mode).isEqualTo(AssertMode.VISUAL)

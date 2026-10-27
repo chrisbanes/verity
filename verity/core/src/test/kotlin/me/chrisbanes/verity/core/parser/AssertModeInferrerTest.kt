@@ -6,74 +6,42 @@ import kotlin.test.Test
 import me.chrisbanes.verity.core.model.AssertMode
 
 class AssertModeInferrerTest {
+  private val treeCases = listOf(
+    "Home",
+    "Settings",
+    "TV Shows row",
+    "Check that the playing thumbnail is focused",
+    "Check that each rail item shows a poster and a title",
+    "The dialog appears",
+    "Play icon is displayed",
+    "Backdrop image is visible",
+    "Synopsis contains at least 2 sentences",
+    "",
+  )
+
+  private val visualCases = listOf(
+    "Button color is red",
+    "The title looks polished",
+    "The title looked fine",
+    "The overlay appears blurred",
+    "Cards have shadows",
+    "Loading animation plays",
+    "Background has gradient",
+    "Text opacity is reduced",
+    "Border colour is blue",
+    "The badge is colored green",
+    "The banner is animated",
+    "BACKGROUND HAS GRADIENT.",
+    "Is the (color) right?",
+  )
+
   @Test
-  fun `short text without visual keywords infers VISIBLE`() {
-    assertThat(AssertModeInferrer.infer("Home")).isEqualTo(AssertMode.VISIBLE)
+  fun `descriptions without appearance cues infer TREE`() {
+    treeCases.forEach { assertThat(AssertModeInferrer.infer(it), it).isEqualTo(AssertMode.TREE) }
   }
 
   @Test
-  fun `three words without visual keywords infers VISIBLE`() {
-    assertThat(AssertModeInferrer.infer("TV Shows row")).isEqualTo(AssertMode.VISIBLE)
-  }
-
-  @Test
-  fun `four words without visual keywords infers TREE`() {
-    assertThat(AssertModeInferrer.infer("Detail page shows title")).isEqualTo(AssertMode.TREE)
-  }
-
-  @Test
-  fun `text with image keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Backdrop image is visible")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `text with color keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Button color is red")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `text with icon keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Play icon is displayed")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `text with highlight keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Selected item has highlight")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `text with animation keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Loading animation plays")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `text with gradient keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Background has gradient")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `text with blur keyword infers VISUAL`() {
-    assertThat(AssertModeInferrer.infer("Background blur effect")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `visual keyword matching is case insensitive`() {
-    assertThat(AssertModeInferrer.infer("BACKDROP IMAGE visible")).isEqualTo(AssertMode.VISUAL)
-  }
-
-  @Test
-  fun `longer text without visual keywords infers TREE`() {
-    assertThat(AssertModeInferrer.infer("Synopsis contains at least 2 sentences"))
-      .isEqualTo(AssertMode.TREE)
-  }
-
-  @Test
-  fun `single word infers VISIBLE`() {
-    assertThat(AssertModeInferrer.infer("Settings")).isEqualTo(AssertMode.VISIBLE)
-  }
-
-  @Test
-  fun `empty string infers VISIBLE`() {
-    assertThat(AssertModeInferrer.infer("")).isEqualTo(AssertMode.VISIBLE)
+  fun `appearance cues infer VISUAL`() {
+    visualCases.forEach { assertThat(AssertModeInferrer.infer(it), it).isEqualTo(AssertMode.VISUAL) }
   }
 }
