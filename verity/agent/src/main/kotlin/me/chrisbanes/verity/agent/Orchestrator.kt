@@ -244,10 +244,12 @@ class Orchestrator(
     visual: Boolean = false,
   ): HierarchyNode? {
     validateActionFlow(ActionFlow(appId, interactions), session)
+    // One executor for the group: consecutive D-pad presses share its focus baseline.
+    val executor = InteractionExecutor(session, appId)
     var settled: HierarchyNode? = null
     // Mapping is one interaction per instruction, so the two lists align.
     interactions.forEachIndexed { index, interaction ->
-      settled = executeWithScrollToFind(interaction, instructions[index], appId, navigator, memory, source, visual)
+      settled = executeWithScrollToFind(interaction, instructions[index], executor, navigator, memory, source, visual)
     }
     return settled
   }
@@ -255,17 +257,15 @@ class Orchestrator(
   private suspend fun executeWithScrollToFind(
     interaction: Interaction,
     instruction: String,
-    appId: String,
+    executor: InteractionExecutor,
     navigator: NavigatorAgent,
     memory: JourneyMemory,
     source: TrailSource,
     visual: Boolean,
   ): HierarchyNode? {
-    val executor = InteractionExecutor(session, appId)
-
-    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction)) {
+    suspend fun record(executed: Interaction, origin: TrailOrigin = source.origin) = memory.recordExecution(source.copy(origin = origin), TrailGranularity.INTERACTION, listOf(instruction), afterFocus = { it.settledFocus() }) {
       executor.execute(executed, visual)
-    }
+    }.tree
 
     // For interactions that don't target a named element, just execute directly
     val targetText = when (interaction) {
@@ -414,7 +414,7 @@ class Orchestrator(
         try {
           var baseline: FocusObservation? = null
           while (pressed < size) {
-            val result = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions) {
+            val result = memory.recordExecution(TrailSource(segmentIndex, TrailOrigin.LOOP, completedBodies), TrailGranularity.INTERACTION, instructions, afterFocus = { it.settledFocus() }) {
               session.pressAndSettle(focusObserver, direction = true, baseline) { session.pressKey(keyName) }
             }
             settled = result.tree

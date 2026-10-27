@@ -8,6 +8,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import me.chrisbanes.verity.core.hierarchy.FocusObservation
 import me.chrisbanes.verity.core.result.FocusNodeArtifact
 import me.chrisbanes.verity.core.result.JourneyTrailArtifact
 import me.chrisbanes.verity.core.result.TrailEntryArtifact
@@ -50,12 +51,16 @@ internal class JourneyMemory(
   /** True at most once: when the setup launch succeeded and nothing has executed or claimed it since. */
   fun claimFreshLaunch(): Boolean = freshlyLaunched.also { freshlyLaunched = false }
 
-  /** Runs [block] once, appending one entry with focus observed before and after the whole call. */
+  /**
+   * Runs [block] once, appending one entry with focus observed before and after the whole call.
+   * A non-null [afterFocus] from the result replaces the capture after a successful block.
+   */
   suspend fun <T> recordExecution(
     source: TrailSource,
     granularity: TrailGranularity,
     instructions: List<String>,
     outcome: (T) -> Boolean = { true },
+    afterFocus: (T) -> FocusObservation? = { null },
     block: suspend () -> T,
   ): T {
     freshlyLaunched = false
@@ -66,7 +71,7 @@ internal class JourneyMemory(
       append(source, granularity, instructions, false, before, captureFocus())
       throw e
     }
-    append(source, granularity, instructions, outcome(result), before, captureFocus())
+    append(source, granularity, instructions, outcome(result), before, afterFocus(result)?.let(::toArtifacts) ?: captureFocus())
     return result
   }
 
@@ -150,9 +155,11 @@ internal class JourneyMemory(
   }
 
   private suspend fun captureFocus(): List<FocusNodeArtifact>? = when (val captured = focusObserver.capture(session, FOCUS_CAPTURE_TIMEOUT)) {
-    is FocusCaptureResult.Captured -> captured.observation.focusedNodes.map { FocusNodeArtifact(it.path, it.resourceId) }
+    is FocusCaptureResult.Captured -> toArtifacts(captured.observation)
     FocusCaptureResult.TimedOut, is FocusCaptureResult.Failed -> null
   }
+
+  private fun toArtifacts(observation: FocusObservation) = observation.focusedNodes.map { FocusNodeArtifact(it.path, it.resourceId) }
 
   private fun append(
     source: TrailSource,
