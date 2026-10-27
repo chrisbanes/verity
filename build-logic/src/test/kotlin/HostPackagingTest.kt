@@ -43,6 +43,17 @@ class HostPackagingTest {
   }
 
   @Test
+  fun `Selenium Linux binaries follow host architecture`() {
+    val prefix = "org/openqa/selenium/manager/"
+    assertThat(HostPackaging.platform("${prefix}linux-x86_64/selenium-manager")).isEqualTo(HostPackaging.Platform("linux", "x64"))
+    assertThat(HostPackaging.platform("${prefix}linux-arm64/selenium-manager")).isEqualTo(HostPackaging.Platform("linux", "arm64"))
+    for (host in HostPackaging.Host.entries) {
+      assertThat(HostPackaging.retain("${prefix}linux-x86_64/selenium-manager", host)).isEqualTo(host != HostPackaging.Host.MACOS_ARM64)
+      assertThat(HostPackaging.retain("${prefix}linux-arm64/selenium-manager", host)).isEqualTo(host == HostPackaging.Host.UNIVERSAL)
+    }
+  }
+
+  @Test
   fun `device payloads and generic loader metadata are not host executables`() {
     for (host in HostPackaging.Host.entries) {
       for (name in listOf("maestro-app.apk", "maestro-server.apk", "io/grpc/ManagedChannel.class", "META-INF/native-image/windows/resource-config.json", "META-INF/services/provider", "META-INF/module.kotlin_module", "context/android.md", "a/windows-description.txt")) {

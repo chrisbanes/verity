@@ -57,6 +57,7 @@ object HostPackaging {
     }
     if (name.startsWith("org/openqa/selenium/manager/")) {
       val group = name.removePrefix("org/openqa/selenium/manager/").substringBefore('/')
+      if (group.startsWith("linux-")) return Platform("linux", arch(group.removePrefix("linux-")))
       if (group in setOf("linux", "macos", "windows")) return Platform(group, if (group == "macos") null else "x64")
     }
     return null
@@ -160,7 +161,8 @@ object HostPackaging {
       "META-INF/native/libnetty_quiche42_osx_aarch_64.jnilib", "META-INF/native/libnetty_quiche42_linux_x86_64.so",
       "META-INF/native/libio_grpc_netty_shaded_netty_tcnative_osx_aarch_64.jnilib", "META-INF/native/libio_grpc_netty_shaded_netty_tcnative_linux_x86_64.so",
       "META-INF/native/libio_grpc_netty_shaded_netty_transport_native_epoll_x86_64.so",
-      "org/openqa/selenium/manager/macos/selenium-manager", "org/openqa/selenium/manager/linux/selenium-manager",
+      "org/openqa/selenium/manager/macos/selenium-manager", "org/openqa/selenium/manager/linux-x86_64/selenium-manager",
+      "org/openqa/selenium/manager/linux-arm64/selenium-manager",
     )) check(required in names) { "Missing compatible native payload $required" }
     for (group in listOf("darwin/aarch64", "linux/amd64")) {
       val base = "META-INF/resources/engine/libtruffleattach/$group/"
