@@ -24,6 +24,7 @@ import me.chrisbanes.verity.core.result.ConditionTier
 import me.chrisbanes.verity.core.result.EvidenceArtifact
 import me.chrisbanes.verity.core.result.EvidenceType
 import me.chrisbanes.verity.core.result.PrecheckArtifact
+import me.chrisbanes.verity.core.result.PrecheckOutcome
 import me.chrisbanes.verity.device.DeviceSession
 
 class ConditionEvaluatorTest {
@@ -328,9 +329,15 @@ class ConditionEvaluatorTest {
   }
 
   /** Records each state and whether its screenshot existed while the check ran. */
-  private class VisualFake(private val reply: suspend () -> PrecheckVerdict?) : ConditionPrecheck {
+  private class VisualFake(override val confirmsPass: Boolean = false, private val reply: suspend () -> PrecheckVerdict?) : ConditionPrecheck {
     val states = mutableListOf<PrecheckState>()
     val existed = mutableListOf<Boolean>()
+    val confirmations = mutableListOf<Boolean>()
+
+    override suspend fun confirmation(verdict: PrecheckVerdict, confirmed: Boolean) {
+      confirmations += confirmed
+    }
+
     override suspend fun check(state: PrecheckState, condition: String, acceptFail: Boolean): PrecheckVerdict? {
       states += state
       existed += withContext(Dispatchers.IO) { state.screenshot?.let { Files.exists(it) } == true }
@@ -341,14 +348,16 @@ class ConditionEvaluatorTest {
 
   private fun visualVerdict(passed: Boolean) = PrecheckVerdict(passed, if (passed) 0.99 else 0.01, "jev-1.13.0", "api.typesafe.ai")
 
-  private class VisualInspector(private val failure: Throwable? = null) {
+  private class VisualInspector(private val failure: Throwable? = null, private val passed: Boolean = true) {
     val paths = mutableListOf<Path>()
+    val existed = mutableListOf<Boolean>()
     val agent = InspectorAgent(
       evaluateTreeContent = { _, _, _ -> inspectionReply("""{"passed":true,"reasoning":"tree"}""") },
       evaluateVisualContent = { _, _, path, _ ->
         paths.add(path)
+        existed.add(withContext(Dispatchers.IO) { Files.exists(path) })
         failure?.let { throw it }
-        inspectionReply("""{"passed":true,"reasoning":"visual"}""")
+        inspectionReply("""{"passed":$passed,"reasoning":"visual"}""")
       },
     )
   }
@@ -388,6 +397,71 @@ class ConditionEvaluatorTest {
   }
 
   @Test
+  fun `a confident visual pass is confirmed by the inspector on the same screenshot in both capture branches`() = runTest {
+    withContext(Dispatchers.Default) {
+      val dir = withContext(Dispatchers.IO) { Files.createTempDirectory("verity-visual-confirm") }
+      try {
+        for (persisted in listOf(false, true)) {
+          for (inspectorPasses in listOf(true, false)) {
+            val artifact = dir.resolve("visual.png")
+            val recorder = object : JourneyArtifactRecorder {
+              override suspend fun screenshotPath(segmentIndex: Int) = if (persisted) JourneyScreenshotArtifact(artifact, "evidence/visual.png") else null
+            }
+            val session = StateSession()
+            val fake = VisualFake(confirmsPass = true) { visualVerdict(true) }
+            val inspector = VisualInspector(passed = inspectorPasses)
+            val hooked = mutableListOf<Path>()
+
+            val result = ConditionEvaluator(session, inspector.agent, recorder, onInspectedScreenshot = { hooked.add(it) }, visualPrecheck = fake)
+              .evaluate("visually the spinner is gone")
+
+            assertThat(result.tier).isEqualTo(ConditionTier.VISUAL)
+            assertThat(result.verdict.passed).isEqualTo(inspectorPasses)
+            assertThat(result.verdict.reasoning).isEqualTo("visual")
+            assertThat(result.precheck).isEqualTo(PrecheckArtifact(0.99, "jev-1.13.0", "api.typesafe.ai", if (inspectorPasses) PrecheckOutcome.CONFIRMED else PrecheckOutcome.OVERRULED))
+            assertThat(session.screenshots.size).isEqualTo(1)
+            assertThat(inspector.paths).isEqualTo(session.screenshots)
+            assertThat(fake.states.single().screenshot).isEqualTo(session.screenshots.single())
+            assertThat(inspector.existed).isEqualTo(listOf(true))
+            assertThat(hooked).isEqualTo(session.screenshots)
+            assertThat(fake.confirmations).isEqualTo(listOf(inspectorPasses))
+            if (!persisted) assertThat(withContext(Dispatchers.IO) { Files.exists(session.screenshots.single()) }).isEqualTo(false)
+          }
+        }
+      } finally {
+        withContext(Dispatchers.IO) { dir.toFile().deleteRecursively() }
+      }
+    }
+  }
+
+  @Test
+  fun `a confirming visual pre-check still decides a fail alone and a failure while confirming propagates`() = runTest {
+    withContext(Dispatchers.Default) {
+      val failFake = VisualFake(confirmsPass = true) { visualVerdict(false) }
+      val failInspector = VisualInspector()
+      val failed = ConditionEvaluator(StateSession(), failInspector.agent, visualPrecheck = failFake).evaluate("visually the spinner is gone")
+      assertThat(failed.tier).isEqualTo(ConditionTier.PRECHECK)
+      assertThat(failed.precheck?.outcome).isNull()
+      assertThat(failInspector.paths).isEqualTo(emptyList())
+      assertThat(failFake.confirmations).isEqualTo(emptyList())
+
+      val fake = VisualFake(confirmsPass = true) { visualVerdict(true) }
+      val session = StateSession()
+      assertFailsWith<ModelFailureException> {
+        ConditionEvaluator(session, VisualInspector(IllegalStateException("request failed")).agent, visualPrecheck = fake).evaluate("visually the spinner is gone")
+      }
+      assertThat(fake.confirmations).isEqualTo(emptyList())
+      assertThat(withContext(Dispatchers.IO) { Files.exists(session.screenshots.single()) }).isEqualTo(false)
+
+      val cancelling = VisualFake(confirmsPass = true) { visualVerdict(true) }
+      assertFailsWith<kotlinx.coroutines.CancellationException> {
+        ConditionEvaluator(StateSession(), VisualInspector(kotlinx.coroutines.CancellationException("stop")).agent, visualPrecheck = cancelling).evaluate("visually the spinner is gone")
+      }
+      assertThat(cancelling.confirmations).isEqualTo(emptyList())
+    }
+  }
+
+  @Test
   fun `a confident visual pre-check fail decides the check and deletes the temporary capture`() = runTest {
     withContext(Dispatchers.Default) {
       val session = StateSession()
@@ -417,7 +491,7 @@ class ConditionEvaluatorTest {
               override suspend fun screenshotPath(segmentIndex: Int) = if (persisted) JourneyScreenshotArtifact(artifact, "evidence/visual.png") else null
             }
             val session = StateSession()
-            val fake = VisualFake(reply)
+            val fake = VisualFake(reply = reply)
             val inspector = VisualInspector()
 
             val result = ConditionEvaluator(session, inspector.agent, recorder, visualPrecheck = fake).evaluate("visually the spinner is gone")

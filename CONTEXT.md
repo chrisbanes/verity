@@ -78,7 +78,7 @@ Verity's built-in guidance for device automation and platform controls.
 _Avoid_: Project context
 
 **Pre-check**:
-An optional fast probability judgement of a loop or wait condition, consulted before the inspector. Only a confident answer decides the check; anything else falls back to the inspector on the same evidence.
+An optional fast probability judgement of a loop or wait condition, consulted before the inspector. A confident fail decides the check alone. By default (`precheck.confirm-pass`) a confident pass does not: the inspector evaluates the same evidence once and decides, and the pre-check records whether it was confirmed or overruled. Anything else falls back to the inspector on the same evidence.
 _Avoid_: Assertion, inspection
 
 **Pre-check provider**:
