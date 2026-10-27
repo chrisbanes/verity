@@ -263,9 +263,9 @@ class LoopBatchingTest {
     val inspector = Inspector { call -> if (call == 1) """{"passed":false,"reasoning":"no","estimatedIterations":3}""" else """{"passed":true,"reasoning":"done"}""" }
     val journey = Journey("batch", "app", Platform.ANDROID_TV, listOf(JourneyStep.Loop("Press D-pad down", "the elapsed time is within the last 15 seconds", 20)))
     Orchestrator(device, { navigator }, { inspector.agent }).run(journey)
-    // Captures between a press's settle and the next press: the trail's after and before only, no fresh focus baseline.
+    // Between settles and presses, only the next trail's before capture remains; after-focus and baseline reuse the settle.
     val gaps = events.joinToString(" ").split("stable").drop(1).dropLast(1).map { it.trim().split(" ").takeWhile { e -> e != "key" }.count { e -> e == "capture" } }
-    assertThat(gaps).isEqualTo(listOf(2, 2))
+    assertThat(gaps).isEqualTo(listOf(1, 1))
   }
 
   @Test fun `an edge press's settled tree answers the following check without a capture`() = runTest {
