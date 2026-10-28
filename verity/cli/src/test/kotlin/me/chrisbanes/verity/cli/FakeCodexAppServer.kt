@@ -642,6 +642,11 @@ internal object FakeCodexAppServer {
                 ),
               )
             }
+            if (type == "configuration_update") put("reasoning", buildJsonObject { put("effort", "low") })
+            if (type == "configuration_update-malformed") {
+              put("type", "configuration_update")
+              put("reasoning", buildJsonObject { put("effort", 1) })
+            }
             if (type == "compaction") put("encrypted_content", "synthetic")
             if (type == "agentMessage") {
               put("text", text)
