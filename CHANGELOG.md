@@ -5,6 +5,8 @@ All notable changes to Verity are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-30
+
 ### Added
 
 - Opt-in pre-check for loop and wait conditions (`run --precheck` or
@@ -89,6 +91,7 @@ mobile and iOS device sessions, the LLM navigator and inspector agents, the MCP
 server, the CLI with multi-provider LLM support, bundled skills and context,
 and Homebrew distribution.
 
-[Unreleased]: https://github.com/chrisbanes/verity/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/chrisbanes/verity/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/chrisbanes/verity/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/chrisbanes/verity/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/chrisbanes/verity/releases/tag/v0.0.1
